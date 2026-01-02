@@ -6,7 +6,12 @@ import {
   useFocusContext,
   type FocusPanel,
 } from "./context/FocusContext.js";
-import { SequencerProvider, useSequencer } from "./context/SequencerContext.js";
+import {
+  SequencerProvider,
+  useSequencer,
+  type InitialState,
+} from "./context/SequencerContext.js";
+import { ProjectProvider } from "./context/ProjectContext.js";
 import { CommandProvider, useCommands } from "./context/CommandContext.js";
 import Transport from "./components/Transport.js";
 import Browser from "./components/Browser.js";
@@ -384,13 +389,31 @@ function AppContent() {
   );
 }
 
-export default function App() {
+interface AppProps {
+  projectPath: string;
+  projectName: string;
+  initialState?: InitialState;
+  createdAt?: Date;
+}
+
+export default function App({
+  projectPath,
+  projectName,
+  initialState,
+  createdAt,
+}: AppProps) {
   return (
     <CommandProvider>
-      <SequencerProvider>
-        <FocusProvider>
-          <AppContent />
-        </FocusProvider>
+      <SequencerProvider initialState={initialState}>
+        <ProjectProvider
+          projectPath={projectPath}
+          projectName={projectName}
+          createdAt={createdAt}
+        >
+          <FocusProvider>
+            <AppContent />
+          </FocusProvider>
+        </ProjectProvider>
       </SequencerProvider>
     </CommandProvider>
   );

@@ -15,11 +15,15 @@ import {
   type SynthPatch,
 } from "../lib/synth.js";
 import { useCommands } from "./CommandContext.js";
+import type { RuntimeState } from "../lib/project/serializer.js";
 
 export type { SynthPatch };
 export { synthPresets };
 export type ChannelType = "sample" | "synth";
 export type PlayMode = "pattern" | "arrangement";
+
+// Initial state type for loading projects
+export type InitialState = RuntimeState | null;
 
 interface Channel {
   name: string;
@@ -280,29 +284,46 @@ interface SequencerContextType {
   togglePatternMute: (patternId: number) => void;
   getPlacementsForPattern: (patternId: number) => PatternPlacement[];
   getNonEmptyPatterns: () => Pattern[];
+  // For project persistence
+  getSerializableState: () => RuntimeState;
 }
 
 const SequencerContext = createContext<SequencerContextType | null>(null);
 
-export function SequencerProvider({ children }: { children: ReactNode }) {
+interface SequencerProviderProps {
+  children: ReactNode;
+  initialState?: InitialState;
+}
+
+export function SequencerProvider({
+  children,
+  initialState,
+}: SequencerProviderProps) {
   const [channelMeta, setChannelMeta] = useState<Channel[]>(
-    createDefaultChannels,
+    () => initialState?.channels ?? createDefaultChannels(),
   );
-  const [patterns, setPatterns] = useState<Pattern[]>([createEmptyPattern(1)]);
-  const [currentPatternId, setCurrentPatternId] = useState(1);
+  const [patterns, setPatterns] = useState<Pattern[]>(
+    () => initialState?.patterns ?? [createEmptyPattern(1)],
+  );
+  const [currentPatternId, setCurrentPatternId] = useState(
+    () => initialState?.currentPatternId ?? 1,
+  );
   const [isPlaying, setIsPlayingState] = useState(false);
   const [playMode, setPlayMode] = useState<PlayMode>("pattern");
   const [playheadStep, setPlayheadStep] = useState(0);
   const [arrangementBar, setArrangementBar] = useState(0);
-  const [bpm, setBpm] = useState(140);
+  const [bpm, setBpm] = useState(() => initialState?.bpm ?? 140);
   const [selectedChannel, setSelectedChannel] = useState(0);
   const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrack[]>(
     createDefaultPlaylistTracks,
   );
-  const [arrangement, setArrangement] = useState<Arrangement>({
-    placements: [],
-    mutedPatterns: new Set(),
-  });
+  const [arrangement, setArrangement] = useState<Arrangement>(
+    () =>
+      initialState?.arrangement ?? {
+        placements: [],
+        mutedPatterns: new Set(),
+      },
+  );
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bpmRef = useRef(bpm);
@@ -948,6 +969,17 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
     });
   }, [patterns]);
 
+  // Get serializable state for project persistence
+  const getSerializableState = useCallback((): RuntimeState => {
+    return {
+      bpm,
+      currentPatternId,
+      channels: channelMeta,
+      patterns,
+      arrangement,
+    };
+  }, [bpm, currentPatternId, channelMeta, patterns, arrangement]);
+
   return (
     <SequencerContext.Provider
       value={{
@@ -989,6 +1021,7 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
         togglePatternMute,
         getPlacementsForPattern,
         getNonEmptyPatterns,
+        getSerializableState,
       }}
     >
       {children}

@@ -241,9 +241,19 @@ export function stopPlayback(): void {
   activeSources.clear();
 }
 
+// Project-specific samples directory (set on project load)
+let projectSamplesDir: string | null = null;
+
+// Set the project samples directory
+export function setProjectSamplesDir(dir: string | null): void {
+  projectSamplesDir = dir;
+  // Clear buffer cache when changing projects
+  bufferCache.clear();
+}
+
 // Get the samples directory path
 export function getSamplesDir(): string {
-  return path.join(process.cwd(), "samples");
+  return projectSamplesDir ?? path.join(process.cwd(), "samples");
 }
 
 // Get full path to a sample

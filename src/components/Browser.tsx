@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import { useIsFocused, useFocusContext } from "../context/FocusContext.js";
 import { useSequencer } from "../context/SequencerContext.js";
-import { previewSample, stopPreview } from "../lib/audio.js";
+import { previewSample, stopPreview, getSamplesDir } from "../lib/audio.js";
 import { useVim } from "../hooks/useVim.js";
 import type { Position, Key } from "../lib/vim/types.js";
 import fs from "fs";
@@ -104,7 +104,7 @@ export default function Browser({
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [tree, setTree] = useState<FileNode[]>([]);
 
-  const samplesDir = path.join(process.cwd(), "samples");
+  const samplesDir = getSamplesDir();
   const isSelectingForChannel = sampleSelection.isSelecting;
 
   useEffect(() => {
