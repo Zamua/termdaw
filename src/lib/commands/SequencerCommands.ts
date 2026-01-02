@@ -1,8 +1,8 @@
-import type { Command, CommandContext, CommandPosition } from './Command.js';
-import type { SynthPatch } from '../synth.js';
+import type { Command, CommandContext, CommandPosition } from "./Command.js";
+import type { SynthPatch } from "../synth.js";
 
 // Types matching SequencerContext (defined here to avoid circular deps)
-type ChannelType = 'sample' | 'synth';
+type ChannelType = "sample" | "synth";
 
 interface Note {
   id: string;
@@ -47,7 +47,7 @@ export interface CommandCursorInfo {
  * Toggle a step on/off in the channel rack.
  */
 export class ToggleStepCommand implements Command {
-  readonly type = 'toggleStep';
+  readonly type = "toggleStep";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
@@ -59,7 +59,7 @@ export class ToggleStepCommand implements Command {
     private patternId: number,
     private channelIndex: number,
     private stepIndex: number,
-    cursorInfo?: CommandCursorInfo
+    cursorInfo?: CommandCursorInfo,
   ) {
     this.description = `Toggle step ${stepIndex + 1} on channel ${channelIndex + 1}`;
     this.context = cursorInfo?.context;
@@ -67,8 +67,8 @@ export class ToggleStepCommand implements Command {
   }
 
   execute(): void {
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const channelSteps = pattern.steps[this.channelIndex];
         if (!channelSteps) return pattern;
@@ -85,15 +85,15 @@ export class ToggleStepCommand implements Command {
           return updated;
         });
         return { ...pattern, steps: newSteps };
-      })
+      }),
     );
   }
 
   undo(): void {
     if (this.previousValue === null) return;
 
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const newSteps = pattern.steps.map((steps, idx) => {
           if (idx !== this.channelIndex) return steps;
@@ -102,7 +102,7 @@ export class ToggleStepCommand implements Command {
           return updated;
         });
         return { ...pattern, steps: newSteps };
-      })
+      }),
     );
   }
 }
@@ -111,7 +111,7 @@ export class ToggleStepCommand implements Command {
  * Set steps at a position (for paste operations).
  */
 export class SetStepsCommand implements Command {
-  readonly type = 'setSteps';
+  readonly type = "setSteps";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
@@ -124,7 +124,7 @@ export class SetStepsCommand implements Command {
     private channelIndex: number,
     private startStep: number,
     private steps: boolean[],
-    cursorInfo?: CommandCursorInfo
+    cursorInfo?: CommandCursorInfo,
   ) {
     this.description = `Paste ${steps.filter(Boolean).length} steps`;
     this.context = cursorInfo?.context;
@@ -132,8 +132,8 @@ export class SetStepsCommand implements Command {
   }
 
   execute(): void {
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const channelSteps = pattern.steps[this.channelIndex];
         if (!channelSteps) return pattern;
@@ -142,39 +142,48 @@ export class SetStepsCommand implements Command {
         if (this.previousSteps === null) {
           this.previousSteps = channelSteps.slice(
             this.startStep,
-            this.startStep + this.steps.length
+            this.startStep + this.steps.length,
           );
         }
 
         const newSteps = pattern.steps.map((steps, idx) => {
           if (idx !== this.channelIndex) return steps;
           const updated = [...steps];
-          for (let i = 0; i < this.steps.length && this.startStep + i < updated.length; i++) {
+          for (
+            let i = 0;
+            i < this.steps.length && this.startStep + i < updated.length;
+            i++
+          ) {
             updated[this.startStep + i] = this.steps[i]!;
           }
           return updated;
         });
         return { ...pattern, steps: newSteps };
-      })
+      }),
     );
   }
 
   undo(): void {
     if (this.previousSteps === null) return;
 
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const newSteps = pattern.steps.map((steps, idx) => {
           if (idx !== this.channelIndex) return steps;
           const updated = [...steps];
-          for (let i = 0; i < this.previousSteps!.length && this.startStep + i < updated.length; i++) {
+          for (
+            let i = 0;
+            i < this.previousSteps!.length &&
+            this.startStep + i < updated.length;
+            i++
+          ) {
             updated[this.startStep + i] = this.previousSteps![i]!;
           }
           return updated;
         });
         return { ...pattern, steps: newSteps };
-      })
+      }),
     );
   }
 }
@@ -183,7 +192,7 @@ export class SetStepsCommand implements Command {
  * Clear a range of steps (for delete operations).
  */
 export class ClearStepRangeCommand implements Command {
-  readonly type = 'clearStepRange';
+  readonly type = "clearStepRange";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
@@ -196,10 +205,10 @@ export class ClearStepRangeCommand implements Command {
     private channelIndex: number,
     private startStep: number,
     private endStep: number,
-    cursorInfo?: CommandCursorInfo
+    cursorInfo?: CommandCursorInfo,
   ) {
     const count = Math.abs(endStep - startStep) + 1;
-    this.description = `Delete ${count} step${count > 1 ? 's' : ''}`;
+    this.description = `Delete ${count} step${count > 1 ? "s" : ""}`;
     this.context = cursorInfo?.context;
     this.position = cursorInfo?.position;
   }
@@ -208,8 +217,8 @@ export class ClearStepRangeCommand implements Command {
     const minStep = Math.min(this.startStep, this.endStep);
     const maxStep = Math.max(this.startStep, this.endStep);
 
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const channelSteps = pattern.steps[this.channelIndex];
         if (!channelSteps) return pattern;
@@ -228,7 +237,7 @@ export class ClearStepRangeCommand implements Command {
           return updated;
         });
         return { ...pattern, steps: newSteps };
-      })
+      }),
     );
   }
 
@@ -237,8 +246,8 @@ export class ClearStepRangeCommand implements Command {
 
     const minStep = Math.min(this.startStep, this.endStep);
 
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const newSteps = pattern.steps.map((steps, idx) => {
           if (idx !== this.channelIndex) return steps;
@@ -249,7 +258,7 @@ export class ClearStepRangeCommand implements Command {
           return updated;
         });
         return { ...pattern, steps: newSteps };
-      })
+      }),
     );
   }
 }
@@ -258,7 +267,7 @@ export class ClearStepRangeCommand implements Command {
  * Clear all steps in a channel.
  */
 export class ClearChannelCommand implements Command {
-  readonly type = 'clearChannel';
+  readonly type = "clearChannel";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
@@ -269,7 +278,7 @@ export class ClearChannelCommand implements Command {
     private state: SequencerStateAccessors,
     private patternId: number,
     private channelIndex: number,
-    cursorInfo?: CommandCursorInfo
+    cursorInfo?: CommandCursorInfo,
   ) {
     this.description = `Clear channel ${channelIndex + 1}`;
     this.context = cursorInfo?.context;
@@ -277,8 +286,8 @@ export class ClearChannelCommand implements Command {
   }
 
   execute(): void {
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const channelSteps = pattern.steps[this.channelIndex];
         if (!channelSteps) return pattern;
@@ -293,22 +302,22 @@ export class ClearChannelCommand implements Command {
           return steps.map(() => false);
         });
         return { ...pattern, steps: newSteps };
-      })
+      }),
     );
   }
 
   undo(): void {
     if (this.previousSteps === null) return;
 
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const newSteps = pattern.steps.map((steps, idx) => {
           if (idx !== this.channelIndex) return steps;
           return [...this.previousSteps!];
         });
         return { ...pattern, steps: newSteps };
-      })
+      }),
     );
   }
 }
@@ -317,7 +326,7 @@ export class ClearChannelCommand implements Command {
  * Toggle mute state on a channel.
  */
 export class ToggleMuteCommand implements Command {
-  readonly type = 'toggleMute';
+  readonly type = "toggleMute";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
@@ -327,7 +336,7 @@ export class ToggleMuteCommand implements Command {
   constructor(
     private state: SequencerStateAccessors,
     private channelIndex: number,
-    cursorInfo?: CommandCursorInfo
+    cursorInfo?: CommandCursorInfo,
   ) {
     this.description = `Toggle mute on channel ${channelIndex + 1}`;
     this.context = cursorInfo?.context;
@@ -335,7 +344,7 @@ export class ToggleMuteCommand implements Command {
   }
 
   execute(): void {
-    this.state.setChannelMeta(prev =>
+    this.state.setChannelMeta((prev) =>
       prev.map((channel, idx) => {
         if (idx !== this.channelIndex) return channel;
 
@@ -345,18 +354,18 @@ export class ToggleMuteCommand implements Command {
         }
 
         return { ...channel, muted: !this.previousMuted };
-      })
+      }),
     );
   }
 
   undo(): void {
     if (this.previousMuted === null) return;
 
-    this.state.setChannelMeta(prev =>
+    this.state.setChannelMeta((prev) =>
       prev.map((channel, idx) => {
         if (idx !== this.channelIndex) return channel;
         return { ...channel, muted: this.previousMuted! };
-      })
+      }),
     );
   }
 }
@@ -365,7 +374,7 @@ export class ToggleMuteCommand implements Command {
  * Cycle mute state (unmuted -> muted -> solo -> unmuted).
  */
 export class CycleMuteStateCommand implements Command {
-  readonly type = 'cycleMuteState';
+  readonly type = "cycleMuteState";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
@@ -376,7 +385,7 @@ export class CycleMuteStateCommand implements Command {
   constructor(
     private state: SequencerStateAccessors,
     private channelIndex: number,
-    cursorInfo?: CommandCursorInfo
+    cursorInfo?: CommandCursorInfo,
   ) {
     this.description = `Cycle mute state on channel ${channelIndex + 1}`;
     this.context = cursorInfo?.context;
@@ -384,7 +393,7 @@ export class CycleMuteStateCommand implements Command {
   }
 
   execute(): void {
-    this.state.setChannelMeta(prev => {
+    this.state.setChannelMeta((prev) => {
       const channel = prev[this.channelIndex];
       if (!channel) return prev;
 
@@ -392,7 +401,9 @@ export class CycleMuteStateCommand implements Command {
       if (this.previousState === null) {
         this.previousState = { muted: channel.muted, solo: channel.solo };
         // Find any other solo channel
-        const soloIdx = prev.findIndex((ch, idx) => idx !== this.channelIndex && ch.solo);
+        const soloIdx = prev.findIndex(
+          (ch, idx) => idx !== this.channelIndex && ch.solo,
+        );
         this.previousSoloChannel = soloIdx >= 0 ? soloIdx : null;
       }
 
@@ -421,17 +432,21 @@ export class CycleMuteStateCommand implements Command {
   undo(): void {
     if (this.previousState === null) return;
 
-    this.state.setChannelMeta(prev =>
+    this.state.setChannelMeta((prev) =>
       prev.map((ch, idx) => {
         if (idx === this.channelIndex) {
-          return { ...ch, muted: this.previousState!.muted, solo: this.previousState!.solo };
+          return {
+            ...ch,
+            muted: this.previousState!.muted,
+            solo: this.previousState!.solo,
+          };
         }
         // Restore previous solo channel if there was one
         if (idx === this.previousSoloChannel) {
           return { ...ch, solo: true };
         }
         return ch;
-      })
+      }),
     );
   }
 }
@@ -440,7 +455,7 @@ export class CycleMuteStateCommand implements Command {
  * Set channel sample.
  */
 export class SetChannelSampleCommand implements Command {
-  readonly type = 'setChannelSample';
+  readonly type = "setChannelSample";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
@@ -452,18 +467,26 @@ export class SetChannelSampleCommand implements Command {
     private state: SequencerStateAccessors,
     private channelIndex: number,
     private samplePath: string,
-    cursorInfo?: CommandCursorInfo
+    cursorInfo?: CommandCursorInfo,
   ) {
-    const name = samplePath.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'Sample';
+    const name =
+      samplePath
+        .split("/")
+        .pop()
+        ?.replace(/\.[^/.]+$/, "") || "Sample";
     this.description = `Set sample to ${name}`;
     this.context = cursorInfo?.context;
     this.position = cursorInfo?.position;
   }
 
   execute(): void {
-    const name = this.samplePath.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'Sample';
+    const name =
+      this.samplePath
+        .split("/")
+        .pop()
+        ?.replace(/\.[^/.]+$/, "") || "Sample";
 
-    this.state.setChannelMeta(prev =>
+    this.state.setChannelMeta((prev) =>
       prev.map((channel, idx) => {
         if (idx !== this.channelIndex) return channel;
 
@@ -474,18 +497,22 @@ export class SetChannelSampleCommand implements Command {
         }
 
         return { ...channel, sample: this.samplePath, name };
-      })
+      }),
     );
   }
 
   undo(): void {
     if (this.previousSample === null || this.previousName === null) return;
 
-    this.state.setChannelMeta(prev =>
+    this.state.setChannelMeta((prev) =>
       prev.map((channel, idx) => {
         if (idx !== this.channelIndex) return channel;
-        return { ...channel, sample: this.previousSample!, name: this.previousName! };
-      })
+        return {
+          ...channel,
+          sample: this.previousSample!,
+          name: this.previousName!,
+        };
+      }),
     );
   }
 }
@@ -494,7 +521,7 @@ export class SetChannelSampleCommand implements Command {
  * Add a note to the piano roll.
  */
 export class AddNoteCommand implements Command {
-  readonly type = 'addNote';
+  readonly type = "addNote";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
@@ -508,7 +535,7 @@ export class AddNoteCommand implements Command {
     private pitch: number,
     private startStep: number,
     private duration: number,
-    cursorInfo?: CommandCursorInfo
+    cursorInfo?: CommandCursorInfo,
   ) {
     this.description = `Add note at step ${startStep + 1}`;
     this.context = cursorInfo?.context;
@@ -521,8 +548,8 @@ export class AddNoteCommand implements Command {
       this.noteId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     }
 
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const newNotes = pattern.notes.map((channelNotes, idx) => {
           if (idx !== this.channelIndex) return channelNotes;
@@ -537,22 +564,22 @@ export class AddNoteCommand implements Command {
           ];
         });
         return { ...pattern, notes: newNotes };
-      })
+      }),
     );
   }
 
   undo(): void {
     if (this.noteId === null) return;
 
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const newNotes = pattern.notes.map((channelNotes, idx) => {
           if (idx !== this.channelIndex) return channelNotes;
-          return channelNotes.filter(note => note.id !== this.noteId);
+          return channelNotes.filter((note) => note.id !== this.noteId);
         });
         return { ...pattern, notes: newNotes };
-      })
+      }),
     );
   }
 }
@@ -561,7 +588,7 @@ export class AddNoteCommand implements Command {
  * Remove a note from the piano roll.
  */
 export class RemoveNoteCommand implements Command {
-  readonly type = 'removeNote';
+  readonly type = "removeNote";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
@@ -573,7 +600,7 @@ export class RemoveNoteCommand implements Command {
     private patternId: number,
     private channelIndex: number,
     private noteId: string,
-    cursorInfo?: CommandCursorInfo
+    cursorInfo?: CommandCursorInfo,
   ) {
     this.description = `Remove note`;
     this.context = cursorInfo?.context;
@@ -581,39 +608,39 @@ export class RemoveNoteCommand implements Command {
   }
 
   execute(): void {
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const newNotes = pattern.notes.map((channelNotes, idx) => {
           if (idx !== this.channelIndex) return channelNotes;
 
           // Capture removed note on first execute
           if (this.removedNote === null) {
-            const note = channelNotes.find(n => n.id === this.noteId);
+            const note = channelNotes.find((n) => n.id === this.noteId);
             if (note) {
               this.removedNote = { ...note };
             }
           }
 
-          return channelNotes.filter(note => note.id !== this.noteId);
+          return channelNotes.filter((note) => note.id !== this.noteId);
         });
         return { ...pattern, notes: newNotes };
-      })
+      }),
     );
   }
 
   undo(): void {
     if (this.removedNote === null) return;
 
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const newNotes = pattern.notes.map((channelNotes, idx) => {
           if (idx !== this.channelIndex) return channelNotes;
           return [...channelNotes, this.removedNote!];
         });
         return { ...pattern, notes: newNotes };
-      })
+      }),
     );
   }
 }
@@ -622,20 +649,22 @@ export class RemoveNoteCommand implements Command {
  * Update a note's properties (position, duration, pitch).
  */
 export class UpdateNoteCommand implements Command {
-  readonly type = 'updateNote';
+  readonly type = "updateNote";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
 
-  private previousValues: Partial<Pick<Note, 'startStep' | 'duration' | 'pitch'>> | null = null;
+  private previousValues: Partial<
+    Pick<Note, "startStep" | "duration" | "pitch">
+  > | null = null;
 
   constructor(
     private state: SequencerStateAccessors,
     private patternId: number,
     private channelIndex: number,
     private noteId: string,
-    private updates: Partial<Pick<Note, 'startStep' | 'duration' | 'pitch'>>,
-    cursorInfo?: CommandCursorInfo
+    private updates: Partial<Pick<Note, "startStep" | "duration" | "pitch">>,
+    cursorInfo?: CommandCursorInfo,
   ) {
     this.description = `Update note`;
     this.context = cursorInfo?.context;
@@ -643,45 +672,48 @@ export class UpdateNoteCommand implements Command {
   }
 
   execute(): void {
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const newNotes = pattern.notes.map((channelNotes, idx) => {
           if (idx !== this.channelIndex) return channelNotes;
-          return channelNotes.map(note => {
+          return channelNotes.map((note) => {
             if (note.id !== this.noteId) return note;
 
             // Capture previous values on first execute
             if (this.previousValues === null) {
               this.previousValues = {};
-              if ('startStep' in this.updates) this.previousValues.startStep = note.startStep;
-              if ('duration' in this.updates) this.previousValues.duration = note.duration;
-              if ('pitch' in this.updates) this.previousValues.pitch = note.pitch;
+              if ("startStep" in this.updates)
+                this.previousValues.startStep = note.startStep;
+              if ("duration" in this.updates)
+                this.previousValues.duration = note.duration;
+              if ("pitch" in this.updates)
+                this.previousValues.pitch = note.pitch;
             }
 
             return { ...note, ...this.updates };
           });
         });
         return { ...pattern, notes: newNotes };
-      })
+      }),
     );
   }
 
   undo(): void {
     if (this.previousValues === null) return;
 
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
         const newNotes = pattern.notes.map((channelNotes, idx) => {
           if (idx !== this.channelIndex) return channelNotes;
-          return channelNotes.map(note => {
+          return channelNotes.map((note) => {
             if (note.id !== this.noteId) return note;
             return { ...note, ...this.previousValues! };
           });
         });
         return { ...pattern, notes: newNotes };
-      })
+      }),
     );
   }
 }
@@ -690,7 +722,7 @@ export class UpdateNoteCommand implements Command {
  * Toggle a note at a position (add if not exists, remove if exists).
  */
 export class ToggleNoteCommand implements Command {
-  readonly type = 'toggleNote';
+  readonly type = "toggleNote";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
@@ -705,7 +737,7 @@ export class ToggleNoteCommand implements Command {
     private pitch: number,
     private startStep: number,
     private duration: number,
-    cursorInfo?: CommandCursorInfo
+    cursorInfo?: CommandCursorInfo,
   ) {
     this.description = `Toggle note at step ${startStep + 1}`;
     this.context = cursorInfo?.context;
@@ -713,14 +745,14 @@ export class ToggleNoteCommand implements Command {
   }
 
   execute(): void {
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
 
         const patternNotes = pattern.notes || [];
         const channelNotes = patternNotes[this.channelIndex] || [];
         const existingNote = channelNotes.find(
-          n => n.pitch === this.pitch && n.startStep === this.startStep
+          (n) => n.pitch === this.pitch && n.startStep === this.startStep,
         );
 
         const newNotes = patternNotes.map((notes, idx) => {
@@ -730,7 +762,7 @@ export class ToggleNoteCommand implements Command {
             if (this.removedNote === null) {
               this.removedNote = { ...existingNote };
             }
-            return (notes || []).filter(n => n.id !== existingNote.id);
+            return (notes || []).filter((n) => n.id !== existingNote.id);
           } else {
             // Add a new note
             if (this.addedNoteId === null) {
@@ -748,13 +780,13 @@ export class ToggleNoteCommand implements Command {
           }
         });
         return { ...pattern, notes: newNotes };
-      })
+      }),
     );
   }
 
   undo(): void {
-    this.state.setPatterns(prev =>
-      prev.map(pattern => {
+    this.state.setPatterns((prev) =>
+      prev.map((pattern) => {
         if (pattern.id !== this.patternId) return pattern;
 
         const newNotes = pattern.notes.map((notes, idx) => {
@@ -764,12 +796,12 @@ export class ToggleNoteCommand implements Command {
             return [...notes, this.removedNote];
           } else if (this.addedNoteId) {
             // Remove the added note
-            return notes.filter(n => n.id !== this.addedNoteId);
+            return notes.filter((n) => n.id !== this.addedNoteId);
           }
           return notes;
         });
         return { ...pattern, notes: newNotes };
-      })
+      }),
     );
   }
 }

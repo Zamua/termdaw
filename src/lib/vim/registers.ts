@@ -1,4 +1,4 @@
-import type { RegisterContent, RegisterName } from './types';
+import type { RegisterContent, RegisterName } from "./types";
 
 /**
  * Vim-style register manager.
@@ -30,14 +30,14 @@ class RegisterManager {
    * Store data in a register after yank.
    * Also copies to register 0 (last yank).
    */
-  yank<T>(data: T, type: 'char' | 'line' | 'block'): void {
+  yank<T>(data: T, type: "char" | "line" | "block"): void {
     const content: RegisterContent<T> = { data, type };
 
     // Store in unnamed register
     this.registers.set('"', content);
 
     // Store in yank register (not affected by delete)
-    this.registers.set('0', content);
+    this.registers.set("0", content);
 
     // If a specific register was selected, store there too
     if (this.currentRegister !== '"') {
@@ -52,7 +52,7 @@ class RegisterManager {
    * Store data in registers after delete.
    * Shifts delete history (1-9) and stores in unnamed register.
    */
-  delete<T>(data: T, type: 'char' | 'line' | 'block'): void {
+  delete<T>(data: T, type: "char" | "line" | "block"): void {
     const content: RegisterContent<T> = { data, type };
 
     // Shift delete history: 8->9, 7->8, ... 1->2
@@ -66,7 +66,7 @@ class RegisterManager {
     }
 
     // Store new delete in register 1
-    this.registers.set('1', content);
+    this.registers.set("1", content);
 
     // Also store in unnamed register
     this.registers.set('"', content);
@@ -85,7 +85,7 @@ class RegisterManager {
    */
   get<T>(): RegisterContent<T> | null {
     const content = this.registers.get(this.currentRegister);
-    this.currentRegister = '"';  // Reset after use
+    this.currentRegister = '"'; // Reset after use
     return content as RegisterContent<T> | null;
   }
 

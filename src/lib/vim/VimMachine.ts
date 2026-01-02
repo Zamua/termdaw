@@ -1,16 +1,22 @@
-import { setup, assign } from 'xstate';
-import type { Operator, Position, RecordedAction } from './types';
+import { setup, assign } from "xstate";
+import type { Operator, Position, RecordedAction } from "./types";
 
 // Events the vim machine can receive
 type VimEvent =
-  | { type: 'DIGIT'; digit: number }
-  | { type: 'OPERATOR'; operator: Operator }
-  | { type: 'MOTION'; motion: string; position: Position; linewise?: boolean; inclusive?: boolean }
-  | { type: 'VISUAL' }
-  | { type: 'VISUAL_BLOCK' }
-  | { type: 'EXECUTE_VISUAL_OP'; operator: Operator }
-  | { type: 'ESCAPE' }
-  | { type: 'RESET' };
+  | { type: "DIGIT"; digit: number }
+  | { type: "OPERATOR"; operator: Operator }
+  | {
+      type: "MOTION";
+      motion: string;
+      position: Position;
+      linewise?: boolean;
+      inclusive?: boolean;
+    }
+  | { type: "VISUAL" }
+  | { type: "VISUAL_BLOCK" }
+  | { type: "EXECUTE_VISUAL_OP"; operator: Operator }
+  | { type: "ESCAPE" }
+  | { type: "RESET" };
 
 // Context stored in the state machine
 interface VimContext {
@@ -29,13 +35,13 @@ export const vimMachine = setup({
   actions: {
     accumulateCount: assign({
       count: ({ context, event }) => {
-        if (event.type !== 'DIGIT') return context.count;
+        if (event.type !== "DIGIT") return context.count;
         return context.count * 10 + event.digit;
       },
     }),
     setOperator: assign({
       operator: ({ event }) => {
-        if (event.type !== 'OPERATOR') return null;
+        if (event.type !== "OPERATOR") return null;
         return event.operator;
       },
     }),
@@ -62,10 +68,10 @@ export const vimMachine = setup({
     }),
     recordAction: assign({
       lastAction: ({ context, event }) => {
-        if (event.type !== 'MOTION') return context.lastAction;
+        if (event.type !== "MOTION") return context.lastAction;
         if (!context.operator) return context.lastAction;
         return {
-          type: 'operator' as const,
+          type: "operator" as const,
           operator: context.operator,
           motion: event.motion,
           count: context.count || 1,
@@ -75,14 +81,14 @@ export const vimMachine = setup({
   },
   guards: {
     isSameOperator: ({ context, event }) => {
-      if (event.type !== 'OPERATOR') return false;
+      if (event.type !== "OPERATOR") return false;
       return context.operator === event.operator;
     },
     hasOperator: ({ context }) => context.operator !== null,
   },
 }).createMachine({
-  id: 'vim',
-  initial: 'normal',
+  id: "vim",
+  initial: "normal",
   context: {
     count: 0,
     operator: null,
@@ -93,128 +99,128 @@ export const vimMachine = setup({
     normal: {
       on: {
         DIGIT: {
-          actions: 'accumulateCount',
+          actions: "accumulateCount",
         },
         OPERATOR: {
-          target: 'operator',
-          actions: ['setOperator'],
+          target: "operator",
+          actions: ["setOperator"],
         },
         VISUAL: {
-          target: 'visual',
-          actions: ['startVisual'],
+          target: "visual",
+          actions: ["startVisual"],
         },
         VISUAL_BLOCK: {
-          target: 'visualBlock',
-          actions: ['startVisual'],
+          target: "visualBlock",
+          actions: ["startVisual"],
         },
         MOTION: {
-          actions: ['clearCount'],
+          actions: ["clearCount"],
         },
         ESCAPE: {
-          actions: 'reset',
+          actions: "reset",
         },
         RESET: {
-          actions: 'reset',
+          actions: "reset",
         },
       },
     },
     operator: {
       on: {
         DIGIT: {
-          actions: 'accumulateCount',
+          actions: "accumulateCount",
         },
         MOTION: {
-          target: 'normal',
-          actions: ['recordAction', 'reset'],
+          target: "normal",
+          actions: ["recordAction", "reset"],
         },
         OPERATOR: [
           {
             // dd, yy, cc - operate on current line
-            guard: 'isSameOperator',
-            target: 'normal',
-            actions: ['recordAction', 'reset'],
+            guard: "isSameOperator",
+            target: "normal",
+            actions: ["recordAction", "reset"],
           },
           {
             // Different operator - switch to new one
-            actions: ['setOperator', 'clearCount'],
+            actions: ["setOperator", "clearCount"],
           },
         ],
         ESCAPE: {
-          target: 'normal',
-          actions: 'reset',
+          target: "normal",
+          actions: "reset",
         },
         RESET: {
-          target: 'normal',
-          actions: 'reset',
+          target: "normal",
+          actions: "reset",
         },
       },
     },
     visual: {
       on: {
         DIGIT: {
-          actions: 'accumulateCount',
+          actions: "accumulateCount",
         },
         MOTION: {
-          actions: ['clearCount'],
+          actions: ["clearCount"],
         },
         OPERATOR: {
           // d, y, c in visual mode executes immediately
-          target: 'normal',
-          actions: ['reset'],
+          target: "normal",
+          actions: ["reset"],
         },
         EXECUTE_VISUAL_OP: {
-          target: 'normal',
-          actions: ['reset'],
+          target: "normal",
+          actions: ["reset"],
         },
         VISUAL_BLOCK: {
-          target: 'visualBlock',
+          target: "visualBlock",
         },
         VISUAL: {
           // v in visual mode exits visual
-          target: 'normal',
-          actions: ['clearVisual', 'clearCount'],
+          target: "normal",
+          actions: ["clearVisual", "clearCount"],
         },
         ESCAPE: {
-          target: 'normal',
-          actions: 'reset',
+          target: "normal",
+          actions: "reset",
         },
         RESET: {
-          target: 'normal',
-          actions: 'reset',
+          target: "normal",
+          actions: "reset",
         },
       },
     },
     visualBlock: {
       on: {
         DIGIT: {
-          actions: 'accumulateCount',
+          actions: "accumulateCount",
         },
         MOTION: {
-          actions: ['clearCount'],
+          actions: ["clearCount"],
         },
         OPERATOR: {
-          target: 'normal',
-          actions: ['reset'],
+          target: "normal",
+          actions: ["reset"],
         },
         EXECUTE_VISUAL_OP: {
-          target: 'normal',
-          actions: ['reset'],
+          target: "normal",
+          actions: ["reset"],
         },
         VISUAL: {
-          target: 'visual',
+          target: "visual",
         },
         VISUAL_BLOCK: {
           // Ctrl+v in visual-block exits
-          target: 'normal',
-          actions: ['clearVisual', 'clearCount'],
+          target: "normal",
+          actions: ["clearVisual", "clearCount"],
         },
         ESCAPE: {
-          target: 'normal',
-          actions: 'reset',
+          target: "normal",
+          actions: "reset",
         },
         RESET: {
-          target: 'normal',
-          actions: 'reset',
+          target: "normal",
+          actions: "reset",
         },
       },
     },

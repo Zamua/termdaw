@@ -1,11 +1,11 @@
-import { useState, useCallback, useEffect } from 'react';
-import { Box, Text, useInput, useStdout } from 'ink';
-import { useIsFocused, useFocusContext } from '../context/FocusContext.js';
-import { useSequencer } from '../context/SequencerContext.js';
-import { useCommands } from '../context/CommandContext.js';
-import { previewSample, getSamplePath } from '../lib/audio.js';
-import { useVim } from '../hooks/useVim.js';
-import type { Position, Range, Key } from '../lib/vim/types.js';
+import { useState, useCallback, useEffect } from "react";
+import { Box, Text, useInput, useStdout } from "ink";
+import { useIsFocused, useFocusContext } from "../context/FocusContext.js";
+import { useSequencer } from "../context/SequencerContext.js";
+import { useCommands } from "../context/CommandContext.js";
+import { previewSample, getSamplePath } from "../lib/audio.js";
+import { useVim } from "../hooks/useVim.js";
+import type { Position, Range, Key } from "../lib/vim/types.js";
 
 const NUM_STEPS = 16;
 const HEADER_ROWS = 5;
@@ -18,8 +18,13 @@ const SAMPLE_ZONE_COL = -2;
 const MUTE_ZONE_COL = -1;
 
 export default function ChannelRack() {
-  const isFocused = useIsFocused('channelRack');
-  const { startSampleSelection, enterPianoRoll, registerCursorSetter, unregisterCursorSetter } = useFocusContext();
+  const isFocused = useIsFocused("channelRack");
+  const {
+    startSampleSelection,
+    enterPianoRoll,
+    registerCursorSetter,
+    unregisterCursorSetter,
+  } = useFocusContext();
   const {
     channels,
     playheadStep,
@@ -30,13 +35,8 @@ export default function ChannelRack() {
     selectedChannel,
     setSelectedChannel,
   } = useSequencer();
-  const {
-    toggleStep,
-    cycleMuteState,
-    clearChannel,
-    clearStepRange,
-    setSteps,
-  } = useCommands();
+  const { toggleStep, cycleMuteState, clearChannel, clearStepRange, setSteps } =
+    useCommands();
   const { stdout } = useStdout();
   const [termHeight, setTermHeight] = useState(stdout?.rows || 24);
   const [cursorChannel, setCursorChannel] = useState(selectedChannel);
@@ -44,7 +44,12 @@ export default function ChannelRack() {
   const [viewportTop, setViewportTop] = useState(0);
 
   // Derive zone from virtual column
-  const cursorZone = cursorCol === SAMPLE_ZONE_COL ? 'sample' : cursorCol === MUTE_ZONE_COL ? 'mute' : 'steps';
+  const cursorZone =
+    cursorCol === SAMPLE_ZONE_COL
+      ? "sample"
+      : cursorCol === MUTE_ZONE_COL
+        ? "mute"
+        : "steps";
   const cursorStep = cursorCol >= 0 ? cursorCol : 0;
 
   // Track terminal height changes
@@ -52,9 +57,9 @@ export default function ChannelRack() {
     const handleResize = () => {
       setTermHeight(stdout?.rows || 24);
     };
-    stdout?.on('resize', handleResize);
+    stdout?.on("resize", handleResize);
     return () => {
-      stdout?.off('resize', handleResize);
+      stdout?.off("resize", handleResize);
     };
   }, [stdout]);
 
@@ -62,7 +67,10 @@ export default function ChannelRack() {
 
   const moveCursor = useCallback(
     (newChannel: number) => {
-      const clampedChannel = Math.max(0, Math.min(channels.length - 1, newChannel));
+      const clampedChannel = Math.max(
+        0,
+        Math.min(channels.length - 1, newChannel),
+      );
       setCursorChannel(clampedChannel);
       setViewportTop((prev) => {
         if (clampedChannel < prev) {
@@ -73,7 +81,7 @@ export default function ChannelRack() {
         return prev;
       });
     },
-    [channels.length, viewportHeight]
+    [channels.length, viewportHeight],
   );
 
   useEffect(() => {
@@ -88,11 +96,11 @@ export default function ChannelRack() {
 
   // Register cursor setter for undo/redo restoration
   useEffect(() => {
-    registerCursorSetter('channelRack', (pos) => {
+    registerCursorSetter("channelRack", (pos) => {
       moveCursor(pos.row);
       setCursorCol(pos.col - 2); // Convert from shifted space back to virtual column
     });
-    return () => unregisterCursorSetter('channelRack');
+    return () => unregisterCursorSetter("channelRack");
   }, [registerCursorSetter, unregisterCursorSetter, moveCursor]);
 
   // Find next note or bar line
@@ -106,7 +114,7 @@ export default function ChannelRack() {
       if (nextBar < NUM_STEPS) return nextBar;
       return 0;
     },
-    [channels]
+    [channels],
   );
 
   const findPrevNote = useCallback(
@@ -119,7 +127,7 @@ export default function ChannelRack() {
       if (prevBar >= 0) return prevBar;
       return 12;
     },
-    [channels]
+    [channels],
   );
 
   // Vim hook - uses virtual column space including zones
@@ -130,7 +138,9 @@ export default function ChannelRack() {
 
     setCursor: (pos: Position) => {
       moveCursor(pos.row);
-      setCursorCol(Math.max(SAMPLE_ZONE_COL, Math.min(NUM_STEPS - 1, pos.col - 2))); // Shift back
+      setCursorCol(
+        Math.max(SAMPLE_ZONE_COL, Math.min(NUM_STEPS - 1, pos.col - 2)),
+      ); // Shift back
     },
 
     motions: {
@@ -144,7 +154,10 @@ export default function ChannelRack() {
         return { position: { row: cursor.row, col: newCol } };
       },
       j: (count, cursor) => ({
-        position: { row: Math.min(channels.length - 1, cursor.row + count), col: cursor.col },
+        position: {
+          row: Math.min(channels.length - 1, cursor.row + count),
+          col: cursor.col,
+        },
         linewise: true,
       }),
       k: (count, cursor) => ({
@@ -193,7 +206,7 @@ export default function ChannelRack() {
       if (!channel) return [];
       return channel.steps.slice(
         Math.min(startRealCol, endRealCol),
-        Math.max(startRealCol, endRealCol) + 1
+        Math.max(startRealCol, endRealCol) + 1,
       );
     },
 
@@ -206,7 +219,7 @@ export default function ChannelRack() {
       const endCol = Math.max(startRealCol, endRealCol);
       const deleted = channel.steps.slice(startCol, endCol + 1);
       clearStepRange(currentPatternId, range.start.row, startCol, endCol, {
-        context: 'channelRack',
+        context: "channelRack",
         position: { row: range.start.row, col: range.start.col },
       });
       return deleted;
@@ -215,7 +228,7 @@ export default function ChannelRack() {
     insertData: (pos: Position, data: boolean[]) => {
       const realCol = Math.max(0, pos.col - 2);
       setSteps(currentPatternId, pos.row, realCol, data, {
-        context: 'channelRack',
+        context: "channelRack",
         position: { row: pos.row, col: pos.col },
       });
     },
@@ -223,25 +236,30 @@ export default function ChannelRack() {
     onCustomAction: (char: string, key: Key, _count: number) => {
       // Helper to get current cursor info for undo/redo
       const getCursorInfo = () => ({
-        context: 'channelRack' as const,
+        context: "channelRack" as const,
         position: { row: cursorChannel, col: cursorCol + 2 },
       });
 
       // x/Enter actions depend on current zone
-      if (key.return || char === 'x') {
-        if (cursorZone === 'sample') {
-          startSampleSelection(cursorChannel, 'channelRack');
+      if (key.return || char === "x") {
+        if (cursorZone === "sample") {
+          startSampleSelection(cursorChannel, "channelRack");
           return true;
-        } else if (cursorZone === 'mute') {
+        } else if (cursorZone === "mute") {
           cycleMuteState(cursorChannel, getCursorInfo());
           return true;
         } else {
-          toggleStep(currentPatternId, cursorChannel, cursorStep, getCursorInfo());
+          toggleStep(
+            currentPatternId,
+            cursorChannel,
+            cursorStep,
+            getCursorInfo(),
+          );
           return true;
         }
       }
 
-      if (char === 's') {
+      if (char === "s") {
         const channel = channels[cursorChannel];
         if (channel) {
           previewSample(getSamplePath(channel.sample));
@@ -249,17 +267,17 @@ export default function ChannelRack() {
         return true;
       }
 
-      if (char === 'm') {
+      if (char === "m") {
         cycleMuteState(cursorChannel, getCursorInfo());
         return true;
       }
 
-      if (char === 'i') {
+      if (char === "i") {
         enterPianoRoll();
         return true;
       }
 
-      if (char === '[') {
+      if (char === "[") {
         const currentIdx = patterns.findIndex((p) => p.id === currentPatternId);
         if (currentIdx > 0) {
           const prevPattern = patterns[currentIdx - 1];
@@ -268,7 +286,7 @@ export default function ChannelRack() {
         return true;
       }
 
-      if (char === ']') {
+      if (char === "]") {
         const currentIdx = patterns.findIndex((p) => p.id === currentPatternId);
         if (currentIdx < patterns.length - 1) {
           const nextPattern = patterns[currentIdx + 1];
@@ -279,7 +297,7 @@ export default function ChannelRack() {
         return true;
       }
 
-      if (char === 'c' && vim.mode === 'normal' && !vim.operator) {
+      if (char === "c" && vim.mode === "normal" && !vim.operator) {
         clearChannel(currentPatternId, cursorChannel, getCursorInfo());
         return true;
       }
@@ -339,8 +357,14 @@ export default function ChannelRack() {
         {Array.from({ length: NUM_STEPS }, (_, i) => (
           <Box key={`header-${i}`} width={2}>
             <Text
-              color={i === playheadStep && isPlaying ? 'green' : i % 4 === 0 ? 'yellow' : 'gray'}
-              bold={i === cursorStep && isFocused && cursorZone === 'steps'}
+              color={
+                i === playheadStep && isPlaying
+                  ? "green"
+                  : i % 4 === 0
+                    ? "yellow"
+                    : "gray"
+              }
+              bold={i === cursorStep && isFocused && cursorZone === "steps"}
             >
               {(i + 1).toString(16).toUpperCase()}
             </Text>
@@ -349,122 +373,147 @@ export default function ChannelRack() {
       </Box>
 
       <Box>
-        <Text dimColor>{'─'.repeat(10 + 2 + 3 + NUM_STEPS * 2)}</Text>
+        <Text dimColor>{"─".repeat(10 + 2 + 3 + NUM_STEPS * 2)}</Text>
       </Box>
 
-      {channels.slice(viewportTop, viewportTop + viewportHeight).map((channel, viewIndex) => {
-        const channelIndex = viewportTop + viewIndex;
-        const isCurrentChannel = channelIndex === cursorChannel && isFocused;
-        const isSampleCursor = isCurrentChannel && cursorZone === 'sample';
-        const isMuteCursor = isCurrentChannel && cursorZone === 'mute';
-        const hasSolo = channels.some((ch) => ch.solo);
-        const isEffectivelyMuted = channel.muted || (hasSolo && !channel.solo);
-        const isEmpty = channel.type === 'sample' && !channel.sample;
+      {channels
+        .slice(viewportTop, viewportTop + viewportHeight)
+        .map((channel, viewIndex) => {
+          const channelIndex = viewportTop + viewIndex;
+          const isCurrentChannel = channelIndex === cursorChannel && isFocused;
+          const isSampleCursor = isCurrentChannel && cursorZone === "sample";
+          const isMuteCursor = isCurrentChannel && cursorZone === "mute";
+          const hasSolo = channels.some((ch) => ch.solo);
+          const isEffectivelyMuted =
+            channel.muted || (hasSolo && !channel.solo);
+          const isEmpty = channel.type === "sample" && !channel.sample;
 
-        return (
-          <Box key={`channel-${channelIndex}`}>
-            <Box width={10}>
-              <Text
-                color={
-                  isSampleCursor
-                    ? 'white'
-                    : isEmpty
-                      ? 'gray'
-                      : isEffectivelyMuted
-                        ? 'gray'
-                        : isCurrentChannel
-                          ? 'cyan'
-                          : 'white'
+          return (
+            <Box key={`channel-${channelIndex}`}>
+              <Box width={10}>
+                <Text
+                  color={
+                    isSampleCursor
+                      ? "white"
+                      : isEmpty
+                        ? "gray"
+                        : isEffectivelyMuted
+                          ? "gray"
+                          : isCurrentChannel
+                            ? "cyan"
+                            : "white"
+                  }
+                  backgroundColor={isSampleCursor ? "blue" : undefined}
+                  bold={isCurrentChannel && !isEmpty}
+                  dimColor={(isEffectivelyMuted || isEmpty) && !isSampleCursor}
+                >
+                  {isEmpty
+                    ? "(empty)".padEnd(8, " ")
+                    : channel.name.slice(0, 8).padEnd(8, " ")}
+                </Text>
+              </Box>
+
+              <Box width={2}>
+                <Text
+                  color={
+                    isEmpty
+                      ? "gray"
+                      : channel.type === "synth"
+                        ? "cyan"
+                        : "gray"
+                  }
+                  dimColor={isEffectivelyMuted || isEmpty}
+                >
+                  {isEmpty ? "·" : channel.type === "synth" ? "♪" : "◌"}
+                </Text>
+              </Box>
+
+              <Box width={3}>
+                <Text
+                  color={
+                    isMuteCursor
+                      ? "white"
+                      : isEmpty
+                        ? "gray"
+                        : channel.solo
+                          ? "yellow"
+                          : channel.muted
+                            ? "red"
+                            : "green"
+                  }
+                  backgroundColor={isMuteCursor ? "blue" : undefined}
+                  bold={isMuteCursor}
+                  dimColor={isEmpty && !isMuteCursor}
+                >
+                  {isEmpty
+                    ? "·"
+                    : channel.solo
+                      ? "S"
+                      : channel.muted
+                        ? "M"
+                        : "○"}
+                </Text>
+              </Box>
+
+              {channel.steps.map((active, stepIndex) => {
+                const isCursor =
+                  channelIndex === cursorChannel &&
+                  stepIndex === cursorStep &&
+                  isFocused &&
+                  cursorZone === "steps";
+                const isPlayheadHere = stepIndex === playheadStep && isPlaying;
+                const isBeat = stepIndex % 4 === 0;
+                const isVisualSelected = isInVisualSelection(
+                  channelIndex,
+                  stepIndex,
+                );
+
+                let bgColor: string | undefined;
+                let fgColor = "gray";
+
+                if (isCursor && isPlayheadHere) {
+                  bgColor = "greenBright";
+                  fgColor = "black";
+                } else if (isCursor) {
+                  bgColor = "blue";
+                  fgColor = "white";
+                } else if (isVisualSelected) {
+                  bgColor = "yellow";
+                  fgColor = "black";
+                } else if (isPlayheadHere) {
+                  bgColor = "green";
+                  fgColor = "black";
                 }
-                backgroundColor={isSampleCursor ? 'blue' : undefined}
-                bold={isCurrentChannel && !isEmpty}
-                dimColor={(isEffectivelyMuted || isEmpty) && !isSampleCursor}
-              >
-                {isEmpty ? '(empty)'.padEnd(8, ' ') : channel.name.slice(0, 8).padEnd(8, ' ')}
-              </Text>
-            </Box>
 
-            <Box width={2}>
-              <Text
-                color={isEmpty ? 'gray' : channel.type === 'synth' ? 'cyan' : 'gray'}
-                dimColor={isEffectivelyMuted || isEmpty}
-              >
-                {isEmpty ? '·' : channel.type === 'synth' ? '♪' : '◌'}
-              </Text>
-            </Box>
-
-            <Box width={3}>
-              <Text
-                color={
-                  isMuteCursor
-                    ? 'white'
-                    : isEmpty
-                      ? 'gray'
-                      : channel.solo
-                        ? 'yellow'
-                        : channel.muted
-                          ? 'red'
-                          : 'green'
+                if (
+                  active &&
+                  !isCursor &&
+                  !isPlayheadHere &&
+                  !isVisualSelected
+                ) {
+                  fgColor = isEffectivelyMuted || isEmpty ? "gray" : "magenta";
+                } else if (active && (isCursor || isVisualSelected)) {
+                  fgColor = "black";
+                } else if (isEmpty && !isCursor) {
+                  fgColor = "gray";
                 }
-                backgroundColor={isMuteCursor ? 'blue' : undefined}
-                bold={isMuteCursor}
-                dimColor={isEmpty && !isMuteCursor}
-              >
-                {isEmpty ? '·' : channel.solo ? 'S' : channel.muted ? 'M' : '○'}
-              </Text>
+
+                return (
+                  <Box key={`step-${channelIndex}-${stepIndex}`} width={2}>
+                    <Text
+                      backgroundColor={bgColor}
+                      color={fgColor}
+                      bold={active || isPlayheadHere}
+                      dimColor={isEmpty && !isCursor && !isPlayheadHere}
+                    >
+                      {active ? "●" : isBeat ? "┃" : "│"}
+                    </Text>
+                  </Box>
+                );
+              })}
             </Box>
-
-            {channel.steps.map((active, stepIndex) => {
-              const isCursor =
-                channelIndex === cursorChannel &&
-                stepIndex === cursorStep &&
-                isFocused &&
-                cursorZone === 'steps';
-              const isPlayheadHere = stepIndex === playheadStep && isPlaying;
-              const isBeat = stepIndex % 4 === 0;
-              const isVisualSelected = isInVisualSelection(channelIndex, stepIndex);
-
-              let bgColor: string | undefined;
-              let fgColor = 'gray';
-
-              if (isCursor && isPlayheadHere) {
-                bgColor = 'greenBright';
-                fgColor = 'black';
-              } else if (isCursor) {
-                bgColor = 'blue';
-                fgColor = 'white';
-              } else if (isVisualSelected) {
-                bgColor = 'yellow';
-                fgColor = 'black';
-              } else if (isPlayheadHere) {
-                bgColor = 'green';
-                fgColor = 'black';
-              }
-
-              if (active && !isCursor && !isPlayheadHere && !isVisualSelected) {
-                fgColor = isEffectivelyMuted || isEmpty ? 'gray' : 'magenta';
-              } else if (active && (isCursor || isVisualSelected)) {
-                fgColor = 'black';
-              } else if (isEmpty && !isCursor) {
-                fgColor = 'gray';
-              }
-
-              return (
-                <Box key={`step-${channelIndex}-${stepIndex}`} width={2}>
-                  <Text
-                    backgroundColor={bgColor}
-                    color={fgColor}
-                    bold={active || isPlayheadHere}
-                    dimColor={isEmpty && !isCursor && !isPlayheadHere}
-                  >
-                    {active ? '●' : isBeat ? '┃' : '│'}
-                  </Text>
-                </Box>
-              );
-            })}
-          </Box>
-        );
-      })}
+          );
+        })}
     </Box>
   );
 }

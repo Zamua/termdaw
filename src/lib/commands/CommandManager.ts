@@ -1,5 +1,5 @@
-import type { Command, CommandContext, CommandPosition } from './Command.js';
-import { BatchCommand } from './Command.js';
+import type { Command, CommandContext, CommandPosition } from "./Command.js";
+import { BatchCommand } from "./Command.js";
 
 /**
  * Result of an undo/redo operation.

@@ -4,12 +4,12 @@ import {
   AudioBufferSourceNode,
   GainNode,
   AnalyserNode,
-} from 'node-web-audio-api';
-import path from 'path';
-import fs from 'fs';
+} from "node-web-audio-api";
+import path from "path";
+import fs from "fs";
 
 // Debug logging to file
-const LOG_FILE = '/tmp/daw-audio.log';
+const LOG_FILE = "/tmp/daw-audio.log";
 function log(msg: string) {
   fs.appendFileSync(LOG_FILE, `${new Date().toISOString()} ${msg}\n`);
 }
@@ -26,8 +26,6 @@ const bufferCache = new Map<string, AudioBuffer>();
 const activeSources = new Set<AudioBufferSourceNode>();
 let previewSource: AudioBufferSourceNode | null = null;
 
-
-
 // Initialize audio context lazily
 export function getAudioContext(): AudioContext {
   if (!audioContext) {
@@ -36,8 +34,8 @@ export function getAudioContext(): AudioContext {
     // Create master gain -> analyser -> destination chain
     masterGain = new GainNode(audioContext, { gain: 1.0 });
     analyser = new AnalyserNode(audioContext, {
-      fftSize: 256,  // Smaller = faster response
-      smoothingTimeConstant: 0.3,  // Less smoothing = more responsive
+      fftSize: 256, // Smaller = faster response
+      smoothingTimeConstant: 0.3, // Less smoothing = more responsive
     });
 
     masterGain.connect(analyser);
@@ -45,7 +43,7 @@ export function getAudioContext(): AudioContext {
   }
 
   // Ensure context is running (may be suspended)
-  if (audioContext.state === 'suspended') {
+  if (audioContext.state === "suspended") {
     audioContext.resume();
   }
 
@@ -100,14 +98,14 @@ async function loadAudioBuffer(filePath: string): Promise<AudioBuffer | null> {
     const fileBuffer = fs.readFileSync(filePath);
     const arrayBuffer = fileBuffer.buffer.slice(
       fileBuffer.byteOffset,
-      fileBuffer.byteOffset + fileBuffer.byteLength
+      fileBuffer.byteOffset + fileBuffer.byteLength,
     );
 
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
     bufferCache.set(filePath, audioBuffer);
     return audioBuffer;
   } catch (err) {
-    console.error('Error loading audio:', filePath, err);
+    console.error("Error loading audio:", filePath, err);
     return null;
   }
 }
@@ -137,7 +135,10 @@ export async function playSample(samplePath: string): Promise<void> {
 const BASE_PITCH = 60;
 
 // Play sample with pitch shift (polyphonic, for sequencer)
-export async function playSamplePitched(samplePath: string, pitch: number): Promise<void> {
+export async function playSamplePitched(
+  samplePath: string,
+  pitch: number,
+): Promise<void> {
   const buffer = await loadAudioBuffer(samplePath);
   if (!buffer || !masterGain) return;
 
@@ -165,7 +166,7 @@ export function stopPreview(): void {
   if (previewSource) {
     try {
       previewSource.stop();
-    } catch (e) {
+    } catch {
       // Already stopped
     }
     previewSource = null;
@@ -197,7 +198,10 @@ export async function previewSample(samplePath: string): Promise<void> {
 }
 
 // Preview sample with pitch shift (exclusive, stops previous preview)
-export async function previewSamplePitched(samplePath: string, pitch: number): Promise<void> {
+export async function previewSamplePitched(
+  samplePath: string,
+  pitch: number,
+): Promise<void> {
   stopPreview();
 
   const buffer = await loadAudioBuffer(samplePath);
@@ -230,7 +234,7 @@ export function stopPlayback(): void {
   for (const source of activeSources) {
     try {
       source.stop();
-    } catch (e) {
+    } catch {
       // Already stopped
     }
   }
@@ -239,7 +243,7 @@ export function stopPlayback(): void {
 
 // Get the samples directory path
 export function getSamplesDir(): string {
-  return path.join(process.cwd(), 'samples');
+  return path.join(process.cwd(), "samples");
 }
 
 // Get full path to a sample

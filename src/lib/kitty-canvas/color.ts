@@ -57,7 +57,7 @@ export function hslToRgb(h: number, s: number, l: number): RGB {
  * Parse any color format to RGBA
  */
 export function toRgba(color: Color, alpha = 255): RGBA {
-  if (typeof color === 'string') {
+  if (typeof color === "string") {
     const rgb = hexToRgb(color);
     return [...rgb, alpha];
   }

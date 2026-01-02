@@ -1,10 +1,13 @@
-declare module 'play-sound' {
+declare module "play-sound" {
   interface PlayOptions {
     player?: string;
   }
 
   interface Player {
-    play(path: string, callback?: (err: any) => void): {
+    play(
+      path: string,
+      callback?: (err: Error | null) => void,
+    ): {
       kill: () => void;
     };
   }

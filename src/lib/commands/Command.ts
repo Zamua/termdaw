@@ -9,7 +9,7 @@ export interface CommandPosition {
 /**
  * Context identifier for where a command applies.
  */
-export type CommandContext = 'channelRack' | 'pianoRoll' | 'playlist';
+export type CommandContext = "channelRack" | "pianoRoll" | "playlist";
 
 /**
  * Base interface for all commands.
@@ -36,14 +36,14 @@ export interface Command {
  * Batch multiple commands into a single undoable unit.
  */
 export class BatchCommand implements Command {
-  readonly type = 'batch';
+  readonly type = "batch";
   readonly description: string;
   readonly context?: CommandContext;
   readonly position?: CommandPosition;
 
   constructor(
     private commands: Command[],
-    description: string
+    description: string,
   ) {
     this.description = description;
     // Use first command's context and position

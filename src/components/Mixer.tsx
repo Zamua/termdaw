@@ -1,4 +1,4 @@
-import { Box, Text } from 'ink';
+import { Box, Text } from "ink";
 
 interface MixerChannel {
   name: string;
@@ -9,14 +9,14 @@ interface MixerChannel {
 }
 
 const defaultChannels: MixerChannel[] = [
-  { name: 'Master', volume: 80, pan: 0, muted: false, solo: false },
-  { name: 'Kick', volume: 75, pan: 0, muted: false, solo: false },
-  { name: 'Snare', volume: 70, pan: 0, muted: false, solo: false },
-  { name: 'HiHat', volume: 65, pan: 10, muted: false, solo: false },
-  { name: 'OpenHat', volume: 60, pan: -10, muted: false, solo: false },
-  { name: 'Crash', volume: 55, pan: 20, muted: false, solo: false },
-  { name: 'Tom Hi', volume: 65, pan: 15, muted: false, solo: false },
-  { name: 'Tom Lo', volume: 65, pan: -15, muted: false, solo: false },
+  { name: "Master", volume: 80, pan: 0, muted: false, solo: false },
+  { name: "Kick", volume: 75, pan: 0, muted: false, solo: false },
+  { name: "Snare", volume: 70, pan: 0, muted: false, solo: false },
+  { name: "HiHat", volume: 65, pan: 10, muted: false, solo: false },
+  { name: "OpenHat", volume: 60, pan: -10, muted: false, solo: false },
+  { name: "Crash", volume: 55, pan: 20, muted: false, solo: false },
+  { name: "Tom Hi", volume: 65, pan: 15, muted: false, solo: false },
+  { name: "Tom Lo", volume: 65, pan: -15, muted: false, solo: false },
 ];
 
 function VolumeBar({ volume }: { volume: number }) {
@@ -28,17 +28,17 @@ function VolumeBar({ volume }: { volume: number }) {
       {Array.from({ length: maxHeight }, (_, i) => {
         const level = maxHeight - i;
         const isFilled = level <= filled;
-        let color: string = 'gray';
+        let color: string = "gray";
 
         if (isFilled) {
-          if (level > maxHeight * 0.8) color = 'red';
-          else if (level > maxHeight * 0.6) color = 'yellow';
-          else color = 'green';
+          if (level > maxHeight * 0.8) color = "red";
+          else if (level > maxHeight * 0.6) color = "yellow";
+          else color = "green";
         }
 
         return (
           <Text key={i} color={color}>
-            {isFilled ? '█' : '░'}
+            {isFilled ? "█" : "░"}
           </Text>
         );
       })}
@@ -57,7 +57,7 @@ export default function Mixer() {
             flexDirection="column"
             alignItems="center"
             borderStyle="single"
-            borderColor={index === 0 ? 'yellow' : 'gray'}
+            borderColor={index === 0 ? "yellow" : "gray"}
             paddingX={1}
             width={8}
           >
@@ -69,15 +69,12 @@ export default function Mixer() {
 
             {/* Mute/Solo */}
             <Box gap={1}>
-              <Text color={channel.muted ? 'red' : 'gray'}>M</Text>
-              <Text color={channel.solo ? 'yellow' : 'gray'}>S</Text>
+              <Text color={channel.muted ? "red" : "gray"}>M</Text>
+              <Text color={channel.solo ? "yellow" : "gray"}>S</Text>
             </Box>
 
             {/* Channel name */}
-            <Text
-              color={index === 0 ? 'yellow' : 'white'}
-              bold={index === 0}
-            >
+            <Text color={index === 0 ? "yellow" : "white"} bold={index === 0}>
               {channel.name.slice(0, 6)}
             </Text>
           </Box>

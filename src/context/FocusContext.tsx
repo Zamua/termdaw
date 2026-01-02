@@ -1,7 +1,20 @@
-import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useRef,
+  type ReactNode,
+} from "react";
 
-export type FocusPanel = 'browser' | 'channelRack' | 'playlist' | 'mixer' | 'transport' | 'pianoRoll';
-export type ViewMode = 'channelRack' | 'playlist' | 'pianoRoll' | 'mixer';
+export type FocusPanel =
+  | "browser"
+  | "channelRack"
+  | "playlist"
+  | "mixer"
+  | "transport"
+  | "pianoRoll";
+export type ViewMode = "channelRack" | "playlist" | "pianoRoll" | "mixer";
 
 // Cursor position for undo/redo restoration
 export interface CursorPosition {
@@ -10,7 +23,7 @@ export interface CursorPosition {
 }
 
 // Context identifier matching CommandContext
-export type CursorContext = 'channelRack' | 'pianoRoll' | 'playlist';
+export type CursorContext = "channelRack" | "pianoRoll" | "playlist";
 
 interface SampleSelectionState {
   isSelecting: boolean;
@@ -41,8 +54,8 @@ interface FocusContextType {
 const FocusContext = createContext<FocusContextType | null>(null);
 
 export function FocusProvider({ children }: { children: ReactNode }) {
-  const [focusedPanel, setFocusedPanel] = useState<FocusPanel>('channelRack');
-  const [viewMode, setViewMode] = useState<ViewMode>('channelRack');
+  const [focusedPanel, setFocusedPanel] = useState<FocusPanel>("channelRack");
+  const [viewMode, setViewMode] = useState<ViewMode>("channelRack");
   const [sampleSelection, setSampleSelection] = useState<SampleSelectionState>({
     isSelecting: false,
     channelIndex: null,
@@ -52,55 +65,64 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   // Cursor setters registered by components
   const cursorSettersRef = useRef<Map<CursorContext, CursorSetter>>(new Map());
 
-  const registerCursorSetter = useCallback((context: CursorContext, setter: CursorSetter) => {
-    cursorSettersRef.current.set(context, setter);
-  }, []);
+  const registerCursorSetter = useCallback(
+    (context: CursorContext, setter: CursorSetter) => {
+      cursorSettersRef.current.set(context, setter);
+    },
+    [],
+  );
 
   const unregisterCursorSetter = useCallback((context: CursorContext) => {
     cursorSettersRef.current.delete(context);
   }, []);
 
-  const restoreCursor = useCallback((context: CursorContext, position: CursorPosition) => {
-    // Switch to the appropriate view/panel
-    if (context === 'channelRack') {
-      setViewMode('channelRack');
-      setFocusedPanel('channelRack');
-    } else if (context === 'pianoRoll') {
-      setViewMode('pianoRoll');
-      setFocusedPanel('pianoRoll');
-    } else if (context === 'playlist') {
-      setViewMode('playlist');
-      setFocusedPanel('playlist');
-    }
+  const restoreCursor = useCallback(
+    (context: CursorContext, position: CursorPosition) => {
+      // Switch to the appropriate view/panel
+      if (context === "channelRack") {
+        setViewMode("channelRack");
+        setFocusedPanel("channelRack");
+      } else if (context === "pianoRoll") {
+        setViewMode("pianoRoll");
+        setFocusedPanel("pianoRoll");
+      } else if (context === "playlist") {
+        setViewMode("playlist");
+        setFocusedPanel("playlist");
+      }
 
-    // Call the registered cursor setter
-    const setter = cursorSettersRef.current.get(context);
-    if (setter) {
-      setter(position);
-    }
-  }, []);
+      // Call the registered cursor setter
+      const setter = cursorSettersRef.current.get(context);
+      if (setter) {
+        setter(position);
+      }
+    },
+    [],
+  );
 
   const enterPianoRoll = useCallback(() => {
-    setViewMode('pianoRoll');
-    setFocusedPanel('pianoRoll');
+    setViewMode("pianoRoll");
+    setFocusedPanel("pianoRoll");
   }, []);
 
   const exitPianoRoll = useCallback(() => {
-    setViewMode('channelRack');
-    setFocusedPanel('channelRack');
+    setViewMode("channelRack");
+    setFocusedPanel("channelRack");
   }, []);
 
-  const startSampleSelection = useCallback((channelIndex: number, returnPanel: FocusPanel) => {
-    setSampleSelection({
-      isSelecting: true,
-      channelIndex,
-      returnPanel,
-    });
-    setFocusedPanel('browser');
-  }, []);
+  const startSampleSelection = useCallback(
+    (channelIndex: number, returnPanel: FocusPanel) => {
+      setSampleSelection({
+        isSelecting: true,
+        channelIndex,
+        returnPanel,
+      });
+      setFocusedPanel("browser");
+    },
+    [],
+  );
 
   const cancelSampleSelection = useCallback(() => {
-    const returnPanel = sampleSelection.returnPanel || 'channelRack';
+    const returnPanel = sampleSelection.returnPanel || "channelRack";
     setSampleSelection({
       isSelecting: false,
       channelIndex: null,
@@ -111,7 +133,7 @@ export function FocusProvider({ children }: { children: ReactNode }) {
 
   const completeSampleSelection = useCallback(() => {
     const channelIndex = sampleSelection.channelIndex;
-    const returnPanel = sampleSelection.returnPanel || 'channelRack';
+    const returnPanel = sampleSelection.returnPanel || "channelRack";
     setSampleSelection({
       isSelecting: false,
       channelIndex: null,
@@ -122,21 +144,23 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   }, [sampleSelection.channelIndex, sampleSelection.returnPanel]);
 
   return (
-    <FocusContext.Provider value={{
-      focusedPanel,
-      setFocusedPanel,
-      viewMode,
-      setViewMode,
-      enterPianoRoll,
-      exitPianoRoll,
-      sampleSelection,
-      startSampleSelection,
-      cancelSampleSelection,
-      completeSampleSelection,
-      registerCursorSetter,
-      unregisterCursorSetter,
-      restoreCursor,
-    }}>
+    <FocusContext.Provider
+      value={{
+        focusedPanel,
+        setFocusedPanel,
+        viewMode,
+        setViewMode,
+        enterPianoRoll,
+        exitPianoRoll,
+        sampleSelection,
+        startSampleSelection,
+        cancelSampleSelection,
+        completeSampleSelection,
+        registerCursorSetter,
+        unregisterCursorSetter,
+        restoreCursor,
+      }}
+    >
       {children}
     </FocusContext.Provider>
   );
@@ -145,7 +169,7 @@ export function FocusProvider({ children }: { children: ReactNode }) {
 export function useFocusContext() {
   const context = useContext(FocusContext);
   if (!context) {
-    throw new Error('useFocusContext must be used within FocusProvider');
+    throw new Error("useFocusContext must be used within FocusProvider");
   }
   return context;
 }

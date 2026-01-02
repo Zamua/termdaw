@@ -4,19 +4,21 @@
  * Run with: bun src/lib/kitty-canvas-demo.ts
  */
 
-import { KittyCanvas, Terminal } from './kitty-canvas/index.js';
+import { KittyCanvas, Terminal } from "./kitty-canvas/index.js";
 
 async function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function demo() {
-  console.log('Kitty Graphics Protocol Demo\n');
+  console.log("Kitty Graphics Protocol Demo\n");
   console.log(`Terminal: ${process.env.TERM_PROGRAM || process.env.TERM}`);
-  console.log(`Supported: ${Terminal.isKittySupported() ? 'Yes' : 'Maybe not'}\n`);
+  console.log(
+    `Supported: ${Terminal.isKittySupported() ? "Yes" : "Maybe not"}\n`,
+  );
 
   // Simple rectangle demo
-  console.log('1. Drawing a gradient with shapes...\n');
+  console.log("1. Drawing a gradient with shapes...\n");
   const canvas = new KittyCanvas({ width: 400, height: 200 });
 
   // Draw a gradient-ish pattern
@@ -38,12 +40,12 @@ async function demo() {
   canvas.circle(320, 140, 48, 255, 255, 255, 255);
 
   canvas.render();
-  console.log('\n\n\n\n');  // Space for the image
+  console.log("\n\n\n\n"); // Space for the image
 
   await sleep(2000);
 
   // Animation demo
-  console.log('\n2. Animated bouncing ball...\n');
+  console.log("\n2. Animated bouncing ball...\n");
   const animCanvas = new KittyCanvas({ width: 600, height: 200 });
 
   Terminal.hideCursor();
@@ -86,7 +88,7 @@ async function demo() {
   animCanvas.destroy();
   canvas.destroy();
 
-  console.log('\n\nDemo complete!');
+  console.log("\n\nDemo complete!");
 }
 
 demo().catch(console.error);

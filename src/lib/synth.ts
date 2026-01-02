@@ -1,32 +1,32 @@
-import { OscillatorNode, GainNode, BiquadFilterNode } from 'node-web-audio-api';
-import { getAudioContext, getMasterGain } from './audio';
+import { OscillatorNode, GainNode, BiquadFilterNode } from "node-web-audio-api";
+import { getAudioContext, getMasterGain } from "./audio";
 
 // Waveform types
-export type WaveformType = 'sine' | 'square' | 'sawtooth' | 'triangle';
+export type WaveformType = "sine" | "square" | "sawtooth" | "triangle";
 
 // Oscillator settings
 export interface OscillatorSettings {
   enabled: boolean;
   waveform: WaveformType;
-  coarse: number;      // Semitones offset (-24 to +24)
-  fine: number;        // Cents offset (-100 to +100)
-  volume: number;      // 0 to 1
+  coarse: number; // Semitones offset (-24 to +24)
+  fine: number; // Cents offset (-100 to +100)
+  volume: number; // 0 to 1
 }
 
 // ADSR envelope settings
 export interface EnvelopeSettings {
-  attack: number;      // seconds (0.001 to 2)
-  decay: number;       // seconds (0.001 to 2)
-  sustain: number;     // level 0 to 1
-  release: number;     // seconds (0.001 to 3)
+  attack: number; // seconds (0.001 to 2)
+  decay: number; // seconds (0.001 to 2)
+  sustain: number; // level 0 to 1
+  release: number; // seconds (0.001 to 3)
 }
 
 // Filter settings
 export interface FilterSettings {
   enabled: boolean;
-  type: 'lowpass' | 'highpass' | 'bandpass';
-  cutoff: number;      // Hz (20 to 20000)
-  resonance: number;   // Q factor (0.1 to 30)
+  type: "lowpass" | "highpass" | "bandpass";
+  cutoff: number; // Hz (20 to 20000)
+  resonance: number; // Q factor (0.1 to 30)
 }
 
 // Complete synth patch
@@ -40,11 +40,11 @@ export interface SynthPatch {
 
 // Default patch (basic saw lead)
 export const defaultPatch: SynthPatch = {
-  name: 'Init',
+  name: "Init",
   oscillators: [
-    { enabled: true, waveform: 'sawtooth', coarse: 0, fine: 0, volume: 0.5 },
-    { enabled: false, waveform: 'square', coarse: 0, fine: 0, volume: 0.3 },
-    { enabled: false, waveform: 'sine', coarse: -12, fine: 0, volume: 0.4 },
+    { enabled: true, waveform: "sawtooth", coarse: 0, fine: 0, volume: 0.5 },
+    { enabled: false, waveform: "square", coarse: 0, fine: 0, volume: 0.3 },
+    { enabled: false, waveform: "sine", coarse: -12, fine: 0, volume: 0.4 },
   ],
   envelope: {
     attack: 0.01,
@@ -54,7 +54,7 @@ export const defaultPatch: SynthPatch = {
   },
   filter: {
     enabled: true,
-    type: 'lowpass',
+    type: "lowpass",
     cutoff: 2000,
     resonance: 1,
   },
@@ -65,47 +65,59 @@ export const defaultPatch: SynthPatch = {
 export const presets: SynthPatch[] = [
   defaultPatch,
   {
-    name: 'Soft Pad',
+    name: "Soft Pad",
     oscillators: [
-      { enabled: true, waveform: 'sine', coarse: 0, fine: 0, volume: 0.6 },
-      { enabled: true, waveform: 'triangle', coarse: 12, fine: 7, volume: 0.3 },
-      { enabled: true, waveform: 'sine', coarse: -12, fine: 0, volume: 0.4 },
+      { enabled: true, waveform: "sine", coarse: 0, fine: 0, volume: 0.6 },
+      { enabled: true, waveform: "triangle", coarse: 12, fine: 7, volume: 0.3 },
+      { enabled: true, waveform: "sine", coarse: -12, fine: 0, volume: 0.4 },
     ],
     envelope: { attack: 0.3, decay: 0.2, sustain: 0.8, release: 0.8 },
-    filter: { enabled: true, type: 'lowpass', cutoff: 1500, resonance: 0.5 },
+    filter: { enabled: true, type: "lowpass", cutoff: 1500, resonance: 0.5 },
     masterVolume: 0.4,
   },
   {
-    name: 'Bass',
+    name: "Bass",
     oscillators: [
-      { enabled: true, waveform: 'sawtooth', coarse: -12, fine: 0, volume: 0.6 },
-      { enabled: true, waveform: 'square', coarse: -12, fine: -10, volume: 0.4 },
-      { enabled: false, waveform: 'sine', coarse: 0, fine: 0, volume: 0 },
+      {
+        enabled: true,
+        waveform: "sawtooth",
+        coarse: -12,
+        fine: 0,
+        volume: 0.6,
+      },
+      {
+        enabled: true,
+        waveform: "square",
+        coarse: -12,
+        fine: -10,
+        volume: 0.4,
+      },
+      { enabled: false, waveform: "sine", coarse: 0, fine: 0, volume: 0 },
     ],
     envelope: { attack: 0.01, decay: 0.2, sustain: 0.4, release: 0.1 },
-    filter: { enabled: true, type: 'lowpass', cutoff: 800, resonance: 2 },
+    filter: { enabled: true, type: "lowpass", cutoff: 800, resonance: 2 },
     masterVolume: 0.6,
   },
   {
-    name: 'Pluck',
+    name: "Pluck",
     oscillators: [
-      { enabled: true, waveform: 'sawtooth', coarse: 0, fine: 0, volume: 0.5 },
-      { enabled: true, waveform: 'square', coarse: 0, fine: 5, volume: 0.3 },
-      { enabled: false, waveform: 'sine', coarse: 0, fine: 0, volume: 0 },
+      { enabled: true, waveform: "sawtooth", coarse: 0, fine: 0, volume: 0.5 },
+      { enabled: true, waveform: "square", coarse: 0, fine: 5, volume: 0.3 },
+      { enabled: false, waveform: "sine", coarse: 0, fine: 0, volume: 0 },
     ],
     envelope: { attack: 0.001, decay: 0.15, sustain: 0.1, release: 0.2 },
-    filter: { enabled: true, type: 'lowpass', cutoff: 3000, resonance: 1.5 },
+    filter: { enabled: true, type: "lowpass", cutoff: 3000, resonance: 1.5 },
     masterVolume: 0.5,
   },
   {
-    name: 'Lead',
+    name: "Lead",
     oscillators: [
-      { enabled: true, waveform: 'square', coarse: 0, fine: 0, volume: 0.4 },
-      { enabled: true, waveform: 'sawtooth', coarse: 0, fine: 7, volume: 0.4 },
-      { enabled: true, waveform: 'square', coarse: 12, fine: 0, volume: 0.2 },
+      { enabled: true, waveform: "square", coarse: 0, fine: 0, volume: 0.4 },
+      { enabled: true, waveform: "sawtooth", coarse: 0, fine: 7, volume: 0.4 },
+      { enabled: true, waveform: "square", coarse: 12, fine: 0, volume: 0.2 },
     ],
     envelope: { attack: 0.01, decay: 0.1, sustain: 0.8, release: 0.2 },
-    filter: { enabled: true, type: 'lowpass', cutoff: 4000, resonance: 2 },
+    filter: { enabled: true, type: "lowpass", cutoff: 4000, resonance: 2 },
     masterVolume: 0.4,
   },
 ];
@@ -131,7 +143,7 @@ export function playSynthNote(
   patch: SynthPatch,
   pitch: number,
   duration: number,
-  noteId?: string
+  noteId?: string,
 ): void {
   const ctx = getAudioContext();
   const now = ctx.currentTime;
@@ -215,9 +227,12 @@ export function playSynthNote(
   activeVoices.set(id, voice);
 
   // Cleanup after note ends
-  setTimeout(() => {
-    activeVoices.delete(id);
-  }, (releaseStartTime + release + 0.2 - now) * 1000);
+  setTimeout(
+    () => {
+      activeVoices.delete(id);
+    },
+    (releaseStartTime + release + 0.2 - now) * 1000,
+  );
 }
 
 // Preview a synth note (for piano roll preview)
@@ -280,7 +295,10 @@ export function previewSynthNote(patch: SynthPatch, pitch: number): void {
   const { attack, decay, sustain } = patch.envelope;
   envelopeGain.gain.setValueAtTime(0, now);
   envelopeGain.gain.linearRampToValueAtTime(1, now + Math.min(attack, 0.05));
-  envelopeGain.gain.linearRampToValueAtTime(sustain, now + Math.min(attack, 0.05) + decay);
+  envelopeGain.gain.linearRampToValueAtTime(
+    sustain,
+    now + Math.min(attack, 0.05) + decay,
+  );
 
   for (const osc of oscillators) {
     osc.start(now);
@@ -291,12 +309,12 @@ export function previewSynthNote(patch: SynthPatch, pitch: number): void {
     gainNodes,
     envelope: envelopeGain,
     filter: filterNode,
-    noteId: 'preview',
+    noteId: "preview",
   };
 
   // Auto-stop after 1 second
   setTimeout(() => {
-    if (previewVoice?.noteId === 'preview') {
+    if (previewVoice?.noteId === "preview") {
       stopSynthPreview();
     }
   }, 1000);
@@ -310,7 +328,10 @@ export function stopSynthPreview(): void {
 
   // Quick release
   previewVoice.envelope.gain.cancelScheduledValues(now);
-  previewVoice.envelope.gain.setValueAtTime(previewVoice.envelope.gain.value, now);
+  previewVoice.envelope.gain.setValueAtTime(
+    previewVoice.envelope.gain.value,
+    now,
+  );
   previewVoice.envelope.gain.linearRampToValueAtTime(0.0001, now + 0.05);
 
   for (const osc of previewVoice.oscillators) {

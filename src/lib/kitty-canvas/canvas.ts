@@ -2,14 +2,14 @@
  * KittyCanvas - Canvas-like API for Kitty graphics protocol
  */
 
-import { Terminal } from './terminal.js';
+import { Terminal } from "./terminal.js";
 
 export interface KittyCanvasOptions {
   width: number;
   height: number;
-  x?: number;      // Position in terminal cells
+  x?: number; // Position in terminal cells
   y?: number;
-  id?: number;     // Image ID for updates
+  id?: number; // Image ID for updates
 }
 
 /**
@@ -18,7 +18,7 @@ export interface KittyCanvasOptions {
 export class KittyCanvas {
   readonly width: number;
   readonly height: number;
-  readonly data: Uint8Array;  // RGBA buffer
+  readonly data: Uint8Array; // RGBA buffer
 
   private id: number;
   private x: number;
@@ -52,7 +52,14 @@ export class KittyCanvas {
   /**
    * Set a single pixel
    */
-  setPixel(x: number, y: number, r: number, g: number, b: number, a = 255): void {
+  setPixel(
+    x: number,
+    y: number,
+    r: number,
+    g: number,
+    b: number,
+    a = 255,
+  ): void {
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) return;
     const i = (y * this.width + x) * 4;
     this.data[i] = r;
@@ -73,14 +80,23 @@ export class KittyCanvas {
       this.data[i] ?? 0,
       this.data[i + 1] ?? 0,
       this.data[i + 2] ?? 0,
-      this.data[i + 3] ?? 0
+      this.data[i + 3] ?? 0,
     ];
   }
 
   /**
    * Fill a rectangle
    */
-  fillRect(x: number, y: number, w: number, h: number, r: number, g: number, b: number, a = 255): void {
+  fillRect(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    r: number,
+    g: number,
+    b: number,
+    a = 255,
+  ): void {
     const x1 = Math.max(0, x);
     const y1 = Math.max(0, y);
     const x2 = Math.min(this.width, x + w);
@@ -96,17 +112,34 @@ export class KittyCanvas {
   /**
    * Stroke a rectangle (outline only)
    */
-  strokeRect(x: number, y: number, w: number, h: number, r: number, g: number, b: number, a = 255): void {
-    this.hline(x, x + w - 1, y, r, g, b, a);           // Top
-    this.hline(x, x + w - 1, y + h - 1, r, g, b, a);   // Bottom
-    this.vline(x, y, y + h - 1, r, g, b, a);           // Left
-    this.vline(x + w - 1, y, y + h - 1, r, g, b, a);   // Right
+  strokeRect(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    r: number,
+    g: number,
+    b: number,
+    a = 255,
+  ): void {
+    this.hline(x, x + w - 1, y, r, g, b, a); // Top
+    this.hline(x, x + w - 1, y + h - 1, r, g, b, a); // Bottom
+    this.vline(x, y, y + h - 1, r, g, b, a); // Left
+    this.vline(x + w - 1, y, y + h - 1, r, g, b, a); // Right
   }
 
   /**
    * Draw a horizontal line
    */
-  hline(x1: number, x2: number, y: number, r: number, g: number, b: number, a = 255): void {
+  hline(
+    x1: number,
+    x2: number,
+    y: number,
+    r: number,
+    g: number,
+    b: number,
+    a = 255,
+  ): void {
     const start = Math.max(0, Math.min(x1, x2));
     const end = Math.min(this.width - 1, Math.max(x1, x2));
     for (let x = start; x <= end; x++) {
@@ -117,7 +150,15 @@ export class KittyCanvas {
   /**
    * Draw a vertical line
    */
-  vline(x: number, y1: number, y2: number, r: number, g: number, b: number, a = 255): void {
+  vline(
+    x: number,
+    y1: number,
+    y2: number,
+    r: number,
+    g: number,
+    b: number,
+    a = 255,
+  ): void {
     const start = Math.max(0, Math.min(y1, y2));
     const end = Math.min(this.height - 1, Math.max(y1, y2));
     for (let y = start; y <= end; y++) {
@@ -128,7 +169,16 @@ export class KittyCanvas {
   /**
    * Draw a line using Bresenham's algorithm
    */
-  line(x1: number, y1: number, x2: number, y2: number, r: number, g: number, b: number, a = 255): void {
+  line(
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    r: number,
+    g: number,
+    b: number,
+    a = 255,
+  ): void {
     const dx = Math.abs(x2 - x1);
     const dy = Math.abs(y2 - y1);
     const sx = x1 < x2 ? 1 : -1;
@@ -156,7 +206,15 @@ export class KittyCanvas {
   /**
    * Draw a circle using midpoint algorithm
    */
-  circle(cx: number, cy: number, radius: number, r: number, g: number, b: number, a = 255): void {
+  circle(
+    cx: number,
+    cy: number,
+    radius: number,
+    r: number,
+    g: number,
+    b: number,
+    a = 255,
+  ): void {
     let x = radius;
     let y = 0;
     let err = 0;
@@ -183,7 +241,15 @@ export class KittyCanvas {
   /**
    * Fill a circle
    */
-  fillCircle(cx: number, cy: number, radius: number, r: number, g: number, b: number, a = 255): void {
+  fillCircle(
+    cx: number,
+    cy: number,
+    radius: number,
+    r: number,
+    g: number,
+    b: number,
+    a = 255,
+  ): void {
     for (let y = -radius; y <= radius; y++) {
       for (let x = -radius; x <= radius; x++) {
         if (x * x + y * y <= radius * radius) {
@@ -197,31 +263,34 @@ export class KittyCanvas {
    * Encode the canvas data for Kitty protocol
    */
   private encodeData(): string {
-    return Buffer.from(this.data).toString('base64');
+    return Buffer.from(this.data).toString("base64");
   }
 
   /**
    * Build the Kitty graphics command
    */
-  private buildCommand(action: 't' | 'T' | 'p' | 'd', payload?: string): string {
+  private buildCommand(
+    action: "t" | "T" | "p" | "d",
+    payload?: string,
+  ): string {
     const params: string[] = [];
 
     params.push(`a=${action}`);
     params.push(`i=${this.id}`);
-    params.push('q=2');  // Quiet mode - suppress terminal responses
+    params.push("q=2"); // Quiet mode - suppress terminal responses
 
-    if (action === 't' || action === 'T') {
-      params.push('f=32');  // RGBA format
+    if (action === "t" || action === "T") {
+      params.push("f=32"); // RGBA format
       params.push(`s=${this.width}`);
       params.push(`v=${this.height}`);
     }
 
-    if (action === 'T' || action === 'p') {
+    if (action === "T" || action === "p") {
       params.push(`X=${this.x}`);
       params.push(`Y=${this.y}`);
     }
 
-    const paramStr = params.join(',');
+    const paramStr = params.join(",");
 
     if (payload) {
       const chunks: string[] = [];
@@ -233,13 +302,15 @@ export class KittyCanvas {
         const m = isLast ? 0 : 1;
 
         if (i === 0) {
-          chunks.push(`${Terminal.APC}${paramStr},m=${m};${chunk}${Terminal.ST}`);
+          chunks.push(
+            `${Terminal.APC}${paramStr},m=${m};${chunk}${Terminal.ST}`,
+          );
         } else {
           chunks.push(`${Terminal.APC}m=${m};${chunk}${Terminal.ST}`);
         }
       }
 
-      return chunks.join('');
+      return chunks.join("");
     }
 
     return `${Terminal.APC}${paramStr}${Terminal.ST}`;
@@ -261,10 +332,10 @@ export class KittyCanvas {
 
     if (!this.placed) {
       this.placed = true;
-      return this.buildCommand('T', encoded);
+      return this.buildCommand("T", encoded);
     } else {
       // Delete and re-transmit for updates
-      return this.buildCommand('d') + this.buildCommand('T', encoded);
+      return this.buildCommand("d") + this.buildCommand("T", encoded);
     }
   }
 
@@ -273,7 +344,7 @@ export class KittyCanvas {
    */
   destroy(): void {
     if (this.placed) {
-      Terminal.write(this.buildCommand('d'));
+      Terminal.write(this.buildCommand("d"));
       this.placed = false;
     }
   }
@@ -284,9 +355,9 @@ export class KittyCanvas {
   destroyString(): string {
     if (this.placed) {
       this.placed = false;
-      return this.buildCommand('d');
+      return this.buildCommand("d");
     }
-    return '';
+    return "";
   }
 
   /**

@@ -1,4 +1,4 @@
-import type { Position } from './types';
+import type { Position } from "./types";
 
 /**
  * Vim-style jumplist for navigation history.
@@ -8,7 +8,7 @@ import type { Position } from './types';
  */
 class Jumplist {
   private list: Position[] = [];
-  private index = -1;  // Current position in the list
+  private index = -1; // Current position in the list
   private readonly maxSize = 100;
 
   /**

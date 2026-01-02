@@ -3,10 +3,10 @@
  */
 
 // Escape sequences
-const ESC = '\x1b';
+const ESC = "\x1b";
 const CSI = `${ESC}[`;
-const APC = `${ESC}_G`;  // Application Program Command for graphics
-const ST = `${ESC}\\`;   // String Terminator
+const APC = `${ESC}_G`; // Application Program Command for graphics
+const ST = `${ESC}\\`; // String Terminator
 
 export const Terminal = {
   ESC,
@@ -46,15 +46,15 @@ export const Terminal = {
    * Check if terminal likely supports Kitty graphics protocol
    */
   isKittySupported(): boolean {
-    const term = process.env.TERM?.toLowerCase() || '';
-    const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || '';
+    const term = process.env.TERM?.toLowerCase() || "";
+    const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || "";
 
     return (
-      term.includes('kitty') ||
-      term.includes('ghostty') ||
-      termProgram.includes('kitty') ||
-      termProgram.includes('ghostty') ||
-      termProgram.includes('wezterm')
+      term.includes("kitty") ||
+      term.includes("ghostty") ||
+      termProgram.includes("kitty") ||
+      termProgram.includes("ghostty") ||
+      termProgram.includes("wezterm")
     );
   },
 

@@ -1,8 +1,8 @@
 // Vim mode types
-export type VimMode = 'normal' | 'visual' | 'visual-block' | 'operator-pending';
+export type VimMode = "normal" | "visual" | "visual-block" | "operator-pending";
 
 // Operators that wait for a motion
-export type Operator = 'd' | 'y' | 'c' | null;
+export type Operator = "d" | "y" | "c" | null;
 
 // Generic 2D position
 export interface Position {
@@ -14,16 +14,27 @@ export interface Position {
 export interface Range {
   start: Position;
   end: Position;
-  type: 'char' | 'line' | 'block';
+  type: "char" | "line" | "block";
 }
 
 // Named registers for yank/paste
-export type RegisterName = '"' | '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
+export type RegisterName =
+  | '"'
+  | "0"
+  | "1"
+  | "2"
+  | "3"
+  | "4"
+  | "5"
+  | "6"
+  | "7"
+  | "8"
+  | "9";
 
 // What's stored in a register
 export interface RegisterContent<T = unknown> {
   data: T;
-  type: 'char' | 'line' | 'block';
+  type: "char" | "line" | "block";
 }
 
 // Motion result - where we move and optional range info
@@ -49,17 +60,17 @@ export interface Motions {
   e?: MotionFn;
   gg?: MotionFn;
   G?: MotionFn;
-  zero?: MotionFn;    // 0
-  dollar?: MotionFn;  // $
+  zero?: MotionFn; // 0
+  dollar?: MotionFn; // $
 }
 
 // Action that can be repeated with .
 export interface RecordedAction {
-  type: 'operator' | 'simple';
+  type: "operator" | "simple";
   operator?: Operator;
   motion?: string;
   count?: number;
-  data?: unknown;  // For things like what was yanked for paste
+  data?: unknown; // For things like what was yanked for paste
 }
 
 // Key event from Ink
@@ -100,7 +111,7 @@ export interface VimConfig<T = unknown> {
 
   // Data operations for operators
   getDataInRange: (range: Range) => T;
-  deleteRange: (range: Range) => T;  // Returns deleted data
+  deleteRange: (range: Range) => T; // Returns deleted data
   insertData: (pos: Position, data: T) => void;
 
   // Optional: handle custom keys not covered by vim
@@ -124,7 +135,7 @@ export interface VimState<T = unknown> {
   handleInput: (char: string, key: Key) => boolean;
 
   // Register operations
-  yank: (data: T, type: 'char' | 'line' | 'block') => void;
+  yank: (data: T, type: "char" | "line" | "block") => void;
   paste: () => RegisterContent<T> | null;
 
   // Jumplist navigation

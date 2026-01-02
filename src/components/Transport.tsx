@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { Box, Text, useStdout } from 'ink';
-import { KittyWaveform } from './KittyWaveform.js';
+import { useState, useEffect } from "react";
+import { Box, Text, useStdout } from "ink";
+import { KittyWaveform } from "./KittyWaveform.js";
 
 interface TransportProps {
   isPlaying: boolean;
@@ -21,23 +21,22 @@ export default function Transport({ isPlaying, bpm }: TransportProps) {
       setTermWidth(stdout?.columns || 120);
     };
 
-    stdout?.on('resize', handleResize);
+    stdout?.on("resize", handleResize);
     return () => {
-      stdout?.off('resize', handleResize);
+      stdout?.off("resize", handleResize);
     };
   }, [stdout]);
 
   // Calculate responsive waveform size based on terminal width (max 20 columns)
   const MAX_COLUMNS = 20;
-  const availableColumns = Math.min(MAX_COLUMNS, Math.max(20, termWidth - LEFT_SECTION_WIDTH - 4));
+  const availableColumns = Math.min(
+    MAX_COLUMNS,
+    Math.max(20, termWidth - LEFT_SECTION_WIDTH - 4),
+  );
   const waveformPixelWidth = availableColumns * PIXELS_PER_COLUMN;
 
   return (
-    <Box
-      paddingX={1}
-      paddingY={0}
-      justifyContent="space-between"
-    >
+    <Box paddingX={1} paddingY={0} justifyContent="space-between">
       {/* Left section: Transport controls */}
       <Box gap={2}>
         {/* Play/Stop indicator */}
@@ -52,7 +51,9 @@ export default function Transport({ isPlaying, bpm }: TransportProps) {
 
         {/* BPM */}
         <Box gap={1}>
-          <Text color="cyan" bold>{bpm}</Text>
+          <Text color="cyan" bold>
+            {bpm}
+          </Text>
           <Text dimColor>BPM</Text>
         </Box>
 
@@ -65,7 +66,12 @@ export default function Transport({ isPlaying, bpm }: TransportProps) {
 
       {/* Right section: Waveform visualizer */}
       <Box marginLeft={2}>
-        <KittyWaveform width={waveformPixelWidth} height={32} columns={availableColumns} rows={2} />
+        <KittyWaveform
+          width={waveformPixelWidth}
+          height={32}
+          columns={availableColumns}
+          rows={2}
+        />
       </Box>
     </Box>
   );

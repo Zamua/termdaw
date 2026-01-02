@@ -1,8 +1,11 @@
-export type { Command, CommandContext, CommandPosition } from './Command.js';
-export { BatchCommand } from './Command.js';
-export { commandManager, useCommandManager } from './CommandManager.js';
-export type { UndoRedoResult } from './CommandManager.js';
-export type { SequencerStateAccessors, CommandCursorInfo } from './SequencerCommands.js';
+export type { Command, CommandContext, CommandPosition } from "./Command.js";
+export { BatchCommand } from "./Command.js";
+export { commandManager, useCommandManager } from "./CommandManager.js";
+export type { UndoRedoResult } from "./CommandManager.js";
+export type {
+  SequencerStateAccessors,
+  CommandCursorInfo,
+} from "./SequencerCommands.js";
 export {
   ToggleStepCommand,
   SetStepsCommand,
@@ -15,4 +18,4 @@ export {
   RemoveNoteCommand,
   UpdateNoteCommand,
   ToggleNoteCommand,
-} from './SequencerCommands.js';
+} from "./SequencerCommands.js";

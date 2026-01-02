@@ -17,6 +17,12 @@
  * @see https://sw.kovidgoyal.net/kitty/graphics-protocol/
  */
 
-export { KittyCanvas, type KittyCanvasOptions } from './canvas.js';
-export { hexToRgb, hslToRgb, type Color, type RGB, type RGBA } from './color.js';
-export { Terminal } from './terminal.js';
+export { KittyCanvas, type KittyCanvasOptions } from "./canvas.js";
+export {
+  hexToRgb,
+  hslToRgb,
+  type Color,
+  type RGB,
+  type RGBA,
+} from "./color.js";
+export { Terminal } from "./terminal.js";
