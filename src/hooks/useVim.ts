@@ -312,6 +312,18 @@ export function useVim<T = unknown>(config: VimConfig<T>): VimState<T> {
         return true;
       }
 
+      // Visual block mode (Ctrl+v) - must check before regular v
+      if (key.ctrl && char === "v") {
+        if (mode === "visual-block") {
+          visualStartRef.current = null;
+          send({ type: "VISUAL_BLOCK" });
+        } else {
+          visualStartRef.current = { ...cursor };
+          send({ type: "VISUAL_BLOCK" });
+        }
+        return true;
+      }
+
       // Visual mode
       if (char === "v") {
         if (mode === "visual") {
@@ -322,18 +334,6 @@ export function useVim<T = unknown>(config: VimConfig<T>): VimState<T> {
           // Enter visual mode
           visualStartRef.current = { ...cursor };
           send({ type: "VISUAL" });
-        }
-        return true;
-      }
-
-      // Visual block mode (Ctrl+v)
-      if (key.ctrl && char === "v") {
-        if (mode === "visual-block") {
-          visualStartRef.current = null;
-          send({ type: "VISUAL_BLOCK" });
-        } else {
-          visualStartRef.current = { ...cursor };
-          send({ type: "VISUAL_BLOCK" });
         }
         return true;
       }
@@ -369,10 +369,12 @@ export function useVim<T = unknown>(config: VimConfig<T>): VimState<T> {
       // Motions
       const motionName = parseMotionKey(char, key);
       if (motionName) {
-        const count = state.context.count || 1;
+        // Pass raw count - motions like G need to distinguish "no count" (0) from "count of 1"
+        const rawCount = state.context.count;
+        const effectiveCount = rawCount || 1;
         const motionResult = executeMotion(
           motionName,
-          count,
+          motionName === "G" || motionName === "gg" ? rawCount : effectiveCount,
           cursor,
           config.motions,
         );
@@ -385,7 +387,25 @@ export function useVim<T = unknown>(config: VimConfig<T>): VimState<T> {
 
         if (mode === "operator-pending" && state.context.operator) {
           // Execute operator with motion
-          const range = calculateOperatorRange(cursor, motionResult);
+          let adjustedMotionResult = motionResult;
+
+          // Special case: dw/yw at end of line should NOT cross to next line
+          // Vim spec: "When using the 'w' motion in combination with an operator
+          // and the last word moved over is at the end of a line, the end of
+          // that word becomes the end of the operated text, not the first word
+          // in the next line."
+          if (motionName === "w" && motionResult.position.row > cursor.row) {
+            adjustedMotionResult = {
+              ...motionResult,
+              position: {
+                row: cursor.row,
+                col: config.dimensions.cols - 1, // End of current line
+              },
+              inclusive: true,
+            };
+          }
+
+          const range = calculateOperatorRange(cursor, adjustedMotionResult);
           const operator = state.context.operator;
 
           if (operator === "d" || operator === "c") {
@@ -400,7 +420,7 @@ export function useVim<T = unknown>(config: VimConfig<T>): VimState<T> {
             type: "operator",
             operator,
             motion: motionName,
-            count,
+            count: effectiveCount,
           };
 
           // Move cursor to start of range after delete/yank
@@ -438,25 +458,54 @@ export function useVim<T = unknown>(config: VimConfig<T>): VimState<T> {
           action.motion
         ) {
           const count = state.context.count || action.count || 1;
-          const motionResult = executeMotion(
-            action.motion,
-            count,
-            cursor,
-            config.motions,
-          );
 
-          if (motionResult) {
-            const range = calculateOperatorRange(cursor, motionResult);
+          // Check if this is a linewise operation (dd, yy, cc)
+          // where motion equals operator
+          if (action.motion === action.operator) {
+            // Linewise operation
+            const lineRange: Range = {
+              start: { row: cursor.row, col: 0 },
+              end: {
+                row: Math.min(
+                  cursor.row + count - 1,
+                  config.dimensions.rows - 1,
+                ),
+                col: Infinity,
+              },
+              type: "line",
+            };
 
             if (action.operator === "d" || action.operator === "c") {
-              const deleted = config.deleteRange(range);
-              registers.delete(deleted, range.type);
+              const deleted = config.deleteRange(lineRange);
+              registers.delete(deleted, "line");
             } else if (action.operator === "y") {
-              const yanked = config.getDataInRange(range);
-              registers.yank(yanked, range.type);
+              const yanked = config.getDataInRange(lineRange);
+              registers.yank(yanked, "line");
             }
 
-            config.setCursor(range.start);
+            config.setCursor(lineRange.start);
+          } else {
+            // Regular operator + motion
+            const motionResult = executeMotion(
+              action.motion,
+              count,
+              cursor,
+              config.motions,
+            );
+
+            if (motionResult) {
+              const range = calculateOperatorRange(cursor, motionResult);
+
+              if (action.operator === "d" || action.operator === "c") {
+                const deleted = config.deleteRange(range);
+                registers.delete(deleted, range.type);
+              } else if (action.operator === "y") {
+                const yanked = config.getDataInRange(range);
+                registers.yank(yanked, range.type);
+              }
+
+              config.setCursor(range.start);
+            }
           }
         }
         send({ type: "RESET" });

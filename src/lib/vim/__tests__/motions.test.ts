@@ -109,6 +109,9 @@ function createTextConfig(lines: string[]) {
         let row = cur.row;
         let col = cur.col;
         let remaining = count;
+        // Track the last valid word position we found
+        let lastValidRow = row;
+        let lastValidCol = col;
 
         while (remaining > 0 && row < lines.length) {
           const line = buffer[row];
@@ -117,6 +120,8 @@ function createTextConfig(lines: string[]) {
             row++;
             col = 0;
             remaining--;
+            lastValidRow = row;
+            lastValidCol = col;
             continue;
           }
 
@@ -158,13 +163,22 @@ function createTextConfig(lines: string[]) {
             }
           }
 
+          // If we went past the buffer, stop at last valid position
+          if (row >= lines.length) {
+            row = lastValidRow;
+            col = lastValidCol;
+            break;
+          }
+
           remaining--;
+          // Save this as last valid position
+          lastValidRow = row;
+          lastValidCol = col;
         }
 
-        // Clamp to valid position
+        // Clamp to valid position (safety check)
         if (row >= lines.length) {
           row = lines.length - 1;
-          col = Math.max(0, lineLength(row) - 1);
         }
         if (col >= lineLength(row)) {
           col = Math.max(0, lineLength(row) - 1);
