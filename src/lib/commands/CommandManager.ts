@@ -1,5 +1,14 @@
-import type { Command } from './Command.js';
+import type { Command, CommandContext, CommandPosition } from './Command.js';
 import { BatchCommand } from './Command.js';
+
+/**
+ * Result of an undo/redo operation.
+ */
+export interface UndoRedoResult {
+  success: boolean;
+  context?: CommandContext;
+  position?: CommandPosition;
+}
 
 /**
  * Manages undo/redo stacks for commands.
@@ -66,30 +75,38 @@ class CommandManager {
 
   /**
    * Undo the last command.
-   * Returns true if successful, false if nothing to undo.
+   * Returns result with success flag and cursor position to restore.
    */
-  undo(): boolean {
+  undo(): UndoRedoResult {
     const cmd = this.undoStack.pop();
-    if (!cmd) return false;
+    if (!cmd) return { success: false };
 
     cmd.undo();
     this.redoStack.push(cmd);
     this.notifyListeners();
-    return true;
+    return {
+      success: true,
+      context: cmd.context,
+      position: cmd.position,
+    };
   }
 
   /**
    * Redo the last undone command.
-   * Returns true if successful, false if nothing to redo.
+   * Returns result with success flag and cursor position to restore.
    */
-  redo(): boolean {
+  redo(): UndoRedoResult {
     const cmd = this.redoStack.pop();
-    if (!cmd) return false;
+    if (!cmd) return { success: false };
 
     cmd.execute();
     this.undoStack.push(cmd);
     this.notifyListeners();
-    return true;
+    return {
+      success: true,
+      context: cmd.context,
+      position: cmd.position,
+    };
   }
 
   /**

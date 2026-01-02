@@ -3,6 +3,8 @@ import {
   commandManager,
   type Command,
   type SequencerStateAccessors,
+  type UndoRedoResult,
+  type CommandCursorInfo,
   ToggleStepCommand,
   SetStepsCommand,
   ClearStepRangeCommand,
@@ -26,8 +28,8 @@ interface NoteUpdates {
 interface CommandContextType {
   // Core command operations
   execute: (command: Command) => void;
-  undo: () => boolean;
-  redo: () => boolean;
+  undo: () => UndoRedoResult;
+  redo: () => UndoRedoResult;
   canUndo: boolean;
   canRedo: boolean;
 
@@ -35,18 +37,18 @@ interface CommandContextType {
   stateAccessors: SequencerStateAccessors | null;
   setStateAccessors: (accessors: SequencerStateAccessors) => void;
 
-  // Convenience methods for common commands
-  toggleStep: (patternId: number, channelIndex: number, stepIndex: number) => void;
-  setSteps: (patternId: number, channelIndex: number, startStep: number, steps: boolean[]) => void;
-  clearStepRange: (patternId: number, channelIndex: number, startStep: number, endStep: number) => void;
-  clearChannel: (patternId: number, channelIndex: number) => void;
-  toggleMute: (channelIndex: number) => void;
-  cycleMuteState: (channelIndex: number) => void;
-  setChannelSample: (channelIndex: number, samplePath: string) => void;
-  addNote: (patternId: number, channelIndex: number, pitch: number, startStep: number, duration: number) => void;
-  removeNote: (patternId: number, channelIndex: number, noteId: string) => void;
-  updateNote: (patternId: number, channelIndex: number, noteId: string, updates: NoteUpdates) => void;
-  toggleNote: (patternId: number, channelIndex: number, pitch: number, startStep: number, duration: number) => void;
+  // Convenience methods for common commands (all accept optional cursorInfo for undo/redo navigation)
+  toggleStep: (patternId: number, channelIndex: number, stepIndex: number, cursorInfo?: CommandCursorInfo) => void;
+  setSteps: (patternId: number, channelIndex: number, startStep: number, steps: boolean[], cursorInfo?: CommandCursorInfo) => void;
+  clearStepRange: (patternId: number, channelIndex: number, startStep: number, endStep: number, cursorInfo?: CommandCursorInfo) => void;
+  clearChannel: (patternId: number, channelIndex: number, cursorInfo?: CommandCursorInfo) => void;
+  toggleMute: (channelIndex: number, cursorInfo?: CommandCursorInfo) => void;
+  cycleMuteState: (channelIndex: number, cursorInfo?: CommandCursorInfo) => void;
+  setChannelSample: (channelIndex: number, samplePath: string, cursorInfo?: CommandCursorInfo) => void;
+  addNote: (patternId: number, channelIndex: number, pitch: number, startStep: number, duration: number, cursorInfo?: CommandCursorInfo) => void;
+  removeNote: (patternId: number, channelIndex: number, noteId: string, cursorInfo?: CommandCursorInfo) => void;
+  updateNote: (patternId: number, channelIndex: number, noteId: string, updates: NoteUpdates, cursorInfo?: CommandCursorInfo) => void;
+  toggleNote: (patternId: number, channelIndex: number, pitch: number, startStep: number, duration: number, cursorInfo?: CommandCursorInfo) => void;
 }
 
 const CommandContext = createContext<CommandContextType | null>(null);
@@ -85,59 +87,59 @@ export function CommandProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Convenience methods that create and execute commands
-  const toggleStep = useCallback((patternId: number, channelIndex: number, stepIndex: number) => {
+  const toggleStep = useCallback((patternId: number, channelIndex: number, stepIndex: number, cursorInfo?: CommandCursorInfo) => {
     if (!currentStateAccessors) return;
-    execute(new ToggleStepCommand(currentStateAccessors, patternId, channelIndex, stepIndex));
+    execute(new ToggleStepCommand(currentStateAccessors, patternId, channelIndex, stepIndex, cursorInfo));
   }, [execute]);
 
-  const setSteps = useCallback((patternId: number, channelIndex: number, startStep: number, steps: boolean[]) => {
+  const setSteps = useCallback((patternId: number, channelIndex: number, startStep: number, steps: boolean[], cursorInfo?: CommandCursorInfo) => {
     if (!currentStateAccessors) return;
-    execute(new SetStepsCommand(currentStateAccessors, patternId, channelIndex, startStep, steps));
+    execute(new SetStepsCommand(currentStateAccessors, patternId, channelIndex, startStep, steps, cursorInfo));
   }, [execute]);
 
-  const clearStepRange = useCallback((patternId: number, channelIndex: number, startStep: number, endStep: number) => {
+  const clearStepRange = useCallback((patternId: number, channelIndex: number, startStep: number, endStep: number, cursorInfo?: CommandCursorInfo) => {
     if (!currentStateAccessors) return;
-    execute(new ClearStepRangeCommand(currentStateAccessors, patternId, channelIndex, startStep, endStep));
+    execute(new ClearStepRangeCommand(currentStateAccessors, patternId, channelIndex, startStep, endStep, cursorInfo));
   }, [execute]);
 
-  const clearChannel = useCallback((patternId: number, channelIndex: number) => {
+  const clearChannel = useCallback((patternId: number, channelIndex: number, cursorInfo?: CommandCursorInfo) => {
     if (!currentStateAccessors) return;
-    execute(new ClearChannelCommand(currentStateAccessors, patternId, channelIndex));
+    execute(new ClearChannelCommand(currentStateAccessors, patternId, channelIndex, cursorInfo));
   }, [execute]);
 
-  const toggleMute = useCallback((channelIndex: number) => {
+  const toggleMute = useCallback((channelIndex: number, cursorInfo?: CommandCursorInfo) => {
     if (!currentStateAccessors) return;
-    execute(new ToggleMuteCommand(currentStateAccessors, channelIndex));
+    execute(new ToggleMuteCommand(currentStateAccessors, channelIndex, cursorInfo));
   }, [execute]);
 
-  const cycleMuteState = useCallback((channelIndex: number) => {
+  const cycleMuteState = useCallback((channelIndex: number, cursorInfo?: CommandCursorInfo) => {
     if (!currentStateAccessors) return;
-    execute(new CycleMuteStateCommand(currentStateAccessors, channelIndex));
+    execute(new CycleMuteStateCommand(currentStateAccessors, channelIndex, cursorInfo));
   }, [execute]);
 
-  const setChannelSample = useCallback((channelIndex: number, samplePath: string) => {
+  const setChannelSample = useCallback((channelIndex: number, samplePath: string, cursorInfo?: CommandCursorInfo) => {
     if (!currentStateAccessors) return;
-    execute(new SetChannelSampleCommand(currentStateAccessors, channelIndex, samplePath));
+    execute(new SetChannelSampleCommand(currentStateAccessors, channelIndex, samplePath, cursorInfo));
   }, [execute]);
 
-  const addNote = useCallback((patternId: number, channelIndex: number, pitch: number, startStep: number, duration: number) => {
+  const addNote = useCallback((patternId: number, channelIndex: number, pitch: number, startStep: number, duration: number, cursorInfo?: CommandCursorInfo) => {
     if (!currentStateAccessors) return;
-    execute(new AddNoteCommand(currentStateAccessors, patternId, channelIndex, pitch, startStep, duration));
+    execute(new AddNoteCommand(currentStateAccessors, patternId, channelIndex, pitch, startStep, duration, cursorInfo));
   }, [execute]);
 
-  const removeNote = useCallback((patternId: number, channelIndex: number, noteId: string) => {
+  const removeNote = useCallback((patternId: number, channelIndex: number, noteId: string, cursorInfo?: CommandCursorInfo) => {
     if (!currentStateAccessors) return;
-    execute(new RemoveNoteCommand(currentStateAccessors, patternId, channelIndex, noteId));
+    execute(new RemoveNoteCommand(currentStateAccessors, patternId, channelIndex, noteId, cursorInfo));
   }, [execute]);
 
-  const updateNote = useCallback((patternId: number, channelIndex: number, noteId: string, updates: NoteUpdates) => {
+  const updateNote = useCallback((patternId: number, channelIndex: number, noteId: string, updates: NoteUpdates, cursorInfo?: CommandCursorInfo) => {
     if (!currentStateAccessors) return;
-    execute(new UpdateNoteCommand(currentStateAccessors, patternId, channelIndex, noteId, updates));
+    execute(new UpdateNoteCommand(currentStateAccessors, patternId, channelIndex, noteId, updates, cursorInfo));
   }, [execute]);
 
-  const toggleNote = useCallback((patternId: number, channelIndex: number, pitch: number, startStep: number, duration: number) => {
+  const toggleNote = useCallback((patternId: number, channelIndex: number, pitch: number, startStep: number, duration: number, cursorInfo?: CommandCursorInfo) => {
     if (!currentStateAccessors) return;
-    execute(new ToggleNoteCommand(currentStateAccessors, patternId, channelIndex, pitch, startStep, duration));
+    execute(new ToggleNoteCommand(currentStateAccessors, patternId, channelIndex, pitch, startStep, duration, cursorInfo));
   }, [execute]);
 
   return (

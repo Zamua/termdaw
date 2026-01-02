@@ -14,7 +14,7 @@ import PianoRoll from './components/PianoRoll.js';
 function AppContent() {
   const { exit } = useApp();
   const { stdout } = useStdout();
-  const { focusedPanel, setFocusedPanel, viewMode, setViewMode } = useFocusContext();
+  const { focusedPanel, setFocusedPanel, viewMode, setViewMode, restoreCursor } = useFocusContext();
   const { isPlaying, setIsPlaying, bpm, setBpm, currentPatternId, switchPattern, patterns, selectedChannel, channels } = useSequencer();
   const { undo, redo, canUndo, canRedo } = useCommands();
   const [showBrowser, setShowBrowser] = useState(true);
@@ -167,11 +167,17 @@ function AppContent() {
 
     // Undo/Redo (vim-style: u for undo, Ctrl+r for redo)
     if (input === 'u' && !key.ctrl && !key.meta) {
-      undo();
+      const result = undo();
+      if (result.success && result.context && result.position) {
+        restoreCursor(result.context, result.position);
+      }
       return;
     }
     if (key.ctrl && input === 'r') {
-      redo();
+      const result = redo();
+      if (result.success && result.context && result.position) {
+        restoreCursor(result.context, result.position);
+      }
       return;
     }
   });

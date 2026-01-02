@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useIsFocused, useFocusContext } from '../context/FocusContext.js';
 import { useSequencer, type Note } from '../context/SequencerContext.js';
@@ -45,7 +45,7 @@ interface YankedNote {
 
 export default function PianoRoll() {
   const isFocused = useIsFocused('pianoRoll');
-  const { exitPianoRoll } = useFocusContext();
+  const { exitPianoRoll, registerCursorSetter, unregisterCursorSetter } = useFocusContext();
   const {
     channels,
     selectedChannel,
@@ -128,6 +128,17 @@ export default function PianoRoll() {
     },
     [viewportTop]
   );
+
+  // Register cursor setter for undo/redo restoration
+  useEffect(() => {
+    registerCursorSetter('pianoRoll', (pos) => {
+      const newPitch = rowToPitch(pos.row);
+      setCursorPitch(newPitch);
+      setCursorStep(pos.col);
+      scrollToCursor(newPitch);
+    });
+    return () => unregisterCursorSetter('pianoRoll');
+  }, [registerCursorSetter, unregisterCursorSetter, scrollToCursor]);
 
   // Preview note at pitch
   const previewAtPitch = useCallback(
@@ -263,8 +274,12 @@ export default function PianoRoll() {
         duration: n.duration,
       }));
 
+      const cursorInfo = {
+        context: 'pianoRoll' as const,
+        position: { row: range.start.row, col: range.start.col },
+      };
       for (const note of toDelete) {
-        removeNote(currentPatternId, selectedChannel, note.id);
+        removeNote(currentPatternId, selectedChannel, note.id, cursorInfo);
       }
 
       return yanked;
@@ -273,16 +288,26 @@ export default function PianoRoll() {
     insertData: (pos: Position, data: YankedNote[]) => {
       const basePitch = rowToPitch(pos.row);
       const baseStep = pos.col;
+      const cursorInfo = {
+        context: 'pianoRoll' as const,
+        position: { row: pos.row, col: pos.col },
+      };
       for (const yanked of data) {
         const pitch = basePitch + yanked.pitchOffset;
         const step = baseStep + yanked.stepOffset;
         if (pitch >= MIN_PITCH && pitch <= MAX_PITCH && step >= 0 && step + yanked.duration <= NUM_STEPS) {
-          addNote(currentPatternId, selectedChannel, pitch, step, yanked.duration);
+          addNote(currentPatternId, selectedChannel, pitch, step, yanked.duration, cursorInfo);
         }
       }
     },
 
     onCustomAction: (char: string, key: Key, count: number) => {
+      // Helper to get current cursor info for undo/redo
+      const getCursorInfo = () => ({
+        context: 'pianoRoll' as const,
+        position: { row: pitchToRow(cursorPitch), col: cursorStep },
+      });
+
       // Escape behavior: cancel placement first, then let vim handle
       if (key.escape) {
         if (placingNote) {
@@ -338,12 +363,12 @@ export default function PianoRoll() {
           const startStep = Math.min(placingNote.startStep, cursorStep);
           const endStep = Math.max(placingNote.startStep, cursorStep);
           const duration = endStep - startStep + 1;
-          addNote(currentPatternId, selectedChannel, cursorPitch, startStep, duration);
+          addNote(currentPatternId, selectedChannel, cursorPitch, startStep, duration, getCursorInfo());
           setPlacingNote(null);
         } else {
           const existingNote = getNoteCovering(cursorPitch, cursorStep);
           if (existingNote) {
-            removeNote(currentPatternId, selectedChannel, existingNote.id);
+            removeNote(currentPatternId, selectedChannel, existingNote.id, getCursorInfo());
             setPlacingNote({ startStep: existingNote.startStep });
           } else {
             setPlacingNote({ startStep: cursorStep });
@@ -356,7 +381,7 @@ export default function PianoRoll() {
       if (char === '<') {
         const note = getNoteCovering(cursorPitch, cursorStep);
         if (note && note.startStep > 0) {
-          updateNote(currentPatternId, selectedChannel, note.id, { startStep: note.startStep - 1 });
+          updateNote(currentPatternId, selectedChannel, note.id, { startStep: note.startStep - 1 }, getCursorInfo());
           setCursorStep((prev) => Math.max(0, prev - 1));
         }
         return true;
@@ -364,7 +389,7 @@ export default function PianoRoll() {
       if (char === '>') {
         const note = getNoteCovering(cursorPitch, cursorStep);
         if (note && note.startStep + note.duration < NUM_STEPS) {
-          updateNote(currentPatternId, selectedChannel, note.id, { startStep: note.startStep + 1 });
+          updateNote(currentPatternId, selectedChannel, note.id, { startStep: note.startStep + 1 }, getCursorInfo());
           setCursorStep((prev) => Math.min(NUM_STEPS - 1, prev + 1));
         }
         return true;

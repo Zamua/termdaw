@@ -19,7 +19,7 @@ const MUTE_ZONE_COL = -1;
 
 export default function ChannelRack() {
   const isFocused = useIsFocused('channelRack');
-  const { startSampleSelection, enterPianoRoll } = useFocusContext();
+  const { startSampleSelection, enterPianoRoll, registerCursorSetter, unregisterCursorSetter } = useFocusContext();
   const {
     channels,
     playheadStep,
@@ -85,6 +85,15 @@ export default function ChannelRack() {
       setCursorChannel(selectedChannel);
     }
   }, [isFocused, selectedChannel]);
+
+  // Register cursor setter for undo/redo restoration
+  useEffect(() => {
+    registerCursorSetter('channelRack', (pos) => {
+      moveCursor(pos.row);
+      setCursorCol(pos.col - 2); // Convert from shifted space back to virtual column
+    });
+    return () => unregisterCursorSetter('channelRack');
+  }, [registerCursorSetter, unregisterCursorSetter, moveCursor]);
 
   // Find next note or bar line
   const findNextNote = useCallback(
@@ -196,26 +205,38 @@ export default function ChannelRack() {
       const startCol = Math.min(startRealCol, endRealCol);
       const endCol = Math.max(startRealCol, endRealCol);
       const deleted = channel.steps.slice(startCol, endCol + 1);
-      clearStepRange(currentPatternId, range.start.row, startCol, endCol);
+      clearStepRange(currentPatternId, range.start.row, startCol, endCol, {
+        context: 'channelRack',
+        position: { row: range.start.row, col: range.start.col },
+      });
       return deleted;
     },
 
     insertData: (pos: Position, data: boolean[]) => {
       const realCol = Math.max(0, pos.col - 2);
-      setSteps(currentPatternId, pos.row, realCol, data);
+      setSteps(currentPatternId, pos.row, realCol, data, {
+        context: 'channelRack',
+        position: { row: pos.row, col: pos.col },
+      });
     },
 
     onCustomAction: (char: string, key: Key, _count: number) => {
+      // Helper to get current cursor info for undo/redo
+      const getCursorInfo = () => ({
+        context: 'channelRack' as const,
+        position: { row: cursorChannel, col: cursorCol + 2 },
+      });
+
       // x/Enter actions depend on current zone
       if (key.return || char === 'x') {
         if (cursorZone === 'sample') {
           startSampleSelection(cursorChannel, 'channelRack');
           return true;
         } else if (cursorZone === 'mute') {
-          cycleMuteState(cursorChannel);
+          cycleMuteState(cursorChannel, getCursorInfo());
           return true;
         } else {
-          toggleStep(currentPatternId, cursorChannel, cursorStep);
+          toggleStep(currentPatternId, cursorChannel, cursorStep, getCursorInfo());
           return true;
         }
       }
@@ -229,7 +250,7 @@ export default function ChannelRack() {
       }
 
       if (char === 'm') {
-        cycleMuteState(cursorChannel);
+        cycleMuteState(cursorChannel, getCursorInfo());
         return true;
       }
 
@@ -259,7 +280,7 @@ export default function ChannelRack() {
       }
 
       if (char === 'c' && vim.mode === 'normal' && !vim.operator) {
-        clearChannel(currentPatternId, cursorChannel);
+        clearChannel(currentPatternId, cursorChannel, getCursorInfo());
         return true;
       }
 

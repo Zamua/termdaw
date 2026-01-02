@@ -1,4 +1,4 @@
-import type { Command } from './Command.js';
+import type { Command, CommandContext, CommandPosition } from './Command.js';
 import type { SynthPatch } from '../synth.js';
 
 // Types matching SequencerContext (defined here to avoid circular deps)
@@ -37,12 +37,20 @@ export interface SequencerStateAccessors {
   setChannelMeta: React.Dispatch<React.SetStateAction<Channel[]>>;
 }
 
+// Optional cursor info for undo/redo navigation
+export interface CommandCursorInfo {
+  context: CommandContext;
+  position: CommandPosition;
+}
+
 /**
  * Toggle a step on/off in the channel rack.
  */
 export class ToggleStepCommand implements Command {
   readonly type = 'toggleStep';
   readonly description: string;
+  readonly context?: CommandContext;
+  readonly position?: CommandPosition;
 
   private previousValue: boolean | null = null;
 
@@ -50,9 +58,12 @@ export class ToggleStepCommand implements Command {
     private state: SequencerStateAccessors,
     private patternId: number,
     private channelIndex: number,
-    private stepIndex: number
+    private stepIndex: number,
+    cursorInfo?: CommandCursorInfo
   ) {
     this.description = `Toggle step ${stepIndex + 1} on channel ${channelIndex + 1}`;
+    this.context = cursorInfo?.context;
+    this.position = cursorInfo?.position;
   }
 
   execute(): void {
@@ -102,6 +113,8 @@ export class ToggleStepCommand implements Command {
 export class SetStepsCommand implements Command {
   readonly type = 'setSteps';
   readonly description: string;
+  readonly context?: CommandContext;
+  readonly position?: CommandPosition;
 
   private previousSteps: boolean[] | null = null;
 
@@ -110,9 +123,12 @@ export class SetStepsCommand implements Command {
     private patternId: number,
     private channelIndex: number,
     private startStep: number,
-    private steps: boolean[]
+    private steps: boolean[],
+    cursorInfo?: CommandCursorInfo
   ) {
     this.description = `Paste ${steps.filter(Boolean).length} steps`;
+    this.context = cursorInfo?.context;
+    this.position = cursorInfo?.position;
   }
 
   execute(): void {
@@ -169,6 +185,8 @@ export class SetStepsCommand implements Command {
 export class ClearStepRangeCommand implements Command {
   readonly type = 'clearStepRange';
   readonly description: string;
+  readonly context?: CommandContext;
+  readonly position?: CommandPosition;
 
   private previousSteps: boolean[] | null = null;
 
@@ -177,10 +195,13 @@ export class ClearStepRangeCommand implements Command {
     private patternId: number,
     private channelIndex: number,
     private startStep: number,
-    private endStep: number
+    private endStep: number,
+    cursorInfo?: CommandCursorInfo
   ) {
     const count = Math.abs(endStep - startStep) + 1;
     this.description = `Delete ${count} step${count > 1 ? 's' : ''}`;
+    this.context = cursorInfo?.context;
+    this.position = cursorInfo?.position;
   }
 
   execute(): void {
@@ -239,15 +260,20 @@ export class ClearStepRangeCommand implements Command {
 export class ClearChannelCommand implements Command {
   readonly type = 'clearChannel';
   readonly description: string;
+  readonly context?: CommandContext;
+  readonly position?: CommandPosition;
 
   private previousSteps: boolean[] | null = null;
 
   constructor(
     private state: SequencerStateAccessors,
     private patternId: number,
-    private channelIndex: number
+    private channelIndex: number,
+    cursorInfo?: CommandCursorInfo
   ) {
     this.description = `Clear channel ${channelIndex + 1}`;
+    this.context = cursorInfo?.context;
+    this.position = cursorInfo?.position;
   }
 
   execute(): void {
@@ -293,14 +319,19 @@ export class ClearChannelCommand implements Command {
 export class ToggleMuteCommand implements Command {
   readonly type = 'toggleMute';
   readonly description: string;
+  readonly context?: CommandContext;
+  readonly position?: CommandPosition;
 
   private previousMuted: boolean | null = null;
 
   constructor(
     private state: SequencerStateAccessors,
-    private channelIndex: number
+    private channelIndex: number,
+    cursorInfo?: CommandCursorInfo
   ) {
     this.description = `Toggle mute on channel ${channelIndex + 1}`;
+    this.context = cursorInfo?.context;
+    this.position = cursorInfo?.position;
   }
 
   execute(): void {
@@ -336,15 +367,20 @@ export class ToggleMuteCommand implements Command {
 export class CycleMuteStateCommand implements Command {
   readonly type = 'cycleMuteState';
   readonly description: string;
+  readonly context?: CommandContext;
+  readonly position?: CommandPosition;
 
   private previousState: { muted: boolean; solo: boolean } | null = null;
   private previousSoloChannel: number | null = null;
 
   constructor(
     private state: SequencerStateAccessors,
-    private channelIndex: number
+    private channelIndex: number,
+    cursorInfo?: CommandCursorInfo
   ) {
     this.description = `Cycle mute state on channel ${channelIndex + 1}`;
+    this.context = cursorInfo?.context;
+    this.position = cursorInfo?.position;
   }
 
   execute(): void {
@@ -406,6 +442,8 @@ export class CycleMuteStateCommand implements Command {
 export class SetChannelSampleCommand implements Command {
   readonly type = 'setChannelSample';
   readonly description: string;
+  readonly context?: CommandContext;
+  readonly position?: CommandPosition;
 
   private previousSample: string | null = null;
   private previousName: string | null = null;
@@ -413,10 +451,13 @@ export class SetChannelSampleCommand implements Command {
   constructor(
     private state: SequencerStateAccessors,
     private channelIndex: number,
-    private samplePath: string
+    private samplePath: string,
+    cursorInfo?: CommandCursorInfo
   ) {
     const name = samplePath.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'Sample';
     this.description = `Set sample to ${name}`;
+    this.context = cursorInfo?.context;
+    this.position = cursorInfo?.position;
   }
 
   execute(): void {
@@ -455,6 +496,8 @@ export class SetChannelSampleCommand implements Command {
 export class AddNoteCommand implements Command {
   readonly type = 'addNote';
   readonly description: string;
+  readonly context?: CommandContext;
+  readonly position?: CommandPosition;
 
   private noteId: string | null = null;
 
@@ -464,9 +507,12 @@ export class AddNoteCommand implements Command {
     private channelIndex: number,
     private pitch: number,
     private startStep: number,
-    private duration: number
+    private duration: number,
+    cursorInfo?: CommandCursorInfo
   ) {
     this.description = `Add note at step ${startStep + 1}`;
+    this.context = cursorInfo?.context;
+    this.position = cursorInfo?.position;
   }
 
   execute(): void {
@@ -517,6 +563,8 @@ export class AddNoteCommand implements Command {
 export class RemoveNoteCommand implements Command {
   readonly type = 'removeNote';
   readonly description: string;
+  readonly context?: CommandContext;
+  readonly position?: CommandPosition;
 
   private removedNote: Note | null = null;
 
@@ -524,9 +572,12 @@ export class RemoveNoteCommand implements Command {
     private state: SequencerStateAccessors,
     private patternId: number,
     private channelIndex: number,
-    private noteId: string
+    private noteId: string,
+    cursorInfo?: CommandCursorInfo
   ) {
     this.description = `Remove note`;
+    this.context = cursorInfo?.context;
+    this.position = cursorInfo?.position;
   }
 
   execute(): void {
@@ -573,6 +624,8 @@ export class RemoveNoteCommand implements Command {
 export class UpdateNoteCommand implements Command {
   readonly type = 'updateNote';
   readonly description: string;
+  readonly context?: CommandContext;
+  readonly position?: CommandPosition;
 
   private previousValues: Partial<Pick<Note, 'startStep' | 'duration' | 'pitch'>> | null = null;
 
@@ -581,9 +634,12 @@ export class UpdateNoteCommand implements Command {
     private patternId: number,
     private channelIndex: number,
     private noteId: string,
-    private updates: Partial<Pick<Note, 'startStep' | 'duration' | 'pitch'>>
+    private updates: Partial<Pick<Note, 'startStep' | 'duration' | 'pitch'>>,
+    cursorInfo?: CommandCursorInfo
   ) {
     this.description = `Update note`;
+    this.context = cursorInfo?.context;
+    this.position = cursorInfo?.position;
   }
 
   execute(): void {
@@ -636,6 +692,8 @@ export class UpdateNoteCommand implements Command {
 export class ToggleNoteCommand implements Command {
   readonly type = 'toggleNote';
   readonly description: string;
+  readonly context?: CommandContext;
+  readonly position?: CommandPosition;
 
   private addedNoteId: string | null = null;
   private removedNote: Note | null = null;
@@ -646,9 +704,12 @@ export class ToggleNoteCommand implements Command {
     private channelIndex: number,
     private pitch: number,
     private startStep: number,
-    private duration: number
+    private duration: number,
+    cursorInfo?: CommandCursorInfo
   ) {
     this.description = `Toggle note at step ${startStep + 1}`;
+    this.context = cursorInfo?.context;
+    this.position = cursorInfo?.position;
   }
 
   execute(): void {
