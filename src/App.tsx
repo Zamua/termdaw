@@ -293,7 +293,7 @@ function AppContent() {
   // Calculate heights for layout (account for borders: 2 lines each for top/bottom)
   const transportHeight = 5; // 4 content + border
   const statusHeight = 1;
-  const mixerHeight = showMixer ? 12 : 0; // 10 content + 2 border
+  const mixerHeight = showMixer ? 20 : 0; // 18 content + 2 border
   const mainContentHeight = Math.max(
     10,
     terminalHeight - transportHeight - statusHeight - mixerHeight,
@@ -373,8 +373,8 @@ function AppContent() {
       {/* Status Bar */}
       <Box paddingX={1} justifyContent="space-between">
         <Text dimColor>
-          6:Rack 5:Playlist 7:Piano 9:Mixer 8:Browser | Space:Play | u:Undo |
-          ^r:Redo | q:Quit
+          5:Playlist 6:Rack 7:Piano 8:Browser 9:Mixer │ Space:Play │ u:Undo
+          ^r:Redo │ q:Quit
         </Text>
         <Box>
           {(canUndo || canRedo) && (

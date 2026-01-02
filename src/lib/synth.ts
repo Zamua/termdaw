@@ -139,18 +139,21 @@ interface Voice {
 const activeVoices: Map<string, Voice> = new Map();
 
 // Play a synth note
+// channelVolume: 0-100 (percentage)
 export function playSynthNote(
   patch: SynthPatch,
   pitch: number,
   duration: number,
   noteId?: string,
+  channelVolume: number = 100,
 ): void {
   const ctx = getAudioContext();
   const now = ctx.currentTime;
   const id = noteId || `${Date.now()}-${Math.random()}`;
 
-  // Create master gain for this voice
-  const masterGain = new GainNode(ctx, { gain: patch.masterVolume });
+  // Create master gain for this voice (patch volume * channel volume)
+  const effectiveVolume = patch.masterVolume * (channelVolume / 100);
+  const masterGain = new GainNode(ctx, { gain: effectiveVolume });
 
   // Create filter if enabled
   let filterNode: BiquadFilterNode | null = null;

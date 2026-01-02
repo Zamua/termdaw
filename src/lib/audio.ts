@@ -111,7 +111,11 @@ async function loadAudioBuffer(filePath: string): Promise<AudioBuffer | null> {
 }
 
 // Play a sample (polyphonic, for sequencer)
-export async function playSample(samplePath: string): Promise<void> {
+// volume: 0-100 (percentage)
+export async function playSample(
+  samplePath: string,
+  volume: number = 100,
+): Promise<void> {
   const buffer = await loadAudioBuffer(samplePath);
   if (!buffer || !masterGain) {
     log(`playSample: no buffer or masterGain for ${samplePath}`);
@@ -120,7 +124,11 @@ export async function playSample(samplePath: string): Promise<void> {
 
   const ctx = getAudioContext();
   const source = new AudioBufferSourceNode(ctx, { buffer });
-  source.connect(masterGain);
+
+  // Create a gain node for this sample's volume
+  const gainNode = new GainNode(ctx, { gain: volume / 100 });
+  source.connect(gainNode);
+  gainNode.connect(masterGain);
 
   activeSources.add(source);
 
@@ -135,9 +143,11 @@ export async function playSample(samplePath: string): Promise<void> {
 const BASE_PITCH = 60;
 
 // Play sample with pitch shift (polyphonic, for sequencer)
+// volume: 0-100 (percentage)
 export async function playSamplePitched(
   samplePath: string,
   pitch: number,
+  volume: number = 100,
 ): Promise<void> {
   const buffer = await loadAudioBuffer(samplePath);
   if (!buffer || !masterGain) return;
@@ -150,7 +160,11 @@ export async function playSamplePitched(
     buffer,
     playbackRate,
   });
-  source.connect(masterGain);
+
+  // Create a gain node for this sample's volume
+  const gainNode = new GainNode(ctx, { gain: volume / 100 });
+  source.connect(gainNode);
+  gainNode.connect(masterGain);
 
   activeSources.add(source);
 

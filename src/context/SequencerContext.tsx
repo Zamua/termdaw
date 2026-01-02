@@ -226,6 +226,8 @@ interface SequencerContextType {
   setBpm: (bpm: number) => void;
   toggleStep: (channelIndex: number, stepIndex: number) => void;
   toggleMute: (channelIndex: number) => void;
+  toggleSolo: (channelIndex: number) => void;
+  setChannelVolume: (channelIndex: number, volume: number) => void;
   cycleMuteState: (channelIndex: number) => void;
   setChannelSample: (channelIndex: number, samplePath: string) => void;
   clearChannel: (channelIndex: number) => void;
@@ -390,12 +392,16 @@ export function SequencerProvider({
 
         if (channel.type === "sample") {
           if (channel.steps[step]) {
-            playSample(getSamplePath(channel.sample));
+            playSample(getSamplePath(channel.sample), channel.volume);
           }
           const notes = channel.notes || [];
           for (const note of notes) {
             if (note.startStep === step) {
-              playSamplePitched(getSamplePath(channel.sample), note.pitch);
+              playSamplePitched(
+                getSamplePath(channel.sample),
+                note.pitch,
+                channel.volume,
+              );
             }
           }
         } else if (channel.type === "synth") {
@@ -403,7 +409,13 @@ export function SequencerProvider({
           for (const note of notes) {
             if (note.startStep === step) {
               const noteDuration = note.duration * stepDuration;
-              playSynthNote(channel.synthPatch, note.pitch, noteDuration);
+              playSynthNote(
+                channel.synthPatch,
+                note.pitch,
+                noteDuration,
+                undefined,
+                channel.volume,
+              );
             }
           }
         }
@@ -446,18 +458,28 @@ export function SequencerProvider({
 
           if (channel.type === "sample") {
             if (patternSteps[step]) {
-              playSample(getSamplePath(channel.sample));
+              playSample(getSamplePath(channel.sample), channel.volume);
             }
             for (const note of patternNotes) {
               if (note.startStep === step) {
-                playSamplePitched(getSamplePath(channel.sample), note.pitch);
+                playSamplePitched(
+                  getSamplePath(channel.sample),
+                  note.pitch,
+                  channel.volume,
+                );
               }
             }
           } else if (channel.type === "synth") {
             for (const note of patternNotes) {
               if (note.startStep === step) {
                 const noteDuration = note.duration * stepDuration;
-                playSynthNote(channel.synthPatch, note.pitch, noteDuration);
+                playSynthNote(
+                  channel.synthPatch,
+                  note.pitch,
+                  noteDuration,
+                  undefined,
+                  channel.volume,
+                );
               }
             }
           }
@@ -590,6 +612,27 @@ export function SequencerProvider({
       }),
     );
   }, []);
+
+  const toggleSolo = useCallback((channelIndex: number) => {
+    setChannelMeta((prev) =>
+      prev.map((channel, idx) => {
+        if (idx !== channelIndex) return channel;
+        return { ...channel, solo: !channel.solo };
+      }),
+    );
+  }, []);
+
+  const setChannelVolume = useCallback(
+    (channelIndex: number, volume: number) => {
+      setChannelMeta((prev) =>
+        prev.map((channel, idx) => {
+          if (idx !== channelIndex) return channel;
+          return { ...channel, volume: Math.max(0, Math.min(100, volume)) };
+        }),
+      );
+    },
+    [],
+  );
 
   const cycleMuteState = useCallback((channelIndex: number) => {
     setChannelMeta((prev) => {
@@ -994,6 +1037,8 @@ export function SequencerProvider({
         setBpm,
         toggleStep,
         toggleMute,
+        toggleSolo,
+        setChannelVolume,
         cycleMuteState,
         setChannelSample,
         clearChannel,

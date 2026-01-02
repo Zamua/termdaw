@@ -141,7 +141,9 @@ export default function ChannelRack({
 
   // Vim hook - uses virtual column space including zones
   // Column mapping: 0=sample, 1=mute, 2-17=steps
-  const vim = useVim<boolean[]>({
+  // Data type: boolean[] for single row, boolean[][] for block mode
+  type StepData = boolean[] | boolean[][];
+  const vim = useVim<StepData>({
     dimensions: { rows: channels.length, cols: NUM_STEPS + 2 }, // +2 for sample and mute zones
 
     getCursor: () => ({ row: cursorChannel, col: cursorCol + 2 }), // Shift by 2 so -2 becomes 0
@@ -171,25 +173,64 @@ export default function ChannelRack({
       ],
     },
 
-    getDataInRange: (range: Range) => {
+    getDataInRange: (range: Range): StepData => {
       // Convert from virtual to real columns, only steps zone has data
       const startRealCol = Math.max(0, range.start.col - 2);
       const endRealCol = Math.max(0, range.end.col - 2);
-      const channel = channels[range.start.row];
-      if (!channel) return [];
-      return channel.steps.slice(
-        Math.min(startRealCol, endRealCol),
-        Math.max(startRealCol, endRealCol) + 1,
-      );
-    },
-
-    deleteRange: (range: Range) => {
-      const startRealCol = Math.max(0, range.start.col - 2);
-      const endRealCol = Math.max(0, range.end.col - 2);
-      const channel = channels[range.start.row];
-      if (!channel) return [];
       const startCol = Math.min(startRealCol, endRealCol);
       const endCol = Math.max(startRealCol, endRealCol);
+
+      // For block mode, return data from all rows in range
+      if (range.type === "block") {
+        const startRow = Math.min(range.start.row, range.end.row);
+        const endRow = Math.max(range.start.row, range.end.row);
+        const result: boolean[][] = [];
+        for (let row = startRow; row <= endRow; row++) {
+          const channel = channels[row];
+          if (channel) {
+            result.push(channel.steps.slice(startCol, endCol + 1));
+          } else {
+            result.push([]);
+          }
+        }
+        return result;
+      }
+
+      // For char/line mode, return single row
+      const channel = channels[range.start.row];
+      if (!channel) return [];
+      return channel.steps.slice(startCol, endCol + 1);
+    },
+
+    deleteRange: (range: Range): StepData => {
+      const startRealCol = Math.max(0, range.start.col - 2);
+      const endRealCol = Math.max(0, range.end.col - 2);
+      const startCol = Math.min(startRealCol, endRealCol);
+      const endCol = Math.max(startRealCol, endRealCol);
+
+      // For block mode, delete from all rows
+      if (range.type === "block") {
+        const startRow = Math.min(range.start.row, range.end.row);
+        const endRow = Math.max(range.start.row, range.end.row);
+        const result: boolean[][] = [];
+        for (let row = startRow; row <= endRow; row++) {
+          const channel = channels[row];
+          if (channel) {
+            result.push(channel.steps.slice(startCol, endCol + 1));
+          } else {
+            result.push([]);
+          }
+          clearStepRange(currentPatternId, row, startCol, endCol, {
+            context: "channelRack",
+            position: { row, col: range.start.col },
+          });
+        }
+        return result;
+      }
+
+      // For char/line mode, delete from single row
+      const channel = channels[range.start.row];
+      if (!channel) return [];
       const deleted = channel.steps.slice(startCol, endCol + 1);
       clearStepRange(currentPatternId, range.start.row, startCol, endCol, {
         context: "channelRack",
@@ -198,12 +239,29 @@ export default function ChannelRack({
       return deleted;
     },
 
-    insertData: (pos: Position, data: boolean[]) => {
+    insertData: (pos: Position, data: StepData) => {
       const realCol = Math.max(0, pos.col - 2);
-      setSteps(currentPatternId, pos.row, realCol, data, {
-        context: "channelRack",
-        position: { row: pos.row, col: pos.col },
-      });
+
+      // Check if data is 2D (block mode)
+      if (Array.isArray(data) && data.length > 0 && Array.isArray(data[0])) {
+        // Block mode: insert each row
+        const blockData = data as boolean[][];
+        for (let i = 0; i < blockData.length; i++) {
+          const targetRow = pos.row + i;
+          if (targetRow < channels.length) {
+            setSteps(currentPatternId, targetRow, realCol, blockData[i]!, {
+              context: "channelRack",
+              position: { row: targetRow, col: pos.col },
+            });
+          }
+        }
+      } else {
+        // Single row mode
+        setSteps(currentPatternId, pos.row, realCol, data as boolean[], {
+          context: "channelRack",
+          position: { row: pos.row, col: pos.col },
+        });
+      }
     },
 
     onCustomAction: (char: string, key: Key, _count: number) => {
