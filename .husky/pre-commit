@@ -1,1 +1,19 @@
+# Run Rust checks if Cargo.toml exists
+if [ -f "Cargo.toml" ]; then
+    echo "Running Rust formatting check..."
+    cargo fmt -- --check
+    if [ $? -ne 0 ]; then
+        echo "Rust formatting check failed. Run 'cargo fmt' to fix."
+        exit 1
+    fi
+
+    echo "Running Rust linter..."
+    cargo clippy -- -D warnings
+    if [ $? -ne 0 ]; then
+        echo "Clippy found issues. Please fix them before committing."
+        exit 1
+    fi
+fi
+
+# Run TypeScript checks
 bunx lint-staged

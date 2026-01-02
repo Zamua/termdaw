@@ -35,3 +35,10 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Debug logs
 /tmp/daw-*.log
+
+# Rust
+target/
+
+# Auto-generated projects
+untitled-*
+test-song/

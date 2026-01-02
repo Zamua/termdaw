@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "name": "untitled",
+  "created_at": "2025-01-01T00:00:00Z",
+  "modified_at": "2025-01-01T00:00:00Z",
+  "bpm": 120.0,
+  "current_pattern": 0,
+  "channels": [
+    {
+      "name": "kick",
+      "channel_type": "Sampler",
+      "sample_path": "Kits/Acoustic/kick.wav",
+      "volume": 1.0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "name": "snare",
+      "channel_type": "Sampler",
+      "sample_path": "Kits/Acoustic/snare.wav",
+      "volume": 1.0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "name": "hihat-closed",
+      "channel_type": "Sampler",
+      "sample_path": "Kits/Acoustic/hihat-closed.wav",
+      "volume": 1.0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "name": "hihat-open",
+      "channel_type": "Sampler",
+      "sample_path": "Kits/Acoustic/hihat-open.wav",
+      "volume": 1.0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "name": "crash",
+      "channel_type": "Sampler",
+      "sample_path": "Kits/Acoustic/crash.wav",
+      "volume": 1.0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "name": "ride",
+      "channel_type": "Sampler",
+      "sample_path": "Kits/Acoustic/ride.wav",
+      "volume": 1.0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "name": "tom-high",
+      "channel_type": "Sampler",
+      "sample_path": "Kits/Acoustic/tom-high.wav",
+      "volume": 1.0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "name": "tom-low",
+      "channel_type": "Sampler",
+      "sample_path": "Kits/Acoustic/tom-low.wav",
+      "volume": 1.0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "name": "Synth",
+      "channel_type": { "Plugin": { "path": "Simple Synth.clap" } },
+      "sample_path": null,
+      "volume": 1.0,
+      "muted": false,
+      "solo": false
+    }
+  ],
+  "patterns": [
+    {
+      "id": 0,
+      "name": "Pattern 1",
+      "steps": [
+        [true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false],
+        [false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false],
+        [true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false],
+        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]
+      ],
+      "notes": [
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [
+          { "id": "synth-note-1", "pitch": 60, "start_step": 0, "duration": 2, "velocity": 0.8 },
+          { "id": "synth-note-2", "pitch": 64, "start_step": 4, "duration": 2, "velocity": 0.8 },
+          { "id": "synth-note-3", "pitch": 67, "start_step": 8, "duration": 2, "velocity": 0.8 },
+          { "id": "synth-note-4", "pitch": 72, "start_step": 12, "duration": 4, "velocity": 0.8 }
+        ]
+      ]
+    }
+  ]
+}

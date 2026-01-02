@@ -1,0 +1,55 @@
+[workspace]
+members = [".", "plugins/simple-synth"]
+resolver = "2"
+
+[package]
+name = "termdaw"
+version = "0.1.0"
+edition = "2021"
+description = "A terminal-based Digital Audio Workstation"
+license = "MIT"
+
+[dependencies]
+# TUI
+ratatui = "0.30"
+crossterm = "0.29"
+tui-input = "0.15"
+
+# Audio
+cpal = "0.15"                    # Staying on 0.15 for rodio compatibility
+hound = "3.5"                    # WAV reading
+symphonia = { version = "0.5", features = ["mp3", "flac"] }  # MP3/FLAC decoding
+rodio = "0.19"                   # High-level audio playback (requires cpal 0.15)
+
+# Threading/channels
+crossbeam-channel = "0.5"
+
+# Plugin hosting
+clack-host = { git = "https://github.com/prokopyl/clack.git" }
+clack-extensions = { git = "https://github.com/prokopyl/clack.git" }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Utilities
+directories = "6"
+uuid = { version = "1", features = ["v4"] }
+walkdir = "2.5"                  # Directory traversal
+chrono = { version = "0.4", features = ["serde"] }  # Timestamps
+dirs = "6"
+
+# Graphics (for waveform visualizer)
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
+
+[profile.release]
+lto = true
+codegen-units = 1
