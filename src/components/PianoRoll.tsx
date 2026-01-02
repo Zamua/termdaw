@@ -1,14 +1,17 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useIsFocused, useFocusContext } from '../context/FocusContext.js';
 import { useSequencer, type Note } from '../context/SequencerContext.js';
 import { previewSamplePitched, getSamplePath } from '../lib/audio.js';
 import { previewSynthNote } from '../lib/synth.js';
+import { useVim } from '../hooks/useVim.js';
+import type { Position, Range, Key } from '../lib/vim/types.js';
 
 const NUM_STEPS = 16;
-const MIN_PITCH = 36;  // C2
-const MAX_PITCH = 84;  // C6
-const VIEWPORT_HEIGHT = 16; // Visible rows
+const MIN_PITCH = 36; // C2
+const MAX_PITCH = 84; // C6
+const PITCH_RANGE = MAX_PITCH - MIN_PITCH + 1; // 49 pitches
+const VIEWPORT_HEIGHT = 16;
 
 const PITCH_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -23,542 +26,402 @@ function isBlackKey(pitch: number): boolean {
   return [1, 3, 6, 8, 10].includes(semitone);
 }
 
-type Operator = 'd' | 'y' | null;
-type VisualMode = 'none' | 'char' | 'block';
+// Convert between pitch and row (row 0 = MAX_PITCH, row increases as pitch decreases)
+function pitchToRow(pitch: number): number {
+  return MAX_PITCH - pitch;
+}
 
+function rowToPitch(row: number): number {
+  return MAX_PITCH - row;
+}
+
+// Yanked note representation (relative positions)
 interface YankedNote {
-  pitchOffset: number;  // Relative to anchor pitch
-  stepOffset: number;   // Relative to anchor step
+  pitchOffset: number;
+  stepOffset: number;
   duration: number;
 }
 
 export default function PianoRoll() {
   const isFocused = useIsFocused('pianoRoll');
   const { exitPianoRoll } = useFocusContext();
-  const { channels, selectedChannel, playheadStep, isPlaying, addNote, removeNote, updateNote } = useSequencer();
+  const {
+    channels,
+    selectedChannel,
+    playheadStep,
+    isPlaying,
+    addNote,
+    removeNote,
+    updateNote,
+  } = useSequencer();
 
-  const [cursorPitch, setCursorPitch] = useState(60);  // C4
+  const [cursorPitch, setCursorPitch] = useState(60); // C4
   const [cursorStep, setCursorStep] = useState(0);
-  const [viewportTop, setViewportTop] = useState(67);  // Show around C4-C5
-  const [countPrefix, setCountPrefix] = useState('');
-  const [pendingOperator, setPendingOperator] = useState<Operator>(null);
-
-  // Note placement mode: when placing, we're setting the endpoint
+  const [viewportTop, setViewportTop] = useState(67); // Show around C4-C5
   const [placingNote, setPlacingNote] = useState<{ startStep: number } | null>(null);
-
-  // Visual selection mode
-  const [visualMode, setVisualMode] = useState<VisualMode>('none');
-  const [visualStart, setVisualStart] = useState<{ pitch: number; step: number } | null>(null);
-
-  // Yank buffer for copy/paste
-  const yankBuffer = useRef<YankedNote[]>([]);
 
   const channel = channels[selectedChannel];
   const notes: Note[] = channel?.notes || [];
 
-  // Get the count from prefix or default to 1
-  const getCount = useCallback(() => {
-    const count = countPrefix ? parseInt(countPrefix, 10) : 1;
-    setCountPrefix('');
-    return count;
-  }, [countPrefix]);
-
   // Find note at cursor position (note that starts at this step)
-  const getNoteStartingAt = useCallback((pitch: number, step: number): Note | undefined => {
-    if (!notes || !Array.isArray(notes)) return undefined;
-    return notes.find(n => n && n.pitch === pitch && n.startStep === step);
-  }, [notes]);
+  const getNoteStartingAt = useCallback(
+    (pitch: number, step: number): Note | undefined => {
+      if (!notes || !Array.isArray(notes)) return undefined;
+      return notes.find((n) => n && n.pitch === pitch && n.startStep === step);
+    },
+    [notes]
+  );
 
-  // Find note covering cursor position (cursor is within note's range)
-  const getNoteCovering = useCallback((pitch: number, step: number): Note | undefined => {
-    if (!notes || !Array.isArray(notes)) return undefined;
-    return notes.find(n =>
-      n && n.pitch === pitch &&
-      step >= n.startStep &&
-      step < n.startStep + n.duration
-    );
-  }, [notes]);
-
-  // Check if pitch/step has a note (for rendering)
-  const hasNoteAt = useCallback((pitch: number, step: number): Note | undefined => {
-    return getNoteCovering(pitch, step);
-  }, [getNoteCovering]);
+  // Find note covering cursor position
+  const getNoteCovering = useCallback(
+    (pitch: number, step: number): Note | undefined => {
+      if (!notes || !Array.isArray(notes)) return undefined;
+      return notes.find(
+        (n) => n && n.pitch === pitch && step >= n.startStep && step < n.startStep + n.duration
+      );
+    },
+    [notes]
+  );
 
   // Is this the start of a note?
-  const isNoteStart = useCallback((pitch: number, step: number): boolean => {
-    return !!getNoteStartingAt(pitch, step);
-  }, [getNoteStartingAt]);
+  const isNoteStart = useCallback(
+    (pitch: number, step: number): boolean => {
+      return !!getNoteStartingAt(pitch, step);
+    },
+    [getNoteStartingAt]
+  );
 
-  // Find next note on current pitch, or next bar line if no note found
-  const findNextNote = useCallback((fromStep: number): number => {
-    // First try to find next note
-    for (let i = fromStep + 1; i < NUM_STEPS; i++) {
-      if (getNoteStartingAt(cursorPitch, i)) return i;
-    }
-    // No note found, jump to next bar line (0, 4, 8, 12)
-    const nextBar = Math.ceil((fromStep + 1) / 4) * 4;
-    if (nextBar < NUM_STEPS) {
-      return nextBar;
-    }
-    // Wrap to beginning
-    return 0;
-  }, [cursorPitch, getNoteStartingAt]);
-
-  // Find previous note on current pitch, or previous bar line if no note found
-  const findPrevNote = useCallback((fromStep: number): number => {
-    // First try to find previous note
-    for (let i = fromStep - 1; i >= 0; i--) {
-      if (getNoteStartingAt(cursorPitch, i)) return i;
-    }
-    // No note found, jump to previous bar line (0, 4, 8, 12)
-    const prevBar = Math.floor((fromStep - 1) / 4) * 4;
-    if (prevBar >= 0) {
-      return prevBar;
-    }
-    // Wrap to last bar line
-    return 12;
-  }, [cursorPitch, getNoteStartingAt]);
-
-  // Find end of current/next note
-  const findNoteEnd = useCallback((fromStep: number): number => {
-    const note = getNoteCovering(cursorPitch, fromStep);
-    if (note) {
-      return note.startStep + note.duration - 1;
-    }
-    // Find next note and go to its end
-    const nextStart = findNextNote(fromStep);
-    const nextNote = getNoteStartingAt(cursorPitch, nextStart);
-    if (nextNote) {
-      return nextNote.startStep + nextNote.duration - 1;
-    }
-    return fromStep;
-  }, [cursorPitch, getNoteCovering, findNextNote, getNoteStartingAt]);
-
-  // Auto-scroll viewport when cursor moves
-  const scrollToCursor = useCallback((pitch: number) => {
-    if (pitch > viewportTop) {
-      setViewportTop(pitch);
-    } else if (pitch < viewportTop - VIEWPORT_HEIGHT + 1) {
-      setViewportTop(pitch + VIEWPORT_HEIGHT - 1);
-    }
-  }, [viewportTop]);
-
-  // Get visual selection bounds
-  const getVisualBounds = useCallback(() => {
-    if (!visualStart || visualMode === 'none') return null;
-    const minPitch = Math.min(visualStart.pitch, cursorPitch);
-    const maxPitch = Math.max(visualStart.pitch, cursorPitch);
-    const minStep = Math.min(visualStart.step, cursorStep);
-    const maxStep = Math.max(visualStart.step, cursorStep);
-    return { minPitch, maxPitch, minStep, maxStep };
-  }, [visualStart, visualMode, cursorPitch, cursorStep]);
-
-  // Check if a cell is in visual selection
-  const isInVisualSelection = useCallback((pitch: number, step: number): boolean => {
-    const bounds = getVisualBounds();
-    if (!bounds) return false;
-    if (visualMode === 'char') {
-      // Char mode: only current pitch row, between steps
-      return pitch === cursorPitch && step >= bounds.minStep && step <= bounds.maxStep;
-    } else if (visualMode === 'block') {
-      // Block mode: rectangular selection
-      return pitch >= bounds.minPitch && pitch <= bounds.maxPitch &&
-             step >= bounds.minStep && step <= bounds.maxStep;
-    }
-    return false;
-  }, [getVisualBounds, visualMode, cursorPitch]);
-
-  // Get notes in visual selection
-  const getNotesInSelection = useCallback((): Note[] => {
-    const bounds = getVisualBounds();
-    if (!bounds) return [];
-    return notes.filter(n => {
-      if (visualMode === 'char') {
-        return n.pitch === cursorPitch &&
-               n.startStep >= bounds.minStep &&
-               n.startStep <= bounds.maxStep;
-      } else {
-        return n.pitch >= bounds.minPitch && n.pitch <= bounds.maxPitch &&
-               n.startStep >= bounds.minStep && n.startStep <= bounds.maxStep;
+  // Find next note on current pitch
+  const findNextNote = useCallback(
+    (fromStep: number, pitch: number): number => {
+      for (let i = fromStep + 1; i < NUM_STEPS; i++) {
+        if (getNoteStartingAt(pitch, i)) return i;
       }
-    });
-  }, [getVisualBounds, notes, visualMode, cursorPitch]);
+      const nextBar = Math.ceil((fromStep + 1) / 4) * 4;
+      if (nextBar < NUM_STEPS) return nextBar;
+      return 0;
+    },
+    [getNoteStartingAt]
+  );
 
-  // Yank notes in selection
-  const yankSelection = useCallback(() => {
-    const bounds = getVisualBounds();
-    if (!bounds) return;
-    const selectedNotes = getNotesInSelection();
-    // Store relative to anchor (min corner)
-    yankBuffer.current = selectedNotes.map(n => ({
-      pitchOffset: n.pitch - bounds.minPitch,
-      stepOffset: n.startStep - bounds.minStep,
-      duration: n.duration,
-    }));
-  }, [getVisualBounds, getNotesInSelection]);
-
-  // Delete notes in selection
-  const deleteSelection = useCallback(() => {
-    const selectedNotes = getNotesInSelection();
-    for (const note of selectedNotes) {
-      removeNote(selectedChannel, note.id);
-    }
-  }, [getNotesInSelection, removeNote, selectedChannel]);
-
-  // Paste yanked notes at cursor
-  const pasteNotes = useCallback(() => {
-    for (const yanked of yankBuffer.current) {
-      const pitch = cursorPitch + yanked.pitchOffset;
-      const step = cursorStep + yanked.stepOffset;
-      if (pitch >= MIN_PITCH && pitch <= MAX_PITCH && step >= 0 && step + yanked.duration <= NUM_STEPS) {
-        addNote(selectedChannel, pitch, step, yanked.duration);
+  // Find previous note on current pitch
+  const findPrevNote = useCallback(
+    (fromStep: number, pitch: number): number => {
+      for (let i = fromStep - 1; i >= 0; i--) {
+        if (getNoteStartingAt(pitch, i)) return i;
       }
-    }
-  }, [cursorPitch, cursorStep, addNote, selectedChannel]);
+      const prevBar = Math.floor((fromStep - 1) / 4) * 4;
+      if (prevBar >= 0) return prevBar;
+      return 12;
+    },
+    [getNoteStartingAt]
+  );
 
-  // Exit visual mode
-  const exitVisualMode = useCallback(() => {
-    setVisualMode('none');
-    setVisualStart(null);
-  }, []);
+  // Auto-scroll viewport
+  const scrollToCursor = useCallback(
+    (pitch: number) => {
+      if (pitch > viewportTop) {
+        setViewportTop(pitch);
+      } else if (pitch < viewportTop - VIEWPORT_HEIGHT + 1) {
+        setViewportTop(pitch + VIEWPORT_HEIGHT - 1);
+      }
+    },
+    [viewportTop]
+  );
 
-  // Preview note at pitch (handles both sample and synth channels)
-  const previewAtPitch = useCallback((pitch: number) => {
-    if (!channel) return;
-    if (channel.type === 'synth') {
-      previewSynthNote(channel.synthPatch, pitch);
-    } else if (channel.sample) {
-      previewSamplePitched(getSamplePath(channel.sample), pitch);
-    }
-  }, [channel]);
+  // Preview note at pitch
+  const previewAtPitch = useCallback(
+    (pitch: number) => {
+      if (!channel) return;
+      if (channel.type === 'synth') {
+        previewSynthNote(channel.synthPatch, pitch);
+      } else if (channel.sample) {
+        previewSamplePitched(getSamplePath(channel.sample), pitch);
+      }
+    },
+    [channel]
+  );
 
-  // Delete note at or covering cursor
-  const deleteNoteAtCursor = useCallback(() => {
-    const note = getNoteCovering(cursorPitch, cursorStep);
-    if (note) {
-      removeNote(selectedChannel, note.id);
-    }
-  }, [cursorPitch, cursorStep, getNoteCovering, removeNote, selectedChannel]);
+  // Vim hook
+  const vim = useVim<YankedNote[]>({
+    dimensions: { rows: PITCH_RANGE, cols: NUM_STEPS },
 
-  // Execute operator
-  const executeOperator = useCallback((op: Operator, targetStep: number) => {
-    if (!op) return;
-    if (op === 'd') {
-      // Delete all notes from cursor to target on current pitch
-      const minStep = Math.min(cursorStep, targetStep);
-      const maxStep = Math.max(cursorStep, targetStep);
-      for (const note of notes) {
-        if (note.pitch === cursorPitch &&
-            ((note.startStep >= minStep && note.startStep <= maxStep) ||
-             (note.startStep < minStep && note.startStep + note.duration > minStep))) {
-          removeNote(selectedChannel, note.id);
+    getCursor: () => ({ row: pitchToRow(cursorPitch), col: cursorStep }),
+
+    setCursor: (pos: Position) => {
+      const newPitch = rowToPitch(Math.max(0, Math.min(PITCH_RANGE - 1, pos.row)));
+      setCursorPitch(newPitch);
+      setCursorStep(Math.max(0, Math.min(NUM_STEPS - 1, pos.col)));
+      scrollToCursor(newPitch);
+    },
+
+    motions: {
+      h: (count, cursor) => ({
+        position: { row: cursor.row, col: Math.max(0, cursor.col - count) },
+      }),
+      l: (count, cursor) => ({
+        position: { row: cursor.row, col: Math.min(NUM_STEPS - 1, cursor.col + count) },
+      }),
+      // k = up = increase pitch = decrease row
+      k: (count, cursor) => ({
+        position: { row: Math.max(0, cursor.row - count), col: cursor.col },
+        linewise: true,
+      }),
+      // j = down = decrease pitch = increase row
+      j: (count, cursor) => ({
+        position: { row: Math.min(PITCH_RANGE - 1, cursor.row + count), col: cursor.col },
+        linewise: true,
+      }),
+      w: (count, cursor) => {
+        const pitch = rowToPitch(cursor.row);
+        let step = cursor.col;
+        for (let i = 0; i < count; i++) {
+          step = findNextNote(step, pitch);
+        }
+        return { position: { row: cursor.row, col: step } };
+      },
+      b: (count, cursor) => {
+        const pitch = rowToPitch(cursor.row);
+        let step = cursor.col;
+        for (let i = 0; i < count; i++) {
+          step = findPrevNote(step, pitch);
+        }
+        return { position: { row: cursor.row, col: step } };
+      },
+      e: (_count, cursor) => {
+        // End of measure
+        const currentBar = Math.floor(cursor.col / 4);
+        const endOfCurrentBar = currentBar * 4 + 3;
+        let step: number;
+        if (cursor.col === endOfCurrentBar && endOfCurrentBar < NUM_STEPS - 1) {
+          step = Math.min(endOfCurrentBar + 4, NUM_STEPS - 1);
+        } else {
+          step = Math.min(endOfCurrentBar, NUM_STEPS - 1);
+        }
+        return { position: { row: cursor.row, col: step }, inclusive: true };
+      },
+      zero: (_count, cursor) => ({
+        position: { row: cursor.row, col: 0 },
+      }),
+      dollar: (_count, cursor) => ({
+        position: { row: cursor.row, col: NUM_STEPS - 1 },
+        inclusive: true,
+      }),
+      // g = top = highest pitch = row 0
+      gg: (_count, cursor) => ({
+        position: { row: 0, col: cursor.col },
+      }),
+      // G = bottom = lowest pitch = last row
+      G: (_count, cursor) => ({
+        position: { row: PITCH_RANGE - 1, col: cursor.col },
+      }),
+    },
+
+    getDataInRange: (range: Range) => {
+      // Get notes in range and convert to relative positions
+      const minRow = Math.min(range.start.row, range.end.row);
+      const maxRow = Math.max(range.start.row, range.end.row);
+      const minCol = Math.min(range.start.col, range.end.col);
+      const maxCol = Math.max(range.start.col, range.end.col);
+      const minPitch = rowToPitch(maxRow);
+      const maxPitch = rowToPitch(minRow);
+
+      const selected = notes.filter(
+        (n) =>
+          n.pitch >= minPitch &&
+          n.pitch <= maxPitch &&
+          n.startStep >= minCol &&
+          n.startStep <= maxCol
+      );
+
+      return selected.map((n) => ({
+        pitchOffset: n.pitch - minPitch,
+        stepOffset: n.startStep - minCol,
+        duration: n.duration,
+      }));
+    },
+
+    deleteRange: (range: Range) => {
+      const minRow = Math.min(range.start.row, range.end.row);
+      const maxRow = Math.max(range.start.row, range.end.row);
+      const minCol = Math.min(range.start.col, range.end.col);
+      const maxCol = Math.max(range.start.col, range.end.col);
+      const minPitch = rowToPitch(maxRow);
+      const maxPitch = rowToPitch(minRow);
+
+      const toDelete = notes.filter(
+        (n) =>
+          n.pitch >= minPitch &&
+          n.pitch <= maxPitch &&
+          ((n.startStep >= minCol && n.startStep <= maxCol) ||
+            (n.startStep < minCol && n.startStep + n.duration > minCol))
+      );
+
+      const yanked = toDelete.map((n) => ({
+        pitchOffset: n.pitch - minPitch,
+        stepOffset: n.startStep - minCol,
+        duration: n.duration,
+      }));
+
+      for (const note of toDelete) {
+        removeNote(selectedChannel, note.id);
+      }
+
+      return yanked;
+    },
+
+    insertData: (pos: Position, data: YankedNote[]) => {
+      const basePitch = rowToPitch(pos.row);
+      const baseStep = pos.col;
+      for (const yanked of data) {
+        const pitch = basePitch + yanked.pitchOffset;
+        const step = baseStep + yanked.stepOffset;
+        if (pitch >= MIN_PITCH && pitch <= MAX_PITCH && step >= 0 && step + yanked.duration <= NUM_STEPS) {
+          addNote(selectedChannel, pitch, step, yanked.duration);
         }
       }
-    }
-    setPendingOperator(null);
-  }, [cursorStep, cursorPitch, notes, removeNote, selectedChannel]);
+    },
 
+    onCustomAction: (char: string, key: Key, count: number) => {
+      // Escape behavior: cancel placement first, then let vim handle
+      if (key.escape) {
+        if (placingNote) {
+          setPlacingNote(null);
+          return true;
+        }
+        // If nothing special, exit piano roll on escape (after vim resets)
+        if (vim.mode === 'normal' && !vim.operator) {
+          exitPianoRoll();
+          return true;
+        }
+        return false; // Let vim handle escape for visual/operator modes
+      }
+
+      // Octave jumps (K and J, uppercase)
+      if (char === 'K') {
+        if (placingNote) setPlacingNote(null);
+        const newPitch = Math.min(MAX_PITCH, cursorPitch + 12 * count);
+        setCursorPitch(newPitch);
+        scrollToCursor(newPitch);
+        return true;
+      }
+      if (char === 'J') {
+        if (placingNote) setPlacingNote(null);
+        const newPitch = Math.max(MIN_PITCH, cursorPitch - 12 * count);
+        setCursorPitch(newPitch);
+        scrollToCursor(newPitch);
+        return true;
+      }
+
+      // Page up/down (Ctrl+u/d)
+      if (key.ctrl && char === 'u') {
+        if (placingNote) setPlacingNote(null);
+        const halfPage = Math.floor(VIEWPORT_HEIGHT / 2);
+        const newPitch = Math.min(MAX_PITCH, cursorPitch + halfPage);
+        setCursorPitch(newPitch);
+        setViewportTop((vt) => Math.min(MAX_PITCH, vt + halfPage));
+        return true;
+      }
+      if (key.ctrl && char === 'd') {
+        if (placingNote) setPlacingNote(null);
+        const halfPage = Math.floor(VIEWPORT_HEIGHT / 2);
+        const newPitch = Math.max(MIN_PITCH, cursorPitch - halfPage);
+        setCursorPitch(newPitch);
+        setViewportTop((vt) => Math.max(MIN_PITCH + VIEWPORT_HEIGHT - 1, vt - halfPage));
+        return true;
+      }
+
+      // Note placement with x or Enter
+      if (key.return || char === 'x') {
+        if (placingNote) {
+          // Finish placing note
+          const startStep = Math.min(placingNote.startStep, cursorStep);
+          const endStep = Math.max(placingNote.startStep, cursorStep);
+          const duration = endStep - startStep + 1;
+          addNote(selectedChannel, cursorPitch, startStep, duration);
+          setPlacingNote(null);
+        } else {
+          const existingNote = getNoteCovering(cursorPitch, cursorStep);
+          if (existingNote) {
+            removeNote(selectedChannel, existingNote.id);
+            setPlacingNote({ startStep: existingNote.startStep });
+          } else {
+            setPlacingNote({ startStep: cursorStep });
+          }
+        }
+        return true;
+      }
+
+      // Nudge notes with < and >
+      if (char === '<') {
+        const note = getNoteCovering(cursorPitch, cursorStep);
+        if (note && note.startStep > 0) {
+          updateNote(selectedChannel, note.id, { startStep: note.startStep - 1 });
+          setCursorStep((prev) => Math.max(0, prev - 1));
+        }
+        return true;
+      }
+      if (char === '>') {
+        const note = getNoteCovering(cursorPitch, cursorStep);
+        if (note && note.startStep + note.duration < NUM_STEPS) {
+          updateNote(selectedChannel, note.id, { startStep: note.startStep + 1 });
+          setCursorStep((prev) => Math.min(NUM_STEPS - 1, prev + 1));
+        }
+        return true;
+      }
+
+      // Preview at cursor pitch
+      if (char === 's') {
+        previewAtPitch(cursorPitch);
+        return true;
+      }
+
+      return false;
+    },
+
+    onModeChange: (_mode) => {
+      // Cancel placement when entering visual or operator mode
+      if (placingNote) setPlacingNote(null);
+    },
+  });
+
+  // All input goes through vim
   useInput((input, key) => {
     if (!isFocused) return;
 
-    // Escape cancels placement mode, visual mode, or pending operator; or exits piano roll
-    if (key.escape) {
-      if (placingNote) {
-        setPlacingNote(null);
-        return;
-      }
-      if (visualMode !== 'none') {
-        exitVisualMode();
-        return;
-      }
-      if (pendingOperator) {
-        setPendingOperator(null);
-        return;
-      }
-      if (countPrefix) {
-        setCountPrefix('');
-        return;
-      }
-      // Nothing to cancel, exit piano roll
-      exitPianoRoll();
-      return;
-    }
+    const inkKey: Key = {
+      upArrow: key.upArrow,
+      downArrow: key.downArrow,
+      leftArrow: key.leftArrow,
+      rightArrow: key.rightArrow,
+      pageDown: key.pageDown,
+      pageUp: key.pageUp,
+      return: key.return,
+      escape: key.escape,
+      ctrl: key.ctrl,
+      shift: key.shift,
+      tab: key.tab,
+      backspace: key.backspace,
+      delete: key.delete,
+      meta: key.meta,
+    };
 
-    // Visual mode: v for char, Ctrl+v for block
-    if (input === 'v' && !key.ctrl && visualMode === 'none') {
-      setVisualMode('char');
-      setVisualStart({ pitch: cursorPitch, step: cursorStep });
-      return;
-    }
-    if (key.ctrl && input === 'v') {
-      if (visualMode === 'none') {
-        setVisualMode('block');
-        setVisualStart({ pitch: cursorPitch, step: cursorStep });
-      } else {
-        // Toggle to block mode from char mode
-        setVisualMode('block');
-      }
-      return;
-    }
-
-    // In visual mode: y to yank, d to delete
-    if (visualMode !== 'none') {
-      if (input === 'y') {
-        yankSelection();
-        exitVisualMode();
-        return;
-      }
-      if (input === 'd') {
-        yankSelection();  // Also yank before delete
-        deleteSelection();
-        exitVisualMode();
-        return;
-      }
-      if (input === 'x') {
-        // Delete selection
-        deleteSelection();
-        exitVisualMode();
-        return;
-      }
-    }
-
-    // Paste yanked notes
-    if (input === 'p') {
-      pasteNotes();
-      return;
-    }
-
-    // Number prefix accumulation
-    if (/^[0-9]$/.test(input) && (countPrefix || input !== '0')) {
-      setCountPrefix(prev => prev + input);
-      return;
-    }
-
-    const count = getCount();
-
-    // Navigation
-    if (key.leftArrow || input === 'h') {
-      const target = Math.max(0, cursorStep - count);
-      if (pendingOperator) {
-        // h is exclusive for delete - delete to the left, don't move cursor
-        executeOperator(pendingOperator, cursorStep - count);
-      } else {
-        setCursorStep(target);
-      }
-      return;
-    }
-    if (key.rightArrow || input === 'l') {
-      if (pendingOperator) {
-        // l is exclusive - dl deletes just current position, don't move cursor
-        executeOperator(pendingOperator, cursorStep + count - 1);
-      } else {
-        const target = Math.min(NUM_STEPS - 1, cursorStep + count);
-        setCursorStep(target);
-      }
-      return;
-    }
-    if (key.upArrow || input === 'k') {
-      // Cancel placement if moving vertically
-      if (placingNote) setPlacingNote(null);
-      setPendingOperator(null);
-      setCursorPitch(prev => {
-        const next = Math.min(MAX_PITCH, prev + count);
-        scrollToCursor(next);
-        return next;
-      });
-      return;
-    }
-    if (key.downArrow || input === 'j') {
-      if (placingNote) setPlacingNote(null);
-      setPendingOperator(null);
-      setCursorPitch(prev => {
-        const next = Math.max(MIN_PITCH, prev - count);
-        scrollToCursor(next);
-        return next;
-      });
-      return;
-    }
-
-    // Octave jumps
-    if (input === 'K') {
-      if (placingNote) setPlacingNote(null);
-      setPendingOperator(null);
-      setCursorPitch(prev => {
-        const next = Math.min(MAX_PITCH, prev + 12);
-        scrollToCursor(next);
-        return next;
-      });
-      return;
-    }
-    if (input === 'J') {
-      if (placingNote) setPlacingNote(null);
-      setPendingOperator(null);
-      setCursorPitch(prev => {
-        const next = Math.max(MIN_PITCH, prev - 12);
-        scrollToCursor(next);
-        return next;
-      });
-      return;
-    }
-
-    // Jump to start/end of row
-    if (input === '0' && !countPrefix) {
-      if (pendingOperator) {
-        executeOperator(pendingOperator, 0);
-      }
-      setCursorStep(0);
-      return;
-    }
-    if (input === '$') {
-      if (pendingOperator) {
-        executeOperator(pendingOperator, NUM_STEPS - 1);
-      }
-      setCursorStep(NUM_STEPS - 1);
-      return;
-    }
-
-    // Vim motions: w (next note), b (previous note), e (end of note)
-    if (input === 'w') {
-      let step = cursorStep;
-      for (let i = 0; i < count; i++) {
-        step = findNextNote(step);
-      }
-      if (pendingOperator) {
-        executeOperator(pendingOperator, step);
-      }
-      setCursorStep(step);
-      return;
-    }
-    if (input === 'b') {
-      let step = cursorStep;
-      for (let i = 0; i < count; i++) {
-        step = findPrevNote(step);
-      }
-      if (pendingOperator) {
-        executeOperator(pendingOperator, step);
-      }
-      setCursorStep(step);
-      return;
-    }
-    if (input === 'e') {
-      // Go to end of current measure (step 3, 7, 11, or 15)
-      // If already at end of measure, go to end of next measure
-      const currentBar = Math.floor(cursorStep / 4);
-      const endOfCurrentBar = currentBar * 4 + 3;
-      let step: number;
-      if (cursorStep === endOfCurrentBar && endOfCurrentBar < NUM_STEPS - 1) {
-        // Already at end of bar, go to next bar's end
-        step = Math.min(endOfCurrentBar + 4, NUM_STEPS - 1);
-      } else {
-        step = Math.min(endOfCurrentBar, NUM_STEPS - 1);
-      }
-      if (pendingOperator) {
-        executeOperator(pendingOperator, step);
-      }
-      setCursorStep(step);
-      return;
-    }
-
-    // Jump to top/bottom pitch
-    if (input === 'g') {
-      if (placingNote) setPlacingNote(null);
-      setPendingOperator(null);
-      setCursorPitch(MAX_PITCH);
-      setViewportTop(MAX_PITCH);
-      return;
-    }
-    if (input === 'G') {
-      if (placingNote) setPlacingNote(null);
-      setPendingOperator(null);
-      setCursorPitch(MIN_PITCH);
-      setViewportTop(MIN_PITCH + VIEWPORT_HEIGHT - 1);
-      return;
-    }
-
-    // Page up/down (Ctrl+u/d)
-    if (key.ctrl && input === 'u') {
-      if (placingNote) setPlacingNote(null);
-      const halfPage = Math.floor(VIEWPORT_HEIGHT / 2);
-      setCursorPitch(prev => {
-        const next = Math.min(MAX_PITCH, prev + halfPage);
-        setViewportTop(vt => Math.min(MAX_PITCH, vt + halfPage));
-        return next;
-      });
-      return;
-    }
-    if (key.ctrl && input === 'd') {
-      if (placingNote) setPlacingNote(null);
-      const halfPage = Math.floor(VIEWPORT_HEIGHT / 2);
-      setCursorPitch(prev => {
-        const next = Math.max(MIN_PITCH, prev - halfPage);
-        setViewportTop(vt => Math.max(MIN_PITCH + VIEWPORT_HEIGHT - 1, vt - halfPage));
-        return next;
-      });
-      return;
-    }
-
-    // Delete operator
-    if (input === 'd') {
-      if (pendingOperator === 'd') {
-        // dd - delete all notes on current pitch (or just note at cursor)
-        deleteNoteAtCursor();
-        setPendingOperator(null);
-        return;
-      }
-      setPendingOperator('d');
-      return;
-    }
-
-    // x - Note placement/editing
-    if (key.return || input === 'x') {
-      if (placingNote) {
-        // Finish placing note
-        const startStep = Math.min(placingNote.startStep, cursorStep);
-        const endStep = Math.max(placingNote.startStep, cursorStep);
-        const duration = endStep - startStep + 1;
-        addNote(selectedChannel, cursorPitch, startStep, duration);
-        setPlacingNote(null);
-      } else {
-        // Check if there's a note at cursor
-        const existingNote = getNoteCovering(cursorPitch, cursorStep);
-        if (existingNote) {
-          // Edit existing note: delete it and enter placement mode from its start
-          removeNote(selectedChannel, existingNote.id);
-          setPlacingNote({ startStep: existingNote.startStep });
-        } else {
-          // Start placing new note
-          setPlacingNote({ startStep: cursorStep });
-        }
-      }
-      return;
-    }
-
-    // Nudge notes with < and >
-    if (input === '<') {
-      const note = getNoteCovering(cursorPitch, cursorStep);
-      if (note && note.startStep > 0) {
-        updateNote(selectedChannel, note.id, { startStep: note.startStep - 1 });
-        setCursorStep(prev => Math.max(0, prev - 1));
-      }
-      return;
-    }
-    if (input === '>') {
-      const note = getNoteCovering(cursorPitch, cursorStep);
-      if (note && note.startStep + note.duration < NUM_STEPS) {
-        updateNote(selectedChannel, note.id, { startStep: note.startStep + 1 });
-        setCursorStep(prev => Math.min(NUM_STEPS - 1, prev + 1));
-      }
-      return;
-    }
-
-    // Preview at cursor pitch
-    if (input === 's') {
-      previewAtPitch(cursorPitch);
-      return;
-    }
+    vim.handleInput(input, inkKey);
   });
 
-  // Calculate visible pitch range (higher pitches at top)
+  // Check if a cell is in visual selection
+  const isInVisualSelection = (pitch: number, step: number): boolean => {
+    if (!vim.visualRange) return false;
+    const { start, end } = vim.visualRange;
+    const row = pitchToRow(pitch);
+    const minRow = Math.min(start.row, end.row);
+    const maxRow = Math.max(start.row, end.row);
+    const minCol = Math.min(start.col, end.col);
+    const maxCol = Math.max(start.col, end.col);
+    return row >= minRow && row <= maxRow && step >= minCol && step <= maxCol;
+  };
+
+  // Calculate visible pitch range
   const pitchRange: number[] = [];
   for (let p = viewportTop; p > viewportTop - VIEWPORT_HEIGHT && p >= MIN_PITCH; p--) {
     pitchRange.push(p);
@@ -572,6 +435,15 @@ export default function PianoRoll() {
     return { start, end };
   };
   const placementRange = getPlacementRange();
+
+  // Mode indicator
+  const getModeIndicator = () => {
+    if (placingNote) return 'PLACE';
+    if (vim.mode === 'visual') return 'VISUAL';
+    if (vim.mode === 'visual-block') return 'V-BLOCK';
+    if (vim.mode === 'operator-pending') return `${vim.operator}...`;
+    return '';
+  };
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -591,9 +463,7 @@ export default function PianoRoll() {
           </Box>
         ))}
         <Box marginLeft={1}>
-          <Text dimColor>
-            {placingNote ? 'PLACE' : visualMode === 'char' ? 'VISUAL' : visualMode === 'block' ? 'V-BLOCK' : pendingOperator ? `d...` : ''}
-          </Text>
+          <Text dimColor>{getModeIndicator()}</Text>
         </Box>
       </Box>
 
@@ -622,12 +492,13 @@ export default function PianoRoll() {
 
             {/* Steps */}
             {Array.from({ length: NUM_STEPS }, (_, stepIndex) => {
-              const note = hasNoteAt(pitch, stepIndex);
+              const note = getNoteCovering(pitch, stepIndex);
               const isStart = isNoteStart(pitch, stepIndex);
               const isCursor = pitch === cursorPitch && stepIndex === cursorStep && isFocused;
               const isPlayhead = stepIndex === playheadStep && isPlaying;
               const isBeat = stepIndex % 4 === 0;
-              const isInPlacement = placementRange &&
+              const isInPlacement =
+                placementRange &&
                 pitch === cursorPitch &&
                 stepIndex >= placementRange.start &&
                 stepIndex <= placementRange.end;
