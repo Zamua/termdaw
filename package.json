@@ -17,11 +17,13 @@
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
     "@mishieck/ink-titled-box": "^0.3.0",
+    "@xstate/react": "^6.0.0",
     "ink": "^6.6.0",
     "ink-image": "^2.0.0",
     "node-web-audio-api": "^1.0.7",
     "play-sound": "^1.1.6",
     "react": "^19.2.3",
-    "terminal-image": "^4.1.0"
+    "terminal-image": "^4.1.0",
+    "xstate": "^5.25.0"
   }
 }
