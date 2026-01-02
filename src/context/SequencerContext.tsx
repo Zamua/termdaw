@@ -44,7 +44,7 @@ interface Pattern {
   notes: Note[][]; // [channelIndex][noteIndex] - piano roll notes
 }
 
-// Playlist types
+// Playlist types (legacy - kept for compatibility)
 export interface PlaylistClip {
   patternId: number;
   startBar: number;
@@ -55,6 +55,19 @@ export interface PlaylistTrack {
   name: string;
   clips: PlaylistClip[];
   muted: boolean;
+}
+
+// New arrangement model: patterns placed on timeline
+export interface PatternPlacement {
+  id: string;
+  patternId: number;
+  startBar: number;
+  length: number; // How many bars this instance spans
+}
+
+export interface Arrangement {
+  placements: PatternPlacement[];
+  mutedPatterns: Set<number>; // Pattern IDs that are muted in arrangement
 }
 
 const NUM_STEPS = 16;
@@ -248,7 +261,7 @@ interface SequencerContextType {
   // Synth management
   setChannelType: (channelIndex: number, type: ChannelType) => void;
   setChannelSynthPatch: (channelIndex: number, patch: SynthPatch) => void;
-  // Playlist management
+  // Playlist management (legacy)
   playlistTracks: PlaylistTrack[];
   setPlaylistTracks: React.Dispatch<React.SetStateAction<PlaylistTrack[]>>;
   togglePlaylistClip: (
@@ -257,6 +270,13 @@ interface SequencerContextType {
     patternId: number,
   ) => void;
   togglePlaylistTrackMute: (trackIndex: number) => void;
+  // Arrangement management (new pattern-based model)
+  arrangement: Arrangement;
+  setArrangement: React.Dispatch<React.SetStateAction<Arrangement>>;
+  togglePatternPlacement: (patternId: number, bar: number) => void;
+  togglePatternMute: (patternId: number) => void;
+  getPlacementsForPattern: (patternId: number) => PatternPlacement[];
+  getNonEmptyPatterns: () => Pattern[];
 }
 
 const SequencerContext = createContext<SequencerContextType | null>(null);
@@ -274,6 +294,10 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
   const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrack[]>(
     createDefaultPlaylistTracks,
   );
+  const [arrangement, setArrangement] = useState<Arrangement>({
+    placements: [],
+    mutedPatterns: new Set(),
+  });
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bpmRef = useRef(bpm);
@@ -738,6 +762,71 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  // Toggle pattern placement at bar (add if not exists, remove if exists)
+  const togglePatternPlacement = useCallback(
+    (patternId: number, bar: number) => {
+      setArrangement((prev) => {
+        const existing = prev.placements.find(
+          (p) => p.patternId === patternId && p.startBar === bar,
+        );
+        if (existing) {
+          // Remove the placement
+          return {
+            ...prev,
+            placements: prev.placements.filter((p) => p.id !== existing.id),
+          };
+        } else {
+          // Add new placement
+          const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+          return {
+            ...prev,
+            placements: [
+              ...prev.placements,
+              { id, patternId, startBar: bar, length: 1 },
+            ],
+          };
+        }
+      });
+    },
+    [],
+  );
+
+  // Toggle pattern mute in arrangement
+  const togglePatternMute = useCallback((patternId: number) => {
+    setArrangement((prev) => {
+      const newMuted = new Set(prev.mutedPatterns);
+      if (newMuted.has(patternId)) {
+        newMuted.delete(patternId);
+      } else {
+        newMuted.add(patternId);
+      }
+      return { ...prev, mutedPatterns: newMuted };
+    });
+  }, []);
+
+  // Get placements for a specific pattern
+  const getPlacementsForPattern = useCallback(
+    (patternId: number) => {
+      return arrangement.placements.filter((p) => p.patternId === patternId);
+    },
+    [arrangement.placements],
+  );
+
+  // Get non-empty patterns (patterns with steps or notes)
+  const getNonEmptyPatterns = useCallback(() => {
+    return patterns.filter((pattern) => {
+      // Check if any channel has steps
+      const hasSteps = pattern.steps.some((channelSteps) =>
+        channelSteps.some((step) => step),
+      );
+      // Check if any channel has notes
+      const hasNotes = pattern.notes.some(
+        (channelNotes) => channelNotes.length > 0,
+      );
+      return hasSteps || hasNotes;
+    });
+  }, [patterns]);
+
   return (
     <SequencerContext.Provider
       value={{
@@ -771,6 +860,12 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
         setPlaylistTracks,
         togglePlaylistClip,
         togglePlaylistTrackMute,
+        arrangement,
+        setArrangement,
+        togglePatternPlacement,
+        togglePatternMute,
+        getPlacementsForPattern,
+        getNonEmptyPatterns,
       }}
     >
       {children}
