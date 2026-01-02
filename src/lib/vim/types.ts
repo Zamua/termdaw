@@ -46,6 +46,18 @@ export interface MotionResult {
   inclusive?: boolean;
 }
 
+// Word boundary definition for w/b motions
+// Components define "what is a word" and the library handles vim semantics
+export interface WordBoundary {
+  // Find next "word" position from current position
+  // Return null if at end (no more words) - cursor will stay in place
+  findNext: (pos: Position) => Position | null;
+
+  // Find previous "word" position from current position
+  // Return null if at beginning - cursor will stay in place
+  findPrev: (pos: Position) => Position | null;
+}
+
 // Motion function signature
 export type MotionFn = (count: number, cursor: Position) => MotionResult;
 
@@ -108,6 +120,11 @@ export interface VimConfig<T = unknown> {
 
   // Motion implementations (component-specific navigation)
   motions: Motions;
+
+  // Optional: word boundary definitions for w/b motions
+  // If provided, library handles w/b with correct vim semantics
+  // If not provided, falls back to motions.w/motions.b
+  wordBoundary?: WordBoundary;
 
   // Data operations for operators
   getDataInRange: (range: Range) => T;

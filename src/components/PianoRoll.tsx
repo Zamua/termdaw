@@ -111,32 +111,6 @@ export default function PianoRoll() {
     [getNoteStartingAt],
   );
 
-  // Find next note on current pitch
-  const findNextNote = useCallback(
-    (fromStep: number, pitch: number): number => {
-      for (let i = fromStep + 1; i < NUM_STEPS; i++) {
-        if (getNoteStartingAt(pitch, i)) return i;
-      }
-      const nextBar = Math.ceil((fromStep + 1) / 4) * 4;
-      if (nextBar < NUM_STEPS) return nextBar;
-      return 0;
-    },
-    [getNoteStartingAt],
-  );
-
-  // Find previous note on current pitch
-  const findPrevNote = useCallback(
-    (fromStep: number, pitch: number): number => {
-      for (let i = fromStep - 1; i >= 0; i--) {
-        if (getNoteStartingAt(pitch, i)) return i;
-      }
-      const prevBar = Math.floor((fromStep - 1) / 4) * 4;
-      if (prevBar >= 0) return prevBar;
-      return 12;
-    },
-    [getNoteStartingAt],
-  );
-
   // Auto-scroll viewport
   const scrollToCursor = useCallback(
     (pitch: number) => {
@@ -211,22 +185,6 @@ export default function PianoRoll() {
         },
         linewise: true,
       }),
-      w: (count, cursor) => {
-        const pitch = rowToPitch(cursor.row);
-        let step = cursor.col;
-        for (let i = 0; i < count; i++) {
-          step = findNextNote(step, pitch);
-        }
-        return { position: { row: cursor.row, col: step } };
-      },
-      b: (count, cursor) => {
-        const pitch = rowToPitch(cursor.row);
-        let step = cursor.col;
-        for (let i = 0; i < count; i++) {
-          step = findPrevNote(step, pitch);
-        }
-        return { position: { row: cursor.row, col: step } };
-      },
       e: (_count, cursor) => {
         // End of measure
         const currentBar = Math.floor(cursor.col / 4);
@@ -254,6 +212,41 @@ export default function PianoRoll() {
       G: (_count, cursor) => ({
         position: { row: PITCH_RANGE - 1, col: cursor.col },
       }),
+    },
+
+    // Word boundary for w/b motions - library handles vim semantics
+    wordBoundary: {
+      findNext: (pos) => {
+        const pitch = rowToPitch(pos.row);
+
+        // Look for next note on this pitch
+        for (let i = pos.col + 1; i < NUM_STEPS; i++) {
+          if (getNoteStartingAt(pitch, i)) return { row: pos.row, col: i };
+        }
+
+        // Fallback to next bar boundary
+        const nextBar = Math.ceil((pos.col + 1) / 4) * 4;
+        if (nextBar < NUM_STEPS) return { row: pos.row, col: nextBar };
+
+        // At end - return null to stay in place (vim behavior)
+        return null;
+      },
+
+      findPrev: (pos) => {
+        const pitch = rowToPitch(pos.row);
+
+        // Look for previous note on this pitch
+        for (let i = pos.col - 1; i >= 0; i--) {
+          if (getNoteStartingAt(pitch, i)) return { row: pos.row, col: i };
+        }
+
+        // Fallback to previous bar boundary
+        const prevBar = Math.floor((pos.col - 1) / 4) * 4;
+        if (prevBar >= 0) return { row: pos.row, col: prevBar };
+
+        // At beginning - return null to stay in place (vim behavior)
+        return null;
+      },
     },
 
     getDataInRange: (range: Range) => {

@@ -54,8 +54,10 @@ function executeMotion(
   motionName: string,
   count: number,
   cursor: Position,
-  motions: VimConfig["motions"],
+  config: Pick<VimConfig, "motions" | "wordBoundary">,
 ): MotionResult | null {
+  const { motions, wordBoundary } = config;
+
   switch (motionName) {
     case "h":
       return motions.h(count, cursor);
@@ -66,8 +68,30 @@ function executeMotion(
     case "l":
       return motions.l(count, cursor);
     case "w":
+      // Prefer wordBoundary if provided - library handles vim semantics
+      if (wordBoundary) {
+        let pos = cursor;
+        for (let i = 0; i < count; i++) {
+          const next = wordBoundary.findNext(pos);
+          if (next === null) break; // Stay at current position (vim behavior)
+          pos = next;
+        }
+        return { position: pos };
+      }
+      // Fallback to component-provided motion
       return motions.w?.(count, cursor) ?? null;
     case "b":
+      // Prefer wordBoundary if provided - library handles vim semantics
+      if (wordBoundary) {
+        let pos = cursor;
+        for (let i = 0; i < count; i++) {
+          const prev = wordBoundary.findPrev(pos);
+          if (prev === null) break; // Stay at current position (vim behavior)
+          pos = prev;
+        }
+        return { position: pos };
+      }
+      // Fallback to component-provided motion
       return motions.b?.(count, cursor) ?? null;
     case "e":
       return motions.e?.(count, cursor) ?? null;
@@ -376,7 +400,7 @@ export function useVim<T = unknown>(config: VimConfig<T>): VimState<T> {
           motionName,
           motionName === "G" || motionName === "gg" ? rawCount : effectiveCount,
           cursor,
-          config.motions,
+          config,
         );
 
         if (!motionResult) {
@@ -490,7 +514,7 @@ export function useVim<T = unknown>(config: VimConfig<T>): VimState<T> {
               action.motion,
               count,
               cursor,
-              config.motions,
+              config,
             );
 
             if (motionResult) {

@@ -103,33 +103,6 @@ export default function ChannelRack() {
     return () => unregisterCursorSetter("channelRack");
   }, [registerCursorSetter, unregisterCursorSetter, moveCursor]);
 
-  // Find next note or bar line
-  const findNextNote = useCallback(
-    (fromStep: number, channel: number) => {
-      const steps = channels[channel]?.steps || [];
-      for (let i = fromStep + 1; i < NUM_STEPS; i++) {
-        if (steps[i]) return i;
-      }
-      const nextBar = Math.ceil((fromStep + 1) / 4) * 4;
-      if (nextBar < NUM_STEPS) return nextBar;
-      return 0;
-    },
-    [channels],
-  );
-
-  const findPrevNote = useCallback(
-    (fromStep: number, channel: number) => {
-      const steps = channels[channel]?.steps || [];
-      for (let i = fromStep - 1; i >= 0; i--) {
-        if (steps[i]) return i;
-      }
-      const prevBar = Math.floor((fromStep - 1) / 4) * 4;
-      if (prevBar >= 0) return prevBar;
-      return 12;
-    },
-    [channels],
-  );
-
   // Vim hook - uses virtual column space including zones
   const vim = useVim<boolean[]>({
     dimensions: { rows: channels.length, cols: NUM_STEPS + 2 }, // +2 for sample and mute zones
@@ -164,25 +137,6 @@ export default function ChannelRack() {
         position: { row: Math.max(0, cursor.row - count), col: cursor.col },
         linewise: true,
       }),
-      w: (count, cursor) => {
-        // w only works in steps zone, find next note
-        const realCol = cursor.col - 2;
-        if (realCol < 0) return { position: cursor }; // In sample/mute zone, do nothing
-        let step = realCol;
-        for (let i = 0; i < count; i++) {
-          step = findNextNote(step, cursor.row);
-        }
-        return { position: { row: cursor.row, col: step + 2 } };
-      },
-      b: (count, cursor) => {
-        const realCol = cursor.col - 2;
-        if (realCol < 0) return { position: cursor };
-        let step = realCol;
-        for (let i = 0; i < count; i++) {
-          step = findPrevNote(step, cursor.row);
-        }
-        return { position: { row: cursor.row, col: step + 2 } };
-      },
       zero: (_count, cursor) => ({
         position: { row: cursor.row, col: 0 }, // Go to sample zone (leftmost)
       }),
@@ -196,6 +150,47 @@ export default function ChannelRack() {
       G: (_count, cursor) => ({
         position: { row: channels.length - 1, col: cursor.col },
       }),
+    },
+
+    // Word boundary for w/b motions - library handles vim semantics
+    wordBoundary: {
+      findNext: (pos) => {
+        const realCol = pos.col - 2;
+        if (realCol < 0) return null; // In sample/mute zone, no word navigation
+
+        const steps = channels[pos.row]?.steps || [];
+
+        // Look for next note
+        for (let i = realCol + 1; i < NUM_STEPS; i++) {
+          if (steps[i]) return { row: pos.row, col: i + 2 };
+        }
+
+        // Fallback to next bar boundary
+        const nextBar = Math.ceil((realCol + 1) / 4) * 4;
+        if (nextBar < NUM_STEPS) return { row: pos.row, col: nextBar + 2 };
+
+        // At end - return null to stay in place (vim behavior)
+        return null;
+      },
+
+      findPrev: (pos) => {
+        const realCol = pos.col - 2;
+        if (realCol < 0) return null; // In sample/mute zone, no word navigation
+
+        const steps = channels[pos.row]?.steps || [];
+
+        // Look for previous note
+        for (let i = realCol - 1; i >= 0; i--) {
+          if (steps[i]) return { row: pos.row, col: i + 2 };
+        }
+
+        // Fallback to previous bar boundary
+        const prevBar = Math.floor((realCol - 1) / 4) * 4;
+        if (prevBar >= 0) return { row: pos.row, col: prevBar + 2 };
+
+        // At beginning - return null to stay in place (vim behavior)
+        return null;
+      },
     },
 
     getDataInRange: (range: Range) => {
