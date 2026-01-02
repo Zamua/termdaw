@@ -131,6 +131,7 @@ export default function Browser() {
   );
 
   // Vim hook - 1D list navigation
+  // Library handles j/k/gg/G, custom h/l for folder expand/collapse
   const vim = useVim<null>({
     dimensions: { rows: visibleItems.length || 1, cols: 1 },
 
@@ -145,7 +146,10 @@ export default function Browser() {
       }
     },
 
-    motions: {
+    // No gridSemantics needed for 1D list - library provides default j/k/gg/G
+
+    // Custom h/l for folder expand/collapse behavior
+    customMotions: {
       h: (_count, cursor) => {
         // h = collapse folder or go to parent
         const item = visibleItems[cursor.row];
@@ -175,21 +179,6 @@ export default function Browser() {
         }
         return { position: cursor };
       },
-      j: (count, cursor) => ({
-        position: {
-          row: Math.min(visibleItems.length - 1, cursor.row + count),
-          col: 0,
-        },
-      }),
-      k: (count, cursor) => ({
-        position: { row: Math.max(0, cursor.row - count), col: 0 },
-      }),
-      gg: (_count, _cursor) => ({
-        position: { row: 0, col: 0 },
-      }),
-      G: (_count, _cursor) => ({
-        position: { row: Math.max(0, visibleItems.length - 1), col: 0 },
-      }),
     },
 
     getDataInRange: () => null,

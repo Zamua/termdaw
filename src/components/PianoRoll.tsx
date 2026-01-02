@@ -162,29 +162,22 @@ export default function PianoRoll() {
       scrollToCursor(newPitch);
     },
 
-    motions: {
-      h: (count, cursor) => ({
-        position: { row: cursor.row, col: Math.max(0, cursor.col - count) },
-      }),
-      l: (count, cursor) => ({
-        position: {
-          row: cursor.row,
-          col: Math.min(NUM_STEPS - 1, cursor.col + count),
+    // Library handles all motions via gridSemantics
+    gridSemantics: {
+      zones: [
+        {
+          name: "steps",
+          colRange: [0, NUM_STEPS - 1],
+          isMain: true,
+          hasContent: (pos) =>
+            !!getNoteStartingAt(rowToPitch(pos.row), pos.col),
+          wordInterval: 4,
         },
-      }),
-      // k = up = increase pitch = decrease row
-      k: (count, cursor) => ({
-        position: { row: Math.max(0, cursor.row - count), col: cursor.col },
-        linewise: true,
-      }),
-      // j = down = decrease pitch = increase row
-      j: (count, cursor) => ({
-        position: {
-          row: Math.min(PITCH_RANGE - 1, cursor.row + count),
-          col: cursor.col,
-        },
-        linewise: true,
-      }),
+      ],
+    },
+
+    // Custom e motion for "end of measure" behavior
+    customMotions: {
       e: (_count, cursor) => {
         // End of measure
         const currentBar = Math.floor(cursor.col / 4);
@@ -196,56 +189,6 @@ export default function PianoRoll() {
           step = Math.min(endOfCurrentBar, NUM_STEPS - 1);
         }
         return { position: { row: cursor.row, col: step }, inclusive: true };
-      },
-      zero: (_count, cursor) => ({
-        position: { row: cursor.row, col: 0 },
-      }),
-      dollar: (_count, cursor) => ({
-        position: { row: cursor.row, col: NUM_STEPS - 1 },
-        inclusive: true,
-      }),
-      // g = top = highest pitch = row 0
-      gg: (_count, cursor) => ({
-        position: { row: 0, col: cursor.col },
-      }),
-      // G = bottom = lowest pitch = last row
-      G: (_count, cursor) => ({
-        position: { row: PITCH_RANGE - 1, col: cursor.col },
-      }),
-    },
-
-    // Word boundary for w/b motions - library handles vim semantics
-    wordBoundary: {
-      findNext: (pos) => {
-        const pitch = rowToPitch(pos.row);
-
-        // Look for next note on this pitch
-        for (let i = pos.col + 1; i < NUM_STEPS; i++) {
-          if (getNoteStartingAt(pitch, i)) return { row: pos.row, col: i };
-        }
-
-        // Fallback to next bar boundary
-        const nextBar = Math.ceil((pos.col + 1) / 4) * 4;
-        if (nextBar < NUM_STEPS) return { row: pos.row, col: nextBar };
-
-        // At end - return null to stay in place (vim behavior)
-        return null;
-      },
-
-      findPrev: (pos) => {
-        const pitch = rowToPitch(pos.row);
-
-        // Look for previous note on this pitch
-        for (let i = pos.col - 1; i >= 0; i--) {
-          if (getNoteStartingAt(pitch, i)) return { row: pos.row, col: i };
-        }
-
-        // Fallback to previous bar boundary
-        const prevBar = Math.floor((pos.col - 1) / 4) * 4;
-        if (prevBar >= 0) return { row: pos.row, col: prevBar };
-
-        // At beginning - return null to stay in place (vim behavior)
-        return null;
       },
     },
 
@@ -340,20 +283,6 @@ export default function PianoRoll() {
         context: "pianoRoll" as const,
         position: { row: pitchToRow(cursorPitch), col: cursorStep },
       });
-
-      // Escape behavior: cancel placement first, then let vim handle
-      if (key.escape) {
-        if (placingNote) {
-          setPlacingNote(null);
-          return true;
-        }
-        // If nothing special, exit piano roll on escape (after vim resets)
-        if (vim.mode === "normal" && !vim.operator) {
-          exitPianoRoll();
-          return true;
-        }
-        return false; // Let vim handle escape for visual/operator modes
-      }
 
       // Octave jumps (K and J, uppercase)
       if (char === "K") {
@@ -466,6 +395,19 @@ export default function PianoRoll() {
     onModeChange: (_mode) => {
       // Cancel placement when entering visual or operator mode
       if (placingNote) setPlacingNote(null);
+    },
+
+    onEscape: (prevMode) => {
+      // Cancel placement first
+      if (placingNote) {
+        setPlacingNote(null);
+        return;
+      }
+      // Only exit piano roll if we were already in normal mode
+      // (not when escaping from visual/operator modes)
+      if (prevMode === "normal") {
+        exitPianoRoll();
+      }
     },
   });
 

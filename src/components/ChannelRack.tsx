@@ -104,6 +104,7 @@ export default function ChannelRack() {
   }, [registerCursorSetter, unregisterCursorSetter, moveCursor]);
 
   // Vim hook - uses virtual column space including zones
+  // Column mapping: 0=sample, 1=mute, 2-17=steps
   const vim = useVim<boolean[]>({
     dimensions: { rows: channels.length, cols: NUM_STEPS + 2 }, // +2 for sample and mute zones
 
@@ -116,81 +117,19 @@ export default function ChannelRack() {
       ); // Shift back
     },
 
-    motions: {
-      // h/l handle zone transitions by moving through virtual columns
-      h: (count, cursor) => {
-        const newCol = Math.max(0, cursor.col - count); // 0 = sample zone in shifted space
-        return { position: { row: cursor.row, col: newCol } };
-      },
-      l: (count, cursor) => {
-        const newCol = Math.min(NUM_STEPS + 1, cursor.col + count); // NUM_STEPS+1 = last step in shifted space
-        return { position: { row: cursor.row, col: newCol } };
-      },
-      j: (count, cursor) => ({
-        position: {
-          row: Math.min(channels.length - 1, cursor.row + count),
-          col: cursor.col,
+    // Library handles all motions via gridSemantics
+    gridSemantics: {
+      zones: [
+        { name: "sample", colRange: [0, 0] },
+        { name: "mute", colRange: [1, 1] },
+        {
+          name: "steps",
+          colRange: [2, NUM_STEPS + 1],
+          isMain: true,
+          hasContent: (pos) => channels[pos.row]?.steps[pos.col - 2] === true,
+          wordInterval: 4,
         },
-        linewise: true,
-      }),
-      k: (count, cursor) => ({
-        position: { row: Math.max(0, cursor.row - count), col: cursor.col },
-        linewise: true,
-      }),
-      zero: (_count, cursor) => ({
-        position: { row: cursor.row, col: 0 }, // Go to sample zone (leftmost)
-      }),
-      dollar: (_count, cursor) => ({
-        position: { row: cursor.row, col: NUM_STEPS + 1 }, // Go to last step
-        inclusive: true,
-      }),
-      gg: (_count, cursor) => ({
-        position: { row: 0, col: cursor.col },
-      }),
-      G: (_count, cursor) => ({
-        position: { row: channels.length - 1, col: cursor.col },
-      }),
-    },
-
-    // Word boundary for w/b motions - library handles vim semantics
-    wordBoundary: {
-      findNext: (pos) => {
-        const realCol = pos.col - 2;
-        if (realCol < 0) return null; // In sample/mute zone, no word navigation
-
-        const steps = channels[pos.row]?.steps || [];
-
-        // Look for next note
-        for (let i = realCol + 1; i < NUM_STEPS; i++) {
-          if (steps[i]) return { row: pos.row, col: i + 2 };
-        }
-
-        // Fallback to next bar boundary
-        const nextBar = Math.ceil((realCol + 1) / 4) * 4;
-        if (nextBar < NUM_STEPS) return { row: pos.row, col: nextBar + 2 };
-
-        // At end - return null to stay in place (vim behavior)
-        return null;
-      },
-
-      findPrev: (pos) => {
-        const realCol = pos.col - 2;
-        if (realCol < 0) return null; // In sample/mute zone, no word navigation
-
-        const steps = channels[pos.row]?.steps || [];
-
-        // Look for previous note
-        for (let i = realCol - 1; i >= 0; i--) {
-          if (steps[i]) return { row: pos.row, col: i + 2 };
-        }
-
-        // Fallback to previous bar boundary
-        const prevBar = Math.floor((realCol - 1) / 4) * 4;
-        if (prevBar >= 0) return { row: pos.row, col: prevBar + 2 };
-
-        // At beginning - return null to stay in place (vim behavior)
-        return null;
-      },
+      ],
     },
 
     getDataInRange: (range: Range) => {

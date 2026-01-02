@@ -48,6 +48,7 @@ export interface MotionResult {
 
 // Word boundary definition for w/b motions
 // Components define "what is a word" and the library handles vim semantics
+// @deprecated Use GridSemantics zones with hasContent instead
 export interface WordBoundary {
   // Find next "word" position from current position
   // Return null if at end (no more words) - cursor will stay in place
@@ -56,6 +57,20 @@ export interface WordBoundary {
   // Find previous "word" position from current position
   // Return null if at beginning - cursor will stay in place
   findPrev: (pos: Position) => Position | null;
+}
+
+// Zone within a grid row - defines a region with specific navigation semantics
+export interface Zone {
+  name: string;
+  colRange: [number, number]; // [start, end] inclusive
+  isMain?: boolean; // Where 0/$ go, default zone for w/b
+  hasContent?: (pos: Position) => boolean; // For word navigation
+  wordInterval?: number; // Additional word boundaries (e.g., bar lines every 4 steps)
+}
+
+// Semantic description of the grid
+export interface GridSemantics {
+  zones?: Zone[]; // If not provided, entire grid is one main zone
 }
 
 // Motion function signature
@@ -118,12 +133,20 @@ export interface VimConfig<T = unknown> {
   getCursor: () => Position;
   setCursor: (pos: Position) => void;
 
-  // Motion implementations (component-specific navigation)
-  motions: Motions;
+  // Semantic description of the grid (zones, word boundaries, etc.)
+  // If provided, library uses this to implement default motions
+  gridSemantics?: GridSemantics;
 
+  // Custom motion overrides for truly special behavior (e.g., Browser folder expand/collapse)
+  // Only needed when default zone-based navigation doesn't fit
+  customMotions?: Partial<Motions>;
+
+  // @deprecated Use gridSemantics instead - will be removed in future version
+  // Motion implementations (component-specific navigation)
+  motions?: Motions;
+
+  // @deprecated Use gridSemantics zones with hasContent instead
   // Optional: word boundary definitions for w/b motions
-  // If provided, library handles w/b with correct vim semantics
-  // If not provided, falls back to motions.w/motions.b
   wordBoundary?: WordBoundary;
 
   // Data operations for operators
@@ -139,6 +162,11 @@ export interface VimConfig<T = unknown> {
 
   // Optional: callback when visual range changes
   onVisualRangeChange?: (range: Range | null) => void;
+
+  // Optional: callback when escape is pressed (after vim resets state)
+  // Receives the mode that was active before escape (useful for deciding behavior)
+  // e.g., only exit view if already in normal mode, not when escaping from visual
+  onEscape?: (prevMode: VimMode) => void;
 }
 
 // State returned by useVim hook

@@ -72,7 +72,7 @@ export default function Playlist() {
     [tracks.length, viewportHeight],
   );
 
-  // Vim hook
+  // Vim hook - library handles all motions via defaults
   const vim = useVim<ClipData[]>({
     dimensions: { rows: NUM_TRACKS, cols: NUM_BARS },
 
@@ -83,41 +83,7 @@ export default function Playlist() {
       setCursorBar(Math.max(0, Math.min(NUM_BARS - 1, pos.col)));
     },
 
-    motions: {
-      h: (count, cursor) => ({
-        position: { row: cursor.row, col: Math.max(0, cursor.col - count) },
-      }),
-      l: (count, cursor) => ({
-        position: {
-          row: cursor.row,
-          col: Math.min(NUM_BARS - 1, cursor.col + count),
-        },
-      }),
-      j: (count, cursor) => ({
-        position: {
-          row: Math.min(NUM_TRACKS - 1, cursor.row + count),
-          col: cursor.col,
-        },
-        linewise: true,
-      }),
-      k: (count, cursor) => ({
-        position: { row: Math.max(0, cursor.row - count), col: cursor.col },
-        linewise: true,
-      }),
-      zero: (_count, cursor) => ({
-        position: { row: cursor.row, col: 0 },
-      }),
-      dollar: (_count, cursor) => ({
-        position: { row: cursor.row, col: NUM_BARS - 1 },
-        inclusive: true,
-      }),
-      gg: (_count, cursor) => ({
-        position: { row: 0, col: cursor.col },
-      }),
-      G: (_count, cursor) => ({
-        position: { row: NUM_TRACKS - 1, col: cursor.col },
-      }),
-    },
+    // No gridSemantics needed - default motions work for simple grid
 
     getDataInRange: (range: Range) => {
       const minRow = Math.min(range.start.row, range.end.row);
