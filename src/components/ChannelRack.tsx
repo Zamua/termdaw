@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Box, Text, useInput, useStdout } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useIsFocused, useFocusContext } from "../context/FocusContext.js";
 import { useSequencer } from "../context/SequencerContext.js";
 import { useCommands } from "../context/CommandContext.js";
@@ -9,7 +9,20 @@ import { useVim } from "../hooks/useVim.js";
 import type { Position, Range, Key } from "../lib/vim/types.js";
 
 const NUM_STEPS = 16;
-const HEADER_ROWS = 6;
+// Internal header rows: pattern indicator (1) + column header (1) + separator (1)
+const INTERNAL_HEADER_ROWS = 3;
+
+// Fixed widths for non-step columns
+const CHANNEL_NAME_WIDTH = 10;
+const TYPE_WIDTH = 2;
+const MUTE_WIDTH = 3;
+const STEP_WIDTH = 2;
+const PADDING = 2; // paddingX={1} = 2 chars
+
+interface ChannelRackProps {
+  availableHeight: number;
+  availableWidth: number;
+}
 
 // Virtual column mapping:
 // -2 = sample zone
@@ -18,7 +31,10 @@ const HEADER_ROWS = 6;
 const SAMPLE_ZONE_COL = -2;
 const MUTE_ZONE_COL = -1;
 
-export default function ChannelRack() {
+export default function ChannelRack({
+  availableHeight,
+  availableWidth,
+}: ChannelRackProps) {
   const isFocused = useIsFocused("channelRack");
   const {
     startSampleSelection,
@@ -38,11 +54,10 @@ export default function ChannelRack() {
   } = useSequencer();
   const { toggleStep, cycleMuteState, clearChannel, clearStepRange, setSteps } =
     useCommands();
-  const { stdout } = useStdout();
-  const [termHeight, setTermHeight] = useState(stdout?.rows || 24);
   const [cursorChannel, setCursorChannel] = useState(selectedChannel);
   const [cursorCol, setCursorCol] = useState(0); // Virtual column: -2, -1, or 0-15
   const [viewportTop, setViewportTop] = useState(0);
+  const [viewportLeft, setViewportLeft] = useState(0);
 
   // Derive zone from virtual column
   const cursorZone =
@@ -53,18 +68,13 @@ export default function ChannelRack() {
         : "steps";
   const cursorStep = cursorCol >= 0 ? cursorCol : 0;
 
-  // Track terminal height changes
-  useEffect(() => {
-    const handleResize = () => {
-      setTermHeight(stdout?.rows || 24);
-    };
-    stdout?.on("resize", handleResize);
-    return () => {
-      stdout?.off("resize", handleResize);
-    };
-  }, [stdout]);
-
-  const viewportHeight = Math.max(5, termHeight - HEADER_ROWS);
+  // Calculate viewport dimensions
+  const viewportHeight = Math.max(5, availableHeight - INTERNAL_HEADER_ROWS);
+  const fixedWidth = CHANNEL_NAME_WIDTH + TYPE_WIDTH + MUTE_WIDTH + PADDING;
+  const viewportCols = Math.max(
+    4,
+    Math.min(NUM_STEPS, Math.floor((availableWidth - fixedWidth) / STEP_WIDTH)),
+  );
 
   const moveCursor = useCallback(
     (newChannel: number) => {
@@ -85,6 +95,24 @@ export default function ChannelRack() {
     [channels.length, viewportHeight],
   );
 
+  // Handle horizontal viewport scrolling when cursor moves
+  const updateHorizontalViewport = useCallback(
+    (newCol: number) => {
+      // Only scroll for steps zone (col >= 0)
+      if (newCol >= 0) {
+        setViewportLeft((prev) => {
+          if (newCol < prev) {
+            return newCol;
+          } else if (newCol >= prev + viewportCols) {
+            return newCol - viewportCols + 1;
+          }
+          return prev;
+        });
+      }
+    },
+    [viewportCols],
+  );
+
   useEffect(() => {
     setSelectedChannel(cursorChannel);
   }, [cursorChannel, setSelectedChannel]);
@@ -99,10 +127,17 @@ export default function ChannelRack() {
   useEffect(() => {
     registerCursorSetter("channelRack", (pos) => {
       moveCursor(pos.row);
-      setCursorCol(pos.col - 2); // Convert from shifted space back to virtual column
+      const newCol = pos.col - 2;
+      setCursorCol(newCol);
+      updateHorizontalViewport(newCol);
     });
     return () => unregisterCursorSetter("channelRack");
-  }, [registerCursorSetter, unregisterCursorSetter, moveCursor]);
+  }, [
+    registerCursorSetter,
+    unregisterCursorSetter,
+    moveCursor,
+    updateHorizontalViewport,
+  ]);
 
   // Vim hook - uses virtual column space including zones
   // Column mapping: 0=sample, 1=mute, 2-17=steps
@@ -113,9 +148,12 @@ export default function ChannelRack() {
 
     setCursor: (pos: Position) => {
       moveCursor(pos.row);
-      setCursorCol(
-        Math.max(SAMPLE_ZONE_COL, Math.min(NUM_STEPS - 1, pos.col - 2)),
-      ); // Shift back
+      const newCol = Math.max(
+        SAMPLE_ZONE_COL,
+        Math.min(NUM_STEPS - 1, pos.col - 2),
+      );
+      setCursorCol(newCol);
+      updateHorizontalViewport(newCol);
     },
 
     // Library handles all motions via gridSemantics
@@ -286,48 +324,101 @@ export default function ChannelRack() {
   const currentPattern = patterns.find((p) => p.id === currentPatternId);
   const patternName = currentPattern?.name || `Pattern ${currentPatternId}`;
 
+  // Helper to get step styling
+  const getStepStyle = (
+    channelIndex: number,
+    stepIndex: number,
+    active: boolean,
+    isEffectivelyMuted: boolean,
+    isEmpty: boolean,
+  ) => {
+    const isCursor =
+      channelIndex === cursorChannel &&
+      stepIndex === cursorStep &&
+      isFocused &&
+      cursorZone === "steps";
+    const isPlayheadHere = stepIndex === playheadStep && isPlaying;
+    const isBeat = stepIndex % 4 === 0;
+    const isVisualSelected = isInVisualSelection(channelIndex, stepIndex);
+
+    let bgColor: string | undefined;
+    let fgColor = "gray";
+
+    if (isCursor && isPlayheadHere) {
+      bgColor = "greenBright";
+      fgColor = "black";
+    } else if (isCursor) {
+      bgColor = "blue";
+      fgColor = "white";
+    } else if (isVisualSelected) {
+      bgColor = "yellow";
+      fgColor = "black";
+    } else if (isPlayheadHere) {
+      bgColor = "green";
+      fgColor = "black";
+    }
+
+    if (active && !isCursor && !isPlayheadHere && !isVisualSelected) {
+      fgColor = isEffectivelyMuted || isEmpty ? "gray" : "magenta";
+    } else if (active && (isCursor || isVisualSelected)) {
+      fgColor = "black";
+    } else if (isEmpty && !isCursor) {
+      fgColor = "gray";
+    }
+
+    const char = active ? "●" : isBeat ? "┃" : "│";
+    const bold = active || isPlayheadHere;
+    const dimColor = isEmpty && !isCursor && !isPlayheadHere;
+
+    return { bgColor, fgColor, char, bold, dimColor };
+  };
+
   return (
     <Box flexDirection="column" paddingX={1}>
       {/* Pattern indicator */}
-      <Box>
+      <Text wrap="truncate">
         <Text color="cyan" bold>
           {patternName}
         </Text>
         <Text dimColor> [ ] to switch</Text>
-      </Box>
+      </Text>
 
-      <Box>
-        <Box width={10}>
-          <Text dimColor>Channel</Text>
-        </Box>
-        <Box width={2}>
-          <Text dimColor>T</Text>
-        </Box>
-        <Box width={3}>
-          <Text dimColor>M</Text>
-        </Box>
-        {Array.from({ length: NUM_STEPS }, (_, i) => (
-          <Box key={`header-${i}`} width={2}>
+      {/* Header row */}
+      <Text wrap="truncate">
+        <Text dimColor>{"Channel".padEnd(CHANNEL_NAME_WIDTH - 2)}</Text>
+        <Text dimColor>{"T".padEnd(TYPE_WIDTH)}</Text>
+        <Text dimColor>{"M".padEnd(MUTE_WIDTH)}</Text>
+        {Array.from({ length: viewportCols }, (_, i) => {
+          const stepNum = viewportLeft + i;
+          if (stepNum >= NUM_STEPS) return null;
+          const isPlayhead = stepNum === playheadStep && isPlaying;
+          const isBeat = stepNum % 4 === 0;
+          const isCursorCol =
+            stepNum === cursorStep && isFocused && cursorZone === "steps";
+          return (
             <Text
-              color={
-                i === playheadStep && isPlaying
-                  ? "green"
-                  : i % 4 === 0
-                    ? "yellow"
-                    : "gray"
-              }
-              bold={i === cursorStep && isFocused && cursorZone === "steps"}
+              key={stepNum}
+              color={isPlayhead ? "green" : isBeat ? "yellow" : "gray"}
+              bold={isCursorCol}
             >
-              {(i + 1).toString(16).toUpperCase()}
+              {(stepNum + 1).toString(16).toUpperCase().padEnd(STEP_WIDTH)}
             </Text>
-          </Box>
-        ))}
-      </Box>
+          );
+        })}
+      </Text>
 
-      <Box>
-        <Text dimColor>{"─".repeat(10 + 2 + 3 + NUM_STEPS * 2)}</Text>
-      </Box>
+      {/* Separator */}
+      <Text wrap="truncate" dimColor>
+        {"─".repeat(
+          CHANNEL_NAME_WIDTH +
+            TYPE_WIDTH +
+            MUTE_WIDTH -
+            2 +
+            viewportCols * STEP_WIDTH,
+        )}
+      </Text>
 
+      {/* Channel rows */}
       {channels
         .slice(viewportTop, viewportTop + viewportHeight)
         .map((channel, viewIndex) => {
@@ -340,130 +431,98 @@ export default function ChannelRack() {
             channel.muted || (hasSolo && !channel.solo);
           const isEmpty = channel.type === "sample" && !channel.sample;
 
+          // Channel name styling
+          const channelColor = isSampleCursor
+            ? "white"
+            : isEmpty
+              ? "gray"
+              : isEffectivelyMuted
+                ? "gray"
+                : isCurrentChannel
+                  ? "cyan"
+                  : "white";
+
+          // Type icon
+          const typeIcon = isEmpty ? "·" : channel.type === "synth" ? "♪" : "◌";
+          const typeColor = isEmpty
+            ? "gray"
+            : channel.type === "synth"
+              ? "cyan"
+              : "gray";
+
+          // Mute icon
+          const muteIcon = isEmpty
+            ? "·"
+            : channel.solo
+              ? "S"
+              : channel.muted
+                ? "M"
+                : "○";
+          const muteColor = isMuteCursor
+            ? "white"
+            : isEmpty
+              ? "gray"
+              : channel.solo
+                ? "yellow"
+                : channel.muted
+                  ? "red"
+                  : "green";
+
           return (
-            <Box key={`channel-${channelIndex}`}>
-              <Box width={10}>
-                <Text
-                  color={
-                    isSampleCursor
-                      ? "white"
-                      : isEmpty
-                        ? "gray"
-                        : isEffectivelyMuted
-                          ? "gray"
-                          : isCurrentChannel
-                            ? "cyan"
-                            : "white"
-                  }
-                  backgroundColor={isSampleCursor ? "blue" : undefined}
-                  bold={isCurrentChannel && !isEmpty}
-                  dimColor={(isEffectivelyMuted || isEmpty) && !isSampleCursor}
-                >
-                  {isEmpty
-                    ? "(empty)".padEnd(8, " ")
-                    : channel.name.slice(0, 8).padEnd(8, " ")}
-                </Text>
-              </Box>
+            <Text key={`channel-${channelIndex}`} wrap="truncate">
+              {/* Channel name */}
+              <Text
+                color={channelColor}
+                backgroundColor={isSampleCursor ? "blue" : undefined}
+                bold={isCurrentChannel && !isEmpty}
+                dimColor={(isEffectivelyMuted || isEmpty) && !isSampleCursor}
+              >
+                {(isEmpty ? "(empty)" : channel.name.slice(0, 8)).padEnd(
+                  CHANNEL_NAME_WIDTH - 2,
+                )}
+              </Text>
 
-              <Box width={2}>
-                <Text
-                  color={
-                    isEmpty
-                      ? "gray"
-                      : channel.type === "synth"
-                        ? "cyan"
-                        : "gray"
-                  }
-                  dimColor={isEffectivelyMuted || isEmpty}
-                >
-                  {isEmpty ? "·" : channel.type === "synth" ? "♪" : "◌"}
-                </Text>
-              </Box>
+              {/* Type indicator */}
+              <Text color={typeColor} dimColor={isEffectivelyMuted || isEmpty}>
+                {typeIcon.padEnd(TYPE_WIDTH)}
+              </Text>
 
-              <Box width={3}>
-                <Text
-                  color={
-                    isMuteCursor
-                      ? "white"
-                      : isEmpty
-                        ? "gray"
-                        : channel.solo
-                          ? "yellow"
-                          : channel.muted
-                            ? "red"
-                            : "green"
-                  }
-                  backgroundColor={isMuteCursor ? "blue" : undefined}
-                  bold={isMuteCursor}
-                  dimColor={isEmpty && !isMuteCursor}
-                >
-                  {isEmpty
-                    ? "·"
-                    : channel.solo
-                      ? "S"
-                      : channel.muted
-                        ? "M"
-                        : "○"}
-                </Text>
-              </Box>
+              {/* Mute indicator */}
+              <Text
+                color={muteColor}
+                backgroundColor={isMuteCursor ? "blue" : undefined}
+                bold={isMuteCursor}
+                dimColor={isEmpty && !isMuteCursor}
+              >
+                {muteIcon.padEnd(MUTE_WIDTH)}
+              </Text>
 
-              {channel.steps.map((active, stepIndex) => {
-                const isCursor =
-                  channelIndex === cursorChannel &&
-                  stepIndex === cursorStep &&
-                  isFocused &&
-                  cursorZone === "steps";
-                const isPlayheadHere = stepIndex === playheadStep && isPlaying;
-                const isBeat = stepIndex % 4 === 0;
-                const isVisualSelected = isInVisualSelection(
+              {/* Steps - only render visible viewport */}
+              {Array.from({ length: viewportCols }, (_, i) => {
+                const stepIndex = viewportLeft + i;
+                if (stepIndex >= NUM_STEPS) return null;
+                const active = channel.steps[stepIndex] ?? false;
+                const style = getStepStyle(
                   channelIndex,
                   stepIndex,
+                  active,
+                  isEffectivelyMuted,
+                  isEmpty,
                 );
-
-                let bgColor: string | undefined;
-                let fgColor = "gray";
-
-                if (isCursor && isPlayheadHere) {
-                  bgColor = "greenBright";
-                  fgColor = "black";
-                } else if (isCursor) {
-                  bgColor = "blue";
-                  fgColor = "white";
-                } else if (isVisualSelected) {
-                  bgColor = "yellow";
-                  fgColor = "black";
-                } else if (isPlayheadHere) {
-                  bgColor = "green";
-                  fgColor = "black";
-                }
-
-                if (
-                  active &&
-                  !isCursor &&
-                  !isPlayheadHere &&
-                  !isVisualSelected
-                ) {
-                  fgColor = isEffectivelyMuted || isEmpty ? "gray" : "magenta";
-                } else if (active && (isCursor || isVisualSelected)) {
-                  fgColor = "black";
-                } else if (isEmpty && !isCursor) {
-                  fgColor = "gray";
-                }
 
                 return (
-                  <Box key={`step-${channelIndex}-${stepIndex}`} width={2}>
-                    <Text
-                      backgroundColor={bgColor}
-                      color={fgColor}
-                      bold={active || isPlayheadHere}
-                      dimColor={isEmpty && !isCursor && !isPlayheadHere}
-                    >
-                      {active ? "●" : isBeat ? "┃" : "│"}
-                    </Text>
-                  </Box>
+                  <Text
+                    key={stepIndex}
+                    backgroundColor={style.bgColor}
+                    color={style.fgColor}
+                    bold={style.bold}
+                    dimColor={style.dimColor}
+                  >
+                    {style.char.padEnd(STEP_WIDTH)}
+                  </Text>
                 );
               })}
-            </Box>
+            </Text>
           );
         })}
     </Box>

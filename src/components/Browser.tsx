@@ -16,6 +16,10 @@ interface FileNode {
   children?: FileNode[];
 }
 
+interface BrowserProps {
+  availableHeight: number;
+}
+
 function scanDirectory(
   dirPath: string,
   relativePath: string = "",
@@ -89,7 +93,9 @@ function flattenTree(
   return result;
 }
 
-export default function Browser() {
+export default function Browser({
+  availableHeight: _availableHeight,
+}: BrowserProps) {
   const isFocused = useIsFocused("browser");
   const { sampleSelection, cancelSampleSelection, completeSampleSelection } =
     useFocusContext();

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import { Box, Text, useInput, useStdout } from "ink";
+import { useState, useCallback } from "react";
+import { Box, Text, useInput } from "ink";
 import { useIsFocused } from "../context/FocusContext.js";
 import {
   useSequencer,
@@ -16,33 +16,43 @@ interface ClipData {
 
 const NUM_BARS = 16;
 const NUM_TRACKS = 99;
-const HEADER_ROWS = 5;
+// Internal header rows: bar header (1) + separator (1)
+const INTERNAL_HEADER_ROWS = 2;
 
-export default function Playlist() {
+// Fixed widths for non-bar columns
+const TRACK_NAME_WIDTH = 10;
+const MUTE_WIDTH = 3;
+const BAR_WIDTH = 4;
+const PADDING = 2; // paddingX={1} = 2 chars
+
+interface PlaylistProps {
+  availableHeight: number;
+  availableWidth: number;
+}
+
+export default function Playlist({
+  availableHeight,
+  availableWidth,
+}: PlaylistProps) {
   const isFocused = useIsFocused("playlist");
   const {
     playlistTracks: tracks,
     setPlaylistTracks: setTracks,
     currentPatternId,
   } = useSequencer();
-  const { stdout } = useStdout();
-  const [termHeight, setTermHeight] = useState(stdout?.rows || 24);
   const [cursorTrack, setCursorTrack] = useState(0);
   const [cursorBar, setCursorBar] = useState(0);
   const [viewportTop, setViewportTop] = useState(0);
+  const [viewportLeft, setViewportLeft] = useState(0);
   const [playheadBar] = useState(0);
 
-  useEffect(() => {
-    const handleResize = () => {
-      setTermHeight(stdout?.rows || 24);
-    };
-    stdout?.on("resize", handleResize);
-    return () => {
-      stdout?.off("resize", handleResize);
-    };
-  }, [stdout]);
-
-  const viewportHeight = Math.max(5, termHeight - HEADER_ROWS);
+  // Calculate viewport dimensions
+  const viewportHeight = Math.max(5, availableHeight - INTERNAL_HEADER_ROWS);
+  const fixedWidth = TRACK_NAME_WIDTH + MUTE_WIDTH + PADDING;
+  const viewportCols = Math.max(
+    4,
+    Math.min(NUM_BARS, Math.floor((availableWidth - fixedWidth) / BAR_WIDTH)),
+  );
 
   const moveCursor = useCallback(
     (newTrack: number) => {
@@ -60,6 +70,21 @@ export default function Playlist() {
     [tracks.length, viewportHeight],
   );
 
+  // Handle horizontal viewport scrolling when cursor moves
+  const updateHorizontalViewport = useCallback(
+    (newBar: number) => {
+      setViewportLeft((prev) => {
+        if (newBar < prev) {
+          return newBar;
+        } else if (newBar >= prev + viewportCols) {
+          return newBar - viewportCols + 1;
+        }
+        return prev;
+      });
+    },
+    [viewportCols],
+  );
+
   // Vim hook - library handles all motions via defaults
   const vim = useVim<ClipData[]>({
     dimensions: { rows: NUM_TRACKS, cols: NUM_BARS },
@@ -68,7 +93,9 @@ export default function Playlist() {
 
     setCursor: (pos: Position) => {
       moveCursor(pos.row);
-      setCursorBar(Math.max(0, Math.min(NUM_BARS - 1, pos.col)));
+      const newBar = Math.max(0, Math.min(NUM_BARS - 1, pos.col));
+      setCursorBar(newBar);
+      updateHorizontalViewport(newBar);
     },
 
     // No gridSemantics needed - default motions work for simple grid
@@ -253,34 +280,82 @@ export default function Playlist() {
     );
   };
 
+  // Helper to get bar styling
+  const getBarStyle = (
+    trackIndex: number,
+    barIndex: number,
+    track: { muted: boolean; clips: PlaylistClip[] },
+    isEmpty: boolean,
+  ) => {
+    const clip = getClipAt(trackIndex, barIndex);
+    const isCursor =
+      trackIndex === cursorTrack && barIndex === cursorBar && isFocused;
+    const isPlayhead = barIndex === playheadBar;
+    const isBeat = barIndex % 4 === 0;
+    const isVisualSelected = isInVisualSelection(trackIndex, barIndex);
+
+    let bgColor: string | undefined;
+    let fgColor = "gray";
+    let char = isBeat ? "┃" : "│";
+
+    if (clip) {
+      bgColor = track.muted ? "gray" : "magenta";
+      fgColor = "white";
+      char = `P${clip.patternId}`;
+    }
+
+    if (isCursor) {
+      bgColor = "blue";
+      fgColor = "white";
+    } else if (isVisualSelected) {
+      bgColor = "yellow";
+      fgColor = "black";
+    } else if (isPlayhead) {
+      bgColor = clip ? "green" : undefined;
+      fgColor = clip ? "black" : "green";
+    }
+
+    const bold = !!clip;
+    const dimColor = isEmpty && !isCursor && !isPlayhead && !isVisualSelected;
+    const displayChar = clip
+      ? char.slice(0, 3).padEnd(BAR_WIDTH)
+      : (char + " ").padEnd(BAR_WIDTH);
+
+    return { bgColor, fgColor, char: displayChar, bold, dimColor };
+  };
+
   return (
     <Box flexDirection="column" paddingX={1}>
       {/* Bar number header */}
-      <Box>
-        <Box width={10}>
-          <Text dimColor>Track</Text>
-        </Box>
-        <Box width={3}>
-          <Text dimColor>M</Text>
-        </Box>
-        {Array.from({ length: NUM_BARS }, (_, i) => (
-          <Box key={`bar-header-${i}`} width={4}>
+      <Text wrap="truncate">
+        <Text dimColor>{"Track".padEnd(TRACK_NAME_WIDTH - 2)}</Text>
+        <Text dimColor>{"M".padEnd(MUTE_WIDTH)}</Text>
+        {Array.from({ length: viewportCols }, (_, i) => {
+          const barNum = viewportLeft + i;
+          if (barNum >= NUM_BARS) return null;
+          const isPlayhead = barNum === playheadBar;
+          const isBeat = barNum % 4 === 0;
+          const isCursorCol = barNum === cursorBar && isFocused;
+          return (
             <Text
-              color={
-                i === playheadBar ? "green" : i % 4 === 0 ? "yellow" : "gray"
-              }
-              bold={i === cursorBar && isFocused}
+              key={barNum}
+              color={isPlayhead ? "green" : isBeat ? "yellow" : "gray"}
+              bold={isCursorCol}
             >
-              {String(i + 1).padStart(2, " ")}
+              {String(barNum + 1)
+                .padStart(2, " ")
+                .padEnd(BAR_WIDTH)}
             </Text>
-          </Box>
-        ))}
-      </Box>
+          );
+        })}
+      </Text>
 
       {/* Separator */}
-      <Box>
-        <Text dimColor>{"─".repeat(10 + 3 + NUM_BARS * 4)}</Text>
-      </Box>
+      <Text wrap="truncate" dimColor>
+        {"─".repeat(
+          TRACK_NAME_WIDTH + MUTE_WIDTH - 2 + viewportCols * BAR_WIDTH,
+        )}
+      </Text>
 
       {/* Track rows - only render viewport */}
       {tracks
@@ -290,88 +365,57 @@ export default function Playlist() {
           const isEmpty = track.clips.length === 0;
           const isCurrentTrack = trackIndex === cursorTrack && isFocused;
 
+          // Track name styling
+          const trackColor =
+            isEmpty && !isCurrentTrack
+              ? "gray"
+              : track.muted
+                ? "gray"
+                : isCurrentTrack
+                  ? "cyan"
+                  : "white";
+
+          // Mute icon
+          const muteIcon = isEmpty ? "·" : track.muted ? "M" : "○";
+          const muteColor = isEmpty ? "gray" : track.muted ? "red" : "green";
+
           return (
-            <Box key={`track-${trackIndex}`}>
+            <Text key={`track-${trackIndex}`} wrap="truncate">
               {/* Track name */}
-              <Box width={10}>
-                <Text
-                  color={
-                    isEmpty && !isCurrentTrack
-                      ? "gray"
-                      : track.muted
-                        ? "gray"
-                        : isCurrentTrack
-                          ? "cyan"
-                          : "white"
-                  }
-                  bold={isCurrentTrack && !isEmpty}
-                  dimColor={(track.muted || isEmpty) && !isCurrentTrack}
-                >
-                  {isEmpty ? "(empty)".padEnd(8) : track.name.slice(0, 8)}
-                </Text>
-              </Box>
+              <Text
+                color={trackColor}
+                bold={isCurrentTrack && !isEmpty}
+                dimColor={(track.muted || isEmpty) && !isCurrentTrack}
+              >
+                {(isEmpty ? "(empty)" : track.name.slice(0, 8)).padEnd(
+                  TRACK_NAME_WIDTH - 2,
+                )}
+              </Text>
 
               {/* Mute indicator */}
-              <Box width={3}>
-                <Text
-                  color={isEmpty ? "gray" : track.muted ? "red" : "green"}
-                  dimColor={isEmpty}
-                >
-                  {isEmpty ? "·" : track.muted ? "M" : "○"}
-                </Text>
-              </Box>
+              <Text color={muteColor} dimColor={isEmpty}>
+                {muteIcon.padEnd(MUTE_WIDTH)}
+              </Text>
 
-              {/* Bars */}
-              {Array.from({ length: NUM_BARS }, (_, barIndex) => {
-                const clip = getClipAt(trackIndex, barIndex);
-                const isCursor =
-                  trackIndex === cursorTrack &&
-                  barIndex === cursorBar &&
-                  isFocused;
-                const isPlayhead = barIndex === playheadBar;
-                const isBeat = barIndex % 4 === 0;
-                const isVisualSelected = isInVisualSelection(
-                  trackIndex,
-                  barIndex,
-                );
-
-                let bgColor: string | undefined;
-                let fgColor = isEmpty ? "gray" : "gray";
-                let char = isBeat ? "┃" : "│";
-
-                if (clip) {
-                  bgColor = track.muted ? "gray" : "magenta";
-                  fgColor = "white";
-                  char = `P${clip.patternId}`;
-                }
-
-                if (isCursor) {
-                  bgColor = "blue";
-                  fgColor = "white";
-                } else if (isVisualSelected) {
-                  bgColor = "yellow";
-                  fgColor = "black";
-                } else if (isPlayhead) {
-                  bgColor = clip ? "green" : undefined;
-                  fgColor = clip ? "black" : "green";
-                }
+              {/* Bars - only render visible viewport */}
+              {Array.from({ length: viewportCols }, (_, i) => {
+                const barIndex = viewportLeft + i;
+                if (barIndex >= NUM_BARS) return null;
+                const style = getBarStyle(trackIndex, barIndex, track, isEmpty);
 
                 return (
-                  <Box key={`bar-${trackIndex}-${barIndex}`} width={4}>
-                    <Text
-                      backgroundColor={bgColor}
-                      color={fgColor}
-                      bold={!!clip}
-                      dimColor={
-                        isEmpty && !isCursor && !isPlayhead && !isVisualSelected
-                      }
-                    >
-                      {clip ? char.slice(0, 3).padEnd(3, " ") : char + "  "}
-                    </Text>
-                  </Box>
+                  <Text
+                    key={barIndex}
+                    backgroundColor={style.bgColor}
+                    color={style.fgColor}
+                    bold={style.bold}
+                    dimColor={style.dimColor}
+                  >
+                    {style.char}
+                  </Text>
                 );
               })}
-            </Box>
+            </Text>
           );
         })}
     </Box>

@@ -12,7 +12,17 @@ const NUM_STEPS = 16;
 const MIN_PITCH = 36; // C2
 const MAX_PITCH = 84; // C6
 const PITCH_RANGE = MAX_PITCH - MIN_PITCH + 1; // 49 pitches
-const VIEWPORT_HEIGHT = 16;
+
+// Fixed widths for non-step columns
+const PITCH_LABEL_WIDTH = 5;
+const STEP_WIDTH = 2;
+const PADDING = 2; // paddingX={1} = 2 chars
+const INTERNAL_HEADER_ROWS = 3; // header + separator + footer
+
+interface PianoRollProps {
+  availableHeight: number;
+  availableWidth: number;
+}
 
 const PITCH_NAMES = [
   "C",
@@ -56,7 +66,10 @@ interface YankedNote {
   duration: number;
 }
 
-export default function PianoRoll() {
+export default function PianoRoll({
+  availableHeight,
+  availableWidth,
+}: PianoRollProps) {
   const isFocused = useIsFocused("pianoRoll");
   const { exitPianoRoll, registerCursorSetter, unregisterCursorSetter } =
     useFocusContext();
@@ -72,8 +85,17 @@ export default function PianoRoll() {
   const [cursorPitch, setCursorPitch] = useState(60); // C4
   const [cursorStep, setCursorStep] = useState(0);
   const [viewportTop, setViewportTop] = useState(67); // Show around C4-C5
+  const [viewportLeft, setViewportLeft] = useState(0);
   const [placingNote, setPlacingNote] = useState<{ startStep: number } | null>(
     null,
+  );
+
+  // Calculate viewport dimensions
+  const viewportHeight = Math.max(5, availableHeight - INTERNAL_HEADER_ROWS);
+  const fixedWidth = PITCH_LABEL_WIDTH + PADDING;
+  const viewportCols = Math.max(
+    4,
+    Math.min(NUM_STEPS, Math.floor((availableWidth - fixedWidth) / STEP_WIDTH)),
   );
 
   const channel = channels[selectedChannel];
@@ -111,16 +133,31 @@ export default function PianoRoll() {
     [getNoteStartingAt],
   );
 
-  // Auto-scroll viewport
+  // Auto-scroll viewport vertically
   const scrollToCursor = useCallback(
     (pitch: number) => {
       if (pitch > viewportTop) {
         setViewportTop(pitch);
-      } else if (pitch < viewportTop - VIEWPORT_HEIGHT + 1) {
-        setViewportTop(pitch + VIEWPORT_HEIGHT - 1);
+      } else if (pitch < viewportTop - viewportHeight + 1) {
+        setViewportTop(pitch + viewportHeight - 1);
       }
     },
-    [viewportTop],
+    [viewportTop, viewportHeight],
+  );
+
+  // Handle horizontal viewport scrolling when cursor moves
+  const updateHorizontalViewport = useCallback(
+    (newStep: number) => {
+      setViewportLeft((prev) => {
+        if (newStep < prev) {
+          return newStep;
+        } else if (newStep >= prev + viewportCols) {
+          return newStep - viewportCols + 1;
+        }
+        return prev;
+      });
+    },
+    [viewportCols],
   );
 
   // Register cursor setter for undo/redo restoration
@@ -130,9 +167,15 @@ export default function PianoRoll() {
       setCursorPitch(newPitch);
       setCursorStep(pos.col);
       scrollToCursor(newPitch);
+      updateHorizontalViewport(pos.col);
     });
     return () => unregisterCursorSetter("pianoRoll");
-  }, [registerCursorSetter, unregisterCursorSetter, scrollToCursor]);
+  }, [
+    registerCursorSetter,
+    unregisterCursorSetter,
+    scrollToCursor,
+    updateHorizontalViewport,
+  ]);
 
   // Preview note at pitch
   const previewAtPitch = useCallback(
@@ -157,9 +200,11 @@ export default function PianoRoll() {
       const newPitch = rowToPitch(
         Math.max(0, Math.min(PITCH_RANGE - 1, pos.row)),
       );
+      const newStep = Math.max(0, Math.min(NUM_STEPS - 1, pos.col));
       setCursorPitch(newPitch);
-      setCursorStep(Math.max(0, Math.min(NUM_STEPS - 1, pos.col)));
+      setCursorStep(newStep);
       scrollToCursor(newPitch);
+      updateHorizontalViewport(newStep);
     },
 
     // Library handles all motions via gridSemantics
@@ -303,7 +348,7 @@ export default function PianoRoll() {
       // Page up/down (Ctrl+u/d)
       if (key.ctrl && char === "u") {
         if (placingNote) setPlacingNote(null);
-        const halfPage = Math.floor(VIEWPORT_HEIGHT / 2);
+        const halfPage = Math.floor(viewportHeight / 2);
         const newPitch = Math.min(MAX_PITCH, cursorPitch + halfPage);
         setCursorPitch(newPitch);
         setViewportTop((vt) => Math.min(MAX_PITCH, vt + halfPage));
@@ -311,11 +356,11 @@ export default function PianoRoll() {
       }
       if (key.ctrl && char === "d") {
         if (placingNote) setPlacingNote(null);
-        const halfPage = Math.floor(VIEWPORT_HEIGHT / 2);
+        const halfPage = Math.floor(viewportHeight / 2);
         const newPitch = Math.max(MIN_PITCH, cursorPitch - halfPage);
         setCursorPitch(newPitch);
         setViewportTop((vt) =>
-          Math.max(MIN_PITCH + VIEWPORT_HEIGHT - 1, vt - halfPage),
+          Math.max(MIN_PITCH + viewportHeight - 1, vt - halfPage),
         );
         return true;
       }
@@ -451,7 +496,7 @@ export default function PianoRoll() {
   const pitchRange: number[] = [];
   for (
     let p = viewportTop;
-    p > viewportTop - VIEWPORT_HEIGHT && p >= MIN_PITCH;
+    p > viewportTop - viewportHeight && p >= MIN_PITCH;
     p--
   ) {
     pitchRange.push(p);
@@ -475,38 +520,94 @@ export default function PianoRoll() {
     return "";
   };
 
+  // Helper to get step styling
+  const getStepStyle = (pitch: number, stepIndex: number) => {
+    const note = getNoteCovering(pitch, stepIndex);
+    const noteStart = isNoteStart(pitch, stepIndex);
+    const isCursor =
+      pitch === cursorPitch && stepIndex === cursorStep && isFocused;
+    const isPlayhead = stepIndex === playheadStep && isPlaying;
+    const isBeat = stepIndex % 4 === 0;
+    const isBlack = isBlackKey(pitch);
+    const isInPlacement =
+      placementRange &&
+      pitch === cursorPitch &&
+      stepIndex >= placementRange.start &&
+      stepIndex <= placementRange.end;
+    const isVisualSelected = isInVisualSelection(pitch, stepIndex);
+
+    let bgColor: string | undefined;
+    let fgColor = isBlack ? "gray" : "white";
+    let char = isBeat ? "┃" : "│";
+
+    if (note) {
+      if (noteStart) {
+        char = "█";
+        fgColor = "magenta";
+      } else {
+        char = "─";
+        fgColor = "magenta";
+      }
+    }
+
+    // Placement preview
+    if (isInPlacement && !note) {
+      char = "░";
+      fgColor = "cyan";
+    }
+
+    if (isCursor && isPlayhead) {
+      bgColor = "greenBright";
+      fgColor = "black";
+    } else if (isCursor) {
+      bgColor = "blue";
+      fgColor = "white";
+    } else if (isVisualSelected) {
+      bgColor = "yellow";
+      fgColor = "black";
+    } else if (isPlayhead) {
+      bgColor = "green";
+      fgColor = "black";
+    } else if (isInPlacement) {
+      bgColor = "cyan";
+      fgColor = "black";
+    }
+
+    const bold = !!note || isPlayhead || !!isInPlacement;
+    const dimColor =
+      isBlack && !note && !isCursor && !isPlayhead && !isInPlacement;
+
+    return { bgColor, fgColor, char, bold, dimColor };
+  };
+
   return (
     <Box flexDirection="column" paddingX={1}>
       {/* Header - step numbers */}
-      <Box>
-        <Box width={5}>
-          <Text dimColor>Note</Text>
-        </Box>
-        {Array.from({ length: NUM_STEPS }, (_, i) => (
-          <Box key={`header-${i}`} width={2}>
+      <Text wrap="truncate">
+        <Text dimColor>{"Note".padEnd(PITCH_LABEL_WIDTH)}</Text>
+        {Array.from({ length: viewportCols }, (_, i) => {
+          const stepNum = viewportLeft + i;
+          if (stepNum >= NUM_STEPS) return null;
+          const isPlayhead = stepNum === playheadStep && isPlaying;
+          const isBeat = stepNum % 4 === 0;
+          const isCursorCol = stepNum === cursorStep && isFocused;
+          return (
             <Text
-              color={
-                i === playheadStep && isPlaying
-                  ? "green"
-                  : i % 4 === 0
-                    ? "yellow"
-                    : "gray"
-              }
-              bold={i === cursorStep && isFocused}
+              key={stepNum}
+              color={isPlayhead ? "green" : isBeat ? "yellow" : "gray"}
+              bold={isCursorCol}
             >
-              {(i + 1).toString(16).toUpperCase()}
+              {(stepNum + 1).toString(16).toUpperCase().padEnd(STEP_WIDTH)}
             </Text>
-          </Box>
-        ))}
-        <Box marginLeft={1}>
-          <Text dimColor>{getModeIndicator()}</Text>
-        </Box>
-      </Box>
+          );
+        })}
+        <Text dimColor> {getModeIndicator()}</Text>
+      </Text>
 
       {/* Separator */}
-      <Box>
-        <Text dimColor>{"─".repeat(5 + NUM_STEPS * 2 + 6)}</Text>
-      </Box>
+      <Text wrap="truncate" dimColor>
+        {"─".repeat(PITCH_LABEL_WIDTH + viewportCols * STEP_WIDTH)}
+      </Text>
 
       {/* Piano roll grid */}
       {pitchRange.map((pitch) => {
@@ -514,100 +615,43 @@ export default function PianoRoll() {
         const isCursorRow = pitch === cursorPitch && isFocused;
 
         return (
-          <Box key={`pitch-${pitch}`}>
+          <Text key={`pitch-${pitch}`} wrap="truncate">
             {/* Pitch label */}
-            <Box width={5}>
-              <Text
-                color={isCursorRow ? "cyan" : isBlack ? "gray" : "white"}
-                bold={isCursorRow}
-                dimColor={isBlack && !isCursorRow}
-              >
-                {getPitchName(pitch).padStart(4, " ")}
-              </Text>
-            </Box>
+            <Text
+              color={isCursorRow ? "cyan" : isBlack ? "gray" : "white"}
+              bold={isCursorRow}
+              dimColor={isBlack && !isCursorRow}
+            >
+              {getPitchName(pitch).padStart(4, " ").padEnd(PITCH_LABEL_WIDTH)}
+            </Text>
 
-            {/* Steps */}
-            {Array.from({ length: NUM_STEPS }, (_, stepIndex) => {
-              const note = getNoteCovering(pitch, stepIndex);
-              const isStart = isNoteStart(pitch, stepIndex);
-              const isCursor =
-                pitch === cursorPitch && stepIndex === cursorStep && isFocused;
-              const isPlayhead = stepIndex === playheadStep && isPlaying;
-              const isBeat = stepIndex % 4 === 0;
-              const isInPlacement =
-                placementRange &&
-                pitch === cursorPitch &&
-                stepIndex >= placementRange.start &&
-                stepIndex <= placementRange.end;
-              const isVisualSelected = isInVisualSelection(pitch, stepIndex);
-
-              let bgColor: string | undefined;
-              let fgColor = isBlack ? "gray" : "white";
-              let char = isBeat ? "┃" : "│";
-
-              if (note) {
-                if (isStart) {
-                  char = "█";
-                  fgColor = "magenta";
-                } else {
-                  char = "─";
-                  fgColor = "magenta";
-                }
-              }
-
-              // Placement preview
-              if (isInPlacement && !note) {
-                char = "░";
-                fgColor = "cyan";
-              }
-
-              if (isCursor && isPlayhead) {
-                bgColor = "greenBright";
-                fgColor = "black";
-              } else if (isCursor) {
-                bgColor = "blue";
-                fgColor = "white";
-              } else if (isVisualSelected) {
-                bgColor = "yellow";
-                fgColor = "black";
-              } else if (isPlayhead) {
-                bgColor = "green";
-                fgColor = "black";
-              } else if (isInPlacement) {
-                bgColor = "cyan";
-                fgColor = "black";
-              }
+            {/* Steps - only render visible viewport */}
+            {Array.from({ length: viewportCols }, (_, i) => {
+              const stepIndex = viewportLeft + i;
+              if (stepIndex >= NUM_STEPS) return null;
+              const style = getStepStyle(pitch, stepIndex);
 
               return (
-                <Box key={`step-${pitch}-${stepIndex}`} width={2}>
-                  <Text
-                    backgroundColor={bgColor}
-                    color={fgColor}
-                    bold={!!note || isPlayhead || !!isInPlacement}
-                    dimColor={
-                      isBlack &&
-                      !note &&
-                      !isCursor &&
-                      !isPlayhead &&
-                      !isInPlacement
-                    }
-                  >
-                    {char}
-                  </Text>
-                </Box>
+                <Text
+                  key={stepIndex}
+                  backgroundColor={style.bgColor}
+                  color={style.fgColor}
+                  bold={style.bold}
+                  dimColor={style.dimColor}
+                >
+                  {style.char.padEnd(STEP_WIDTH)}
+                </Text>
               );
             })}
-          </Box>
+          </Text>
         );
       })}
 
       {/* Footer info */}
-      <Box marginTop={1}>
-        <Text dimColor>
-          hjkl:Move x:Place/Edit {"<>"}:Nudge v:Visual ^v:Block y:Yank p:Paste
-          d:Del
-        </Text>
-      </Box>
+      <Text wrap="truncate" dimColor>
+        hjkl:Move x:Place/Edit {"<>"}:Nudge v:Visual ^v:Block y:Yank p:Paste
+        d:Del
+      </Text>
     </Box>
   );
 }

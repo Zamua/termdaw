@@ -222,15 +222,35 @@ function AppContent() {
   const renderMainView = () => {
     switch (viewMode) {
       case "playlist":
-        return <Playlist />;
+        return (
+          <Playlist
+            availableHeight={contentAvailableHeight}
+            availableWidth={contentAvailableWidth}
+          />
+        );
       case "channelRack":
-        return <ChannelRack />;
+        return (
+          <ChannelRack
+            availableHeight={contentAvailableHeight}
+            availableWidth={contentAvailableWidth}
+          />
+        );
       case "pianoRoll":
-        return <PianoRoll />;
+        return (
+          <PianoRoll
+            availableHeight={contentAvailableHeight}
+            availableWidth={contentAvailableWidth}
+          />
+        );
       case "mixer":
         return <Mixer />;
       default:
-        return <ChannelRack />;
+        return (
+          <ChannelRack
+            availableHeight={contentAvailableHeight}
+            availableWidth={contentAvailableWidth}
+          />
+        );
     }
   };
 
@@ -271,6 +291,18 @@ function AppContent() {
     10,
     terminalHeight - transportHeight - statusHeight - mixerHeight,
   );
+  // Available height inside TitledBox (subtract border + title row)
+  const titledBoxOverhead = 3; // 2 for border + 1 for title
+  const contentAvailableHeight = Math.max(
+    5,
+    mainContentHeight - titledBoxOverhead,
+  );
+
+  // Available width for main content (subtract browser panel and borders)
+  const browserWidth = showBrowser ? 30 : 0;
+  const titledBoxBorderWidth = 2;
+  const contentAvailableWidth =
+    terminalWidth - browserWidth - titledBoxBorderWidth;
 
   return (
     <Box
@@ -296,7 +328,7 @@ function AppContent() {
             titles={[`Browser${focusedPanel === "browser" ? " *" : ""}`]}
             overflow="hidden"
           >
-            <Browser />
+            <Browser availableHeight={contentAvailableHeight} />
           </TitledBox>
         )}
 
