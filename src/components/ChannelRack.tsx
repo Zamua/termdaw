@@ -8,7 +8,7 @@ import { useVim } from "../hooks/useVim.js";
 import type { Position, Range, Key } from "../lib/vim/types.js";
 
 const NUM_STEPS = 16;
-const HEADER_ROWS = 5;
+const HEADER_ROWS = 6;
 
 // Virtual column mapping:
 // -2 = sample zone
@@ -276,8 +276,20 @@ export default function ChannelRack() {
     return true;
   };
 
+  // Find current pattern name
+  const currentPattern = patterns.find((p) => p.id === currentPatternId);
+  const patternName = currentPattern?.name || `Pattern ${currentPatternId}`;
+
   return (
     <Box flexDirection="column" paddingX={1}>
+      {/* Pattern indicator */}
+      <Box>
+        <Text color="cyan" bold>
+          {patternName}
+        </Text>
+        <Text dimColor> [ ] to switch</Text>
+      </Box>
+
       <Box>
         <Box width={10}>
           <Text dimColor>Channel</Text>

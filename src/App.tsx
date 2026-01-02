@@ -30,7 +30,6 @@ function AppContent() {
     setIsPlaying,
     bpm,
     setBpm,
-    currentPatternId,
     switchPattern,
     selectedChannel,
     channels,
@@ -235,13 +234,13 @@ function AppContent() {
       case "playlist":
         return `Playlist${focusIndicator}`;
       case "channelRack":
-        return `Channel Rack P${currentPatternId}${focusIndicator}`;
+        return `Channel Rack${focusIndicator}`;
       case "pianoRoll": {
         const channelName = channels[selectedChannel]?.name || "Channel";
-        return `Piano Roll - ${channelName} P${currentPatternId}${focusIndicator}`;
+        return `Piano Roll - ${channelName}${focusIndicator}`;
       }
       default:
-        return `Channel Rack P${currentPatternId}${focusIndicator}`;
+        return `Channel Rack${focusIndicator}`;
     }
   };
 
