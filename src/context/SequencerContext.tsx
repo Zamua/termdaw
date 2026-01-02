@@ -19,6 +19,7 @@ import { useCommands } from "./CommandContext.js";
 export type { SynthPatch };
 export { synthPresets };
 export type ChannelType = "sample" | "synth";
+export type PlayMode = "pattern" | "arrangement";
 
 interface Channel {
   name: string;
@@ -213,8 +214,10 @@ interface SequencerContextType {
   channels: ChannelWithSteps[];
   setChannels: React.Dispatch<React.SetStateAction<Channel[]>>;
   isPlaying: boolean;
-  setIsPlaying: (playing: boolean) => void;
+  setIsPlaying: (playing: boolean, mode?: PlayMode) => void;
+  playMode: PlayMode;
   playheadStep: number;
+  arrangementBar: number;
   bpm: number;
   setBpm: (bpm: number) => void;
   toggleStep: (channelIndex: number, stepIndex: number) => void;
@@ -288,7 +291,9 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
   const [patterns, setPatterns] = useState<Pattern[]>([createEmptyPattern(1)]);
   const [currentPatternId, setCurrentPatternId] = useState(1);
   const [isPlaying, setIsPlayingState] = useState(false);
+  const [playMode, setPlayMode] = useState<PlayMode>("pattern");
   const [playheadStep, setPlayheadStep] = useState(0);
+  const [arrangementBar, setArrangementBar] = useState(0);
   const [bpm, setBpm] = useState(140);
   const [selectedChannel, setSelectedChannel] = useState(0);
   const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrack[]>(
@@ -301,6 +306,9 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bpmRef = useRef(bpm);
+  const playModeRef = useRef<PlayMode>("pattern");
+  const arrangementRef = useRef(arrangement);
+  const patternsRef = useRef(patterns);
 
   // Register state accessors with command system
   const { setStateAccessors } = useCommands();
@@ -314,10 +322,22 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
     });
   }, [setStateAccessors, patterns, currentPatternId, channelMeta]);
 
-  // Keep bpmRef in sync
+  // Keep refs in sync
   useEffect(() => {
     bpmRef.current = bpm;
   }, [bpm]);
+
+  useEffect(() => {
+    playModeRef.current = playMode;
+  }, [playMode]);
+
+  useEffect(() => {
+    arrangementRef.current = arrangement;
+  }, [arrangement]);
+
+  useEffect(() => {
+    patternsRef.current = patterns;
+  }, [patterns]);
 
   // Get current pattern
   const currentPattern =
@@ -336,56 +356,143 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
     channelsRef.current = channels;
   }, [channels]);
 
-  const playStep = useCallback((step: number, stepsPerBeat: number = 4) => {
-    const currentChannels = channelsRef.current;
-    const hasSolo = currentChannels.some((ch) => ch.solo);
-    // Calculate step duration in seconds for synth notes
-    const stepDuration = 60 / bpmRef.current / stepsPerBeat;
+  // Play a single step for pattern mode (uses current pattern)
+  const playPatternStep = useCallback(
+    (step: number, stepsPerBeat: number = 4) => {
+      const currentChannels = channelsRef.current;
+      const hasSolo = currentChannels.some((ch) => ch.solo);
+      const stepDuration = 60 / bpmRef.current / stepsPerBeat;
 
-    for (const channel of currentChannels) {
-      const shouldPlay = hasSolo ? channel.solo : !channel.muted;
-      if (!shouldPlay) continue;
+      for (const channel of currentChannels) {
+        const shouldPlay = hasSolo ? channel.solo : !channel.muted;
+        if (!shouldPlay) continue;
 
-      if (channel.type === "sample") {
-        // Play drum step if active (sample channels)
-        if (channel.steps[step]) {
-          playSample(getSamplePath(channel.sample));
-        }
-
-        // Play piano roll notes with pitch-shifted samples
-        const notes = channel.notes || [];
-        for (const note of notes) {
-          if (note.startStep === step) {
-            playSamplePitched(getSamplePath(channel.sample), note.pitch);
+        if (channel.type === "sample") {
+          if (channel.steps[step]) {
+            playSample(getSamplePath(channel.sample));
           }
-        }
-      } else if (channel.type === "synth") {
-        // Play piano roll notes with synth
-        const notes = channel.notes || [];
-        for (const note of notes) {
-          if (note.startStep === step) {
-            const noteDuration = note.duration * stepDuration;
-            playSynthNote(channel.synthPatch, note.pitch, noteDuration);
+          const notes = channel.notes || [];
+          for (const note of notes) {
+            if (note.startStep === step) {
+              playSamplePitched(getSamplePath(channel.sample), note.pitch);
+            }
+          }
+        } else if (channel.type === "synth") {
+          const notes = channel.notes || [];
+          for (const note of notes) {
+            if (note.startStep === step) {
+              const noteDuration = note.duration * stepDuration;
+              playSynthNote(channel.synthPatch, note.pitch, noteDuration);
+            }
           }
         }
       }
-    }
-  }, []);
+    },
+    [],
+  );
+
+  // Play a single step for arrangement mode (plays all patterns at current bar)
+  const playArrangementStep = useCallback(
+    (bar: number, step: number, stepsPerBeat: number = 4) => {
+      const currentChannels = channelsRef.current;
+      const arr = arrangementRef.current;
+      const allPatterns = patternsRef.current;
+      const hasSolo = currentChannels.some((ch) => ch.solo);
+      const stepDuration = 60 / bpmRef.current / stepsPerBeat;
+
+      // Find all patterns playing at this bar
+      const activePlacements = arr.placements.filter(
+        (p) => p.startBar <= bar && bar < p.startBar + p.length,
+      );
+
+      for (const placement of activePlacements) {
+        // Skip muted patterns
+        if (arr.mutedPatterns.has(placement.patternId)) continue;
+
+        const pattern = allPatterns.find((p) => p.id === placement.patternId);
+        if (!pattern) continue;
+
+        // Play each channel's content from this pattern
+        for (let chIdx = 0; chIdx < currentChannels.length; chIdx++) {
+          const channel = currentChannels[chIdx];
+          if (!channel) continue;
+
+          const shouldPlay = hasSolo ? channel.solo : !channel.muted;
+          if (!shouldPlay) continue;
+
+          const patternSteps = pattern.steps[chIdx] || [];
+          const patternNotes = pattern.notes[chIdx] || [];
+
+          if (channel.type === "sample") {
+            if (patternSteps[step]) {
+              playSample(getSamplePath(channel.sample));
+            }
+            for (const note of patternNotes) {
+              if (note.startStep === step) {
+                playSamplePitched(getSamplePath(channel.sample), note.pitch);
+              }
+            }
+          } else if (channel.type === "synth") {
+            for (const note of patternNotes) {
+              if (note.startStep === step) {
+                const noteDuration = note.duration * stepDuration;
+                playSynthNote(channel.synthPatch, note.pitch, noteDuration);
+              }
+            }
+          }
+        }
+      }
+    },
+    [],
+  );
 
   const setIsPlaying = useCallback(
-    (playing: boolean) => {
+    (playing: boolean, mode?: PlayMode) => {
+      // Set play mode if provided
+      if (mode !== undefined) {
+        setPlayMode(mode);
+        playModeRef.current = mode;
+      }
+
       setIsPlayingState(playing);
 
       if (playing) {
         const intervalMs = (60 / bpm / 4) * 1000;
-        playStep(playheadStep);
+        const currentMode = mode ?? playModeRef.current;
+
+        // Play initial step
+        if (currentMode === "arrangement") {
+          playArrangementStep(arrangementBar, playheadStep);
+        } else {
+          playPatternStep(playheadStep);
+        }
 
         intervalRef.current = setInterval(() => {
-          setPlayheadStep((prev) => {
-            const nextStep = (prev + 1) % NUM_STEPS;
-            playStep(nextStep);
-            return nextStep;
-          });
+          if (playModeRef.current === "arrangement") {
+            // Arrangement mode: advance step, then bar when step wraps
+            setPlayheadStep((prevStep) => {
+              const nextStep = (prevStep + 1) % NUM_STEPS;
+              if (nextStep === 0) {
+                // Advance to next bar
+                setArrangementBar((prevBar) => (prevBar + 1) % NUM_BARS);
+              }
+              // We need to get the current bar for playback
+              // Since setArrangementBar is async, we compute it here
+              const currentBar =
+                nextStep === 0
+                  ? (arrangementBar + 1) % NUM_BARS
+                  : arrangementBar;
+              playArrangementStep(currentBar, nextStep);
+              return nextStep;
+            });
+          } else {
+            // Pattern mode: just advance step
+            setPlayheadStep((prev) => {
+              const nextStep = (prev + 1) % NUM_STEPS;
+              playPatternStep(nextStep);
+              return nextStep;
+            });
+          }
         }, intervalMs);
       } else {
         if (intervalRef.current) {
@@ -394,7 +501,7 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [bpm, playheadStep, playStep],
+    [bpm, playheadStep, arrangementBar, playPatternStep, playArrangementStep],
   );
 
   // Update interval when BPM changes during playback
@@ -403,14 +510,28 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
       clearInterval(intervalRef.current);
       const intervalMs = (60 / bpm / 4) * 1000;
       intervalRef.current = setInterval(() => {
-        setPlayheadStep((prev) => {
-          const nextStep = (prev + 1) % NUM_STEPS;
-          playStep(nextStep);
-          return nextStep;
-        });
+        if (playModeRef.current === "arrangement") {
+          setPlayheadStep((prevStep) => {
+            const nextStep = (prevStep + 1) % NUM_STEPS;
+            if (nextStep === 0) {
+              setArrangementBar((prevBar) => (prevBar + 1) % NUM_BARS);
+            }
+            setArrangementBar((currentBar) => {
+              playArrangementStep(currentBar, nextStep);
+              return currentBar;
+            });
+            return nextStep;
+          });
+        } else {
+          setPlayheadStep((prev) => {
+            const nextStep = (prev + 1) % NUM_STEPS;
+            playPatternStep(nextStep);
+            return nextStep;
+          });
+        }
       }, intervalMs);
     }
-  }, [bpm, isPlaying, playStep]);
+  }, [bpm, isPlaying, playPatternStep, playArrangementStep]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -834,7 +955,9 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
         setChannels,
         isPlaying,
         setIsPlaying,
+        playMode,
         playheadStep,
+        arrangementBar,
         bpm,
         setBpm,
         toggleStep,

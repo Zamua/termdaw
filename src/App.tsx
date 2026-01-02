@@ -145,8 +145,10 @@ function AppContent() {
     }
 
     // Space - Play/Pause (global)
+    // When playlist is focused, play arrangement; otherwise play pattern
     if (input === " ") {
-      setIsPlaying(!isPlaying);
+      const mode = focusedPanel === "playlist" ? "arrangement" : "pattern";
+      setIsPlaying(!isPlaying, mode);
       return;
     }
 

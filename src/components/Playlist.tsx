@@ -39,12 +39,18 @@ export default function Playlist({
     togglePatternPlacement,
     togglePatternMute,
     setArrangement,
+    arrangementBar,
+    playMode,
+    isPlaying,
   } = useSequencer();
   const [cursorRow, setCursorRow] = useState(0);
   const [cursorBar, setCursorBar] = useState(0);
   const [viewportTop, setViewportTop] = useState(0);
   const [viewportLeft, setViewportLeft] = useState(0);
-  const [playheadBar] = useState(0);
+
+  // Only show playhead when playing in arrangement mode
+  const playheadBar =
+    isPlaying && playMode === "arrangement" ? arrangementBar : -1;
 
   // Get non-empty patterns for display
   const patterns = useMemo(() => getNonEmptyPatterns(), [getNonEmptyPatterns]);
