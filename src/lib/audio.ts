@@ -26,17 +26,10 @@ const bufferCache = new Map<string, AudioBuffer>();
 const activeSources = new Set<AudioBufferSourceNode>();
 let previewSource: AudioBufferSourceNode | null = null;
 
-// Manual waveform tracking (AnalyserNode doesn't work in node-web-audio-api)
-interface ActivePlayback {
-  buffer: AudioBuffer;
-  startTime: number;
-  playbackRate: number;
-}
-const activePlaybacks: ActivePlayback[] = [];
 
 
 // Initialize audio context lazily
-function getAudioContext(): AudioContext {
+export function getAudioContext(): AudioContext {
   if (!audioContext) {
     audioContext = new AudioContext();
 
@@ -65,64 +58,19 @@ export function getAnalyser(): AnalyserNode | null {
   return analyser;
 }
 
-// Get waveform data - manually sample from active playbacks
-const WAVEFORM_SIZE = 256;
-let debugCounter = 0;
+// Get the master gain node (for routing external audio sources through the main bus)
+export function getMasterGain(): GainNode {
+  getAudioContext(); // Ensure initialized
+  return masterGain!;
+}
+
+// Get waveform data from the analyser node
 export function getWaveformData(): Uint8Array {
-  const ctx = getAudioContext();
-  const currentTime = ctx.currentTime;
-  const dataArray = new Uint8Array(WAVEFORM_SIZE);
+  getAudioContext(); // Ensure initialized
+  if (!analyser) return new Uint8Array(256).fill(128);
 
-  // Clean up finished playbacks
-  for (let i = activePlaybacks.length - 1; i >= 0; i--) {
-    const pb = activePlaybacks[i]!;
-    const elapsed = (currentTime - pb.startTime) * pb.playbackRate;
-    if (elapsed >= pb.buffer.duration) {
-      activePlaybacks.splice(i, 1);
-    }
-  }
-
-  // If no active playbacks, return silence (128)
-  if (activePlaybacks.length === 0) {
-    dataArray.fill(128);
-    return dataArray;
-  }
-
-  // Sample from active playbacks - take a ~5ms window of audio
-  const sampleWindow = 0.005;
-
-  for (let i = 0; i < WAVEFORM_SIZE; i++) {
-    let sum = 0;
-
-    for (const pb of activePlaybacks) {
-      const elapsed = (currentTime - pb.startTime) * pb.playbackRate;
-      const windowOffset = (i / WAVEFORM_SIZE - 0.5) * sampleWindow;
-      const sampleTime = elapsed + windowOffset;
-
-      if (sampleTime >= 0 && sampleTime < pb.buffer.duration) {
-        const channelData = pb.buffer.getChannelData(0);
-        const sampleIndex = Math.floor(sampleTime * pb.buffer.sampleRate);
-        if (sampleIndex >= 0 && sampleIndex < channelData.length) {
-          sum += channelData[sampleIndex]!;
-        }
-      }
-    }
-
-    // Convert summed samples to 0..255 (128 = center) with gain boost
-    const gain = 5.0; // amplify for better visibility
-    const amplified = Math.max(-1, Math.min(1, sum * gain));
-    dataArray[i] = Math.max(0, Math.min(255, Math.floor((amplified + 1) * 127.5)));
-  }
-
-  // Debug log
-  debugCounter++;
-  if (debugCounter % 60 === 0) {
-    const min = Math.min(...dataArray);
-    const max = Math.max(...dataArray);
-    const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-    log(`playbacks=${activePlaybacks.length} min=${min} max=${max} avg=${avg.toFixed(1)}`);
-  }
-
+  const dataArray = new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(dataArray);
   return dataArray;
 }
 
@@ -178,10 +126,6 @@ export async function playSample(samplePath: string): Promise<void> {
 
   activeSources.add(source);
 
-  // Track for waveform visualization
-  const playback: ActivePlayback = { buffer, startTime: ctx.currentTime, playbackRate: 1 };
-  activePlaybacks.push(playback);
-
   source.onended = () => {
     activeSources.delete(source);
   };
@@ -208,9 +152,6 @@ export async function playSamplePitched(samplePath: string, pitch: number): Prom
   source.connect(masterGain);
 
   activeSources.add(source);
-
-  // Track for waveform visualization
-  activePlaybacks.push({ buffer, startTime: ctx.currentTime, playbackRate });
 
   source.onended = () => {
     activeSources.delete(source);
@@ -245,9 +186,6 @@ export async function previewSample(samplePath: string): Promise<void> {
   const source = new AudioBufferSourceNode(ctx, { buffer });
   source.connect(masterGain);
 
-  // Track for waveform visualization
-  activePlaybacks.push({ buffer, startTime: ctx.currentTime, playbackRate: 1 });
-
   previewSource = source;
   source.onended = () => {
     if (previewSource === source) {
@@ -274,9 +212,6 @@ export async function previewSamplePitched(samplePath: string, pitch: number): P
     playbackRate,
   });
   source.connect(masterGain);
-
-  // Track for waveform visualization
-  activePlaybacks.push({ buffer, startTime: ctx.currentTime, playbackRate });
 
   previewSource = source;
   source.onended = () => {

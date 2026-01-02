@@ -1,4 +1,5 @@
-import { AudioContext, OscillatorNode, GainNode, BiquadFilterNode } from 'node-web-audio-api';
+import { OscillatorNode, GainNode, BiquadFilterNode } from 'node-web-audio-api';
+import { getAudioContext, getMasterGain } from './audio';
 
 // Waveform types
 export type WaveformType = 'sine' | 'square' | 'sawtooth' | 'triangle';
@@ -109,17 +110,6 @@ export const presets: SynthPatch[] = [
   },
 ];
 
-// Global audio context (singleton)
-let audioContext: AudioContext | null = null;
-
-function getAudioContext(): AudioContext {
-  if (!audioContext) {
-    // Use playback latency hint for better stability
-    audioContext = new AudioContext({ latencyHint: 'playback' });
-  }
-  return audioContext;
-}
-
 // Convert MIDI note to frequency
 function midiToFrequency(midi: number): number {
   return 440 * Math.pow(2, (midi - 69) / 12);
@@ -194,8 +184,8 @@ export function playSynthNote(
     gainNodes.push(oscGain);
   }
 
-  // Connect master to destination
-  masterGain.connect(ctx.destination);
+  // Connect voice output to shared master bus (routes through analyser for visualization)
+  masterGain.connect(getMasterGain());
 
   // Apply ADSR envelope
   const { attack, decay, sustain, release } = patch.envelope;
@@ -283,7 +273,8 @@ export function previewSynthNote(patch: SynthPatch, pitch: number): void {
     gainNodes.push(oscGain);
   }
 
-  masterGain.connect(ctx.destination);
+  // Connect voice output to shared master bus (routes through analyser for visualization)
+  masterGain.connect(getMasterGain());
 
   // Quick attack for preview
   const { attack, decay, sustain } = patch.envelope;
@@ -348,11 +339,7 @@ export function stopAllSynths(): void {
   activeVoices.clear();
 }
 
-// Cleanup on exit
+// Cleanup on exit (context is shared with audio.ts, so we only stop synths here)
 export function closeSynth(): void {
   stopAllSynths();
-  if (audioContext) {
-    audioContext.close();
-    audioContext = null;
-  }
 }
