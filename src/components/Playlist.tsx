@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
 import { useIsFocused } from '../context/FocusContext.js';
+import { useVim } from '../hooks/useVim.js';
+import type { Position, Range, Key } from '../lib/vim/types.js';
 
 interface Clip {
   patternId: number;
@@ -14,9 +16,15 @@ interface Track {
   muted: boolean;
 }
 
+// Data type for yank/paste operations
+interface ClipData {
+  patternId: number;
+  barOffset: number;
+}
+
 const NUM_BARS = 16;
 const NUM_TRACKS = 99;
-const HEADER_ROWS = 5; // Transport, title bar, header, separator, some padding
+const HEADER_ROWS = 5;
 
 const createDefaultTracks = (): Track[] =>
   Array.from({ length: NUM_TRACKS }, (_, i) => ({
@@ -36,7 +44,6 @@ export default function Playlist() {
   const [playheadBar] = useState(0);
   const [selectedPattern] = useState(1);
 
-  // Track terminal height changes
   useEffect(() => {
     const handleResize = () => {
       setTermHeight(stdout?.rows || 24);
@@ -47,102 +54,229 @@ export default function Playlist() {
     };
   }, [stdout]);
 
-  // Calculate viewport height based on terminal size
   const viewportHeight = Math.max(5, termHeight - HEADER_ROWS);
 
-  // Combined cursor movement with viewport scrolling (avoids extra re-renders)
-  const moveCursor = useCallback((newTrack: number) => {
-    const clampedTrack = Math.max(0, Math.min(tracks.length - 1, newTrack));
-    setCursorTrack(clampedTrack);
-    setViewportTop(prev => {
-      if (clampedTrack < prev) {
-        return clampedTrack;
-      } else if (clampedTrack >= prev + viewportHeight) {
-        return clampedTrack - viewportHeight + 1;
-      }
-      return prev;
-    });
-  }, [tracks.length, viewportHeight]);
+  const moveCursor = useCallback(
+    (newTrack: number) => {
+      const clampedTrack = Math.max(0, Math.min(tracks.length - 1, newTrack));
+      setCursorTrack(clampedTrack);
+      setViewportTop((prev) => {
+        if (clampedTrack < prev) {
+          return clampedTrack;
+        } else if (clampedTrack >= prev + viewportHeight) {
+          return clampedTrack - viewportHeight + 1;
+        }
+        return prev;
+      });
+    },
+    [tracks.length, viewportHeight]
+  );
 
-  useInput((input, key) => {
-    // Only handle input when this panel is focused
-    if (!isFocused) return;
+  // Vim hook
+  const vim = useVim<ClipData[]>({
+    dimensions: { rows: NUM_TRACKS, cols: NUM_BARS },
 
-    // Navigation
-    if (key.upArrow || input === 'k') {
-      moveCursor(cursorTrack - 1);
-      return;
-    }
-    if (key.downArrow || input === 'j') {
-      moveCursor(cursorTrack + 1);
-      return;
-    }
-    // gg - go to first track, G - go to last track
-    if (input === 'g') {
-      moveCursor(0);
-      return;
-    }
-    if (input === 'G') {
-      moveCursor(tracks.length - 1);
-      return;
-    }
-    if (key.leftArrow || input === 'h') {
-      setCursorBar(prev => Math.max(0, prev - 1));
-      return;
-    }
-    if (key.rightArrow || input === 'l') {
-      setCursorBar(prev => Math.min(NUM_BARS - 1, prev + 1));
-      return;
-    }
+    getCursor: () => ({ row: cursorTrack, col: cursorBar }),
 
-    // Place/remove clip
-    if (key.return || input === 'x') {
-      setTracks(prev => {
-        return prev.map((track, idx) => {
-          if (idx !== cursorTrack) return track;
+    setCursor: (pos: Position) => {
+      moveCursor(pos.row);
+      setCursorBar(Math.max(0, Math.min(NUM_BARS - 1, pos.col)));
+    },
 
-          const existingClipIndex = track.clips.findIndex(
-            clip => clip.startBar === cursorBar
+    motions: {
+      h: (count, cursor) => ({
+        position: { row: cursor.row, col: Math.max(0, cursor.col - count) },
+      }),
+      l: (count, cursor) => ({
+        position: { row: cursor.row, col: Math.min(NUM_BARS - 1, cursor.col + count) },
+      }),
+      j: (count, cursor) => ({
+        position: { row: Math.min(NUM_TRACKS - 1, cursor.row + count), col: cursor.col },
+        linewise: true,
+      }),
+      k: (count, cursor) => ({
+        position: { row: Math.max(0, cursor.row - count), col: cursor.col },
+        linewise: true,
+      }),
+      zero: (_count, cursor) => ({
+        position: { row: cursor.row, col: 0 },
+      }),
+      dollar: (_count, cursor) => ({
+        position: { row: cursor.row, col: NUM_BARS - 1 },
+        inclusive: true,
+      }),
+      gg: (_count, cursor) => ({
+        position: { row: 0, col: cursor.col },
+      }),
+      G: (_count, cursor) => ({
+        position: { row: NUM_TRACKS - 1, col: cursor.col },
+      }),
+    },
+
+    getDataInRange: (range: Range) => {
+      const minRow = Math.min(range.start.row, range.end.row);
+      const minCol = Math.min(range.start.col, range.end.col);
+      const maxCol = Math.max(range.start.col, range.end.col);
+
+      const track = tracks[minRow];
+      if (!track) return [];
+
+      return track.clips
+        .filter((clip) => clip.startBar >= minCol && clip.startBar <= maxCol)
+        .map((clip) => ({
+          patternId: clip.patternId,
+          barOffset: clip.startBar - minCol,
+        }));
+    },
+
+    deleteRange: (range: Range) => {
+      const minRow = Math.min(range.start.row, range.end.row);
+      const maxRow = Math.max(range.start.row, range.end.row);
+      const minCol = Math.min(range.start.col, range.end.col);
+      const maxCol = Math.max(range.start.col, range.end.col);
+
+      const deleted: ClipData[] = [];
+
+      setTracks((prev) =>
+        prev.map((track, idx) => {
+          if (idx < minRow || idx > maxRow) return track;
+
+          const toDelete = track.clips.filter(
+            (clip) => clip.startBar >= minCol && clip.startBar <= maxCol
           );
 
-          if (existingClipIndex >= 0) {
-            // Remove existing clip
-            const newClips = [...track.clips];
-            newClips.splice(existingClipIndex, 1);
-            return { ...track, clips: newClips };
-          } else {
-            // Add new clip
-            return {
-              ...track,
-              clips: [...track.clips, {
-                patternId: selectedPattern,
-                startBar: cursorBar,
-                length: 1,
-              }]
-            };
+          for (const clip of toDelete) {
+            deleted.push({
+              patternId: clip.patternId,
+              barOffset: clip.startBar - minCol,
+            });
           }
-        });
-      });
-      return;
-    }
 
-    // Mute track
-    if (input === 'm') {
-      setTracks(prev => {
-        return prev.map((track, idx) => {
-          if (idx !== cursorTrack) return track;
-          return { ...track, muted: !track.muted };
-        });
-      });
-      return;
-    }
+          const remaining = track.clips.filter(
+            (clip) => clip.startBar < minCol || clip.startBar > maxCol
+          );
+
+          return { ...track, clips: remaining };
+        })
+      );
+
+      return deleted;
+    },
+
+    insertData: (pos: Position, data: ClipData[]) => {
+      setTracks((prev) =>
+        prev.map((track, idx) => {
+          if (idx !== pos.row) return track;
+
+          const newClips = [...track.clips];
+          for (const item of data) {
+            const bar = pos.col + item.barOffset;
+            if (bar >= 0 && bar < NUM_BARS) {
+              // Remove any existing clip at this position
+              const existingIdx = newClips.findIndex((c) => c.startBar === bar);
+              if (existingIdx >= 0) {
+                newClips.splice(existingIdx, 1);
+              }
+              newClips.push({
+                patternId: item.patternId,
+                startBar: bar,
+                length: 1,
+              });
+            }
+          }
+          return { ...track, clips: newClips };
+        })
+      );
+    },
+
+    onCustomAction: (char: string, key: Key, _count: number) => {
+      // Place/remove clip
+      if (key.return || char === 'x') {
+        setTracks((prev) =>
+          prev.map((track, idx) => {
+            if (idx !== cursorTrack) return track;
+
+            const existingClipIndex = track.clips.findIndex(
+              (clip) => clip.startBar === cursorBar
+            );
+
+            if (existingClipIndex >= 0) {
+              const newClips = [...track.clips];
+              newClips.splice(existingClipIndex, 1);
+              return { ...track, clips: newClips };
+            } else {
+              return {
+                ...track,
+                clips: [
+                  ...track.clips,
+                  {
+                    patternId: selectedPattern,
+                    startBar: cursorBar,
+                    length: 1,
+                  },
+                ],
+              };
+            }
+          })
+        );
+        return true;
+      }
+
+      // Mute track
+      if (char === 'm') {
+        setTracks((prev) =>
+          prev.map((track, idx) => {
+            if (idx !== cursorTrack) return track;
+            return { ...track, muted: !track.muted };
+          })
+        );
+        return true;
+      }
+
+      return false;
+    },
+  });
+
+  // All input goes through vim
+  useInput((input, key) => {
+    if (!isFocused) return;
+
+    const inkKey: Key = {
+      upArrow: key.upArrow,
+      downArrow: key.downArrow,
+      leftArrow: key.leftArrow,
+      rightArrow: key.rightArrow,
+      pageDown: key.pageDown,
+      pageUp: key.pageUp,
+      return: key.return,
+      escape: key.escape,
+      ctrl: key.ctrl,
+      shift: key.shift,
+      tab: key.tab,
+      backspace: key.backspace,
+      delete: key.delete,
+      meta: key.meta,
+    };
+
+    vim.handleInput(input, inkKey);
   });
 
   // Helper to get clip at position
   const getClipAt = (trackIndex: number, bar: number): Clip | undefined => {
     return tracks[trackIndex]?.clips.find(
-      clip => clip.startBar <= bar && bar < clip.startBar + clip.length
+      (clip) => clip.startBar <= bar && bar < clip.startBar + clip.length
     );
+  };
+
+  // Check if a cell is in visual selection
+  const isInVisualSelection = (trackIdx: number, barIdx: number) => {
+    if (!vim.visualRange) return false;
+    const { start, end } = vim.visualRange;
+    const minRow = Math.min(start.row, end.row);
+    const maxRow = Math.max(start.row, end.row);
+    const minCol = Math.min(start.col, end.col);
+    const maxCol = Math.max(start.col, end.col);
+    return trackIdx >= minRow && trackIdx <= maxRow && barIdx >= minCol && barIdx <= maxCol;
   };
 
   return (
@@ -179,67 +313,76 @@ export default function Playlist() {
         const isCurrentTrack = trackIndex === cursorTrack && isFocused;
 
         return (
-        <Box key={`track-${trackIndex}`}>
-          {/* Track name */}
-          <Box width={10}>
-            <Text
-              color={isEmpty && !isCurrentTrack ? 'gray' : track.muted ? 'gray' : isCurrentTrack ? 'cyan' : 'white'}
-              bold={isCurrentTrack && !isEmpty}
-              dimColor={(track.muted || isEmpty) && !isCurrentTrack}
-            >
-              {isEmpty ? '(empty)'.padEnd(8) : track.name.slice(0, 8)}
-            </Text>
+          <Box key={`track-${trackIndex}`}>
+            {/* Track name */}
+            <Box width={10}>
+              <Text
+                color={
+                  isEmpty && !isCurrentTrack
+                    ? 'gray'
+                    : track.muted
+                      ? 'gray'
+                      : isCurrentTrack
+                        ? 'cyan'
+                        : 'white'
+                }
+                bold={isCurrentTrack && !isEmpty}
+                dimColor={(track.muted || isEmpty) && !isCurrentTrack}
+              >
+                {isEmpty ? '(empty)'.padEnd(8) : track.name.slice(0, 8)}
+              </Text>
+            </Box>
+
+            {/* Mute indicator */}
+            <Box width={3}>
+              <Text color={isEmpty ? 'gray' : track.muted ? 'red' : 'green'} dimColor={isEmpty}>
+                {isEmpty ? '·' : track.muted ? 'M' : '○'}
+              </Text>
+            </Box>
+
+            {/* Bars */}
+            {Array.from({ length: NUM_BARS }, (_, barIndex) => {
+              const clip = getClipAt(trackIndex, barIndex);
+              const isCursor = trackIndex === cursorTrack && barIndex === cursorBar && isFocused;
+              const isPlayhead = barIndex === playheadBar;
+              const isBeat = barIndex % 4 === 0;
+              const isVisualSelected = isInVisualSelection(trackIndex, barIndex);
+
+              let bgColor: string | undefined;
+              let fgColor = isEmpty ? 'gray' : 'gray';
+              let char = isBeat ? '┃' : '│';
+
+              if (clip) {
+                bgColor = track.muted ? 'gray' : 'magenta';
+                fgColor = 'white';
+                char = `P${clip.patternId}`;
+              }
+
+              if (isCursor) {
+                bgColor = 'blue';
+                fgColor = 'white';
+              } else if (isVisualSelected) {
+                bgColor = 'yellow';
+                fgColor = 'black';
+              } else if (isPlayhead) {
+                bgColor = clip ? 'green' : undefined;
+                fgColor = clip ? 'black' : 'green';
+              }
+
+              return (
+                <Box key={`bar-${trackIndex}-${barIndex}`} width={4}>
+                  <Text
+                    backgroundColor={bgColor}
+                    color={fgColor}
+                    bold={!!clip}
+                    dimColor={isEmpty && !isCursor && !isPlayhead && !isVisualSelected}
+                  >
+                    {clip ? char.slice(0, 3).padEnd(3, ' ') : char + '  '}
+                  </Text>
+                </Box>
+              );
+            })}
           </Box>
-
-          {/* Mute indicator */}
-          <Box width={3}>
-            <Text
-              color={isEmpty ? 'gray' : track.muted ? 'red' : 'green'}
-              dimColor={isEmpty}
-            >
-              {isEmpty ? '·' : track.muted ? 'M' : '○'}
-            </Text>
-          </Box>
-
-          {/* Bars */}
-          {Array.from({ length: NUM_BARS }, (_, barIndex) => {
-            const clip = getClipAt(trackIndex, barIndex);
-            const isCursor = trackIndex === cursorTrack && barIndex === cursorBar && isFocused;
-            const isPlayhead = barIndex === playheadBar;
-            const isBeat = barIndex % 4 === 0;
-
-            let bgColor: string | undefined;
-            let fgColor = isEmpty ? 'gray' : 'gray';
-            let char = isBeat ? '┃' : '│';
-
-            if (clip) {
-              bgColor = track.muted ? 'gray' : 'magenta';
-              fgColor = 'white';
-              char = `P${clip.patternId}`;
-            }
-
-            if (isCursor) {
-              bgColor = 'blue';
-              fgColor = 'white';
-            } else if (isPlayhead) {
-              bgColor = clip ? 'green' : undefined;
-              fgColor = clip ? 'black' : 'green';
-            }
-
-            return (
-              <Box key={`bar-${trackIndex}-${barIndex}`} width={4}>
-                <Text
-                  backgroundColor={bgColor}
-                  color={fgColor}
-                  bold={!!clip}
-                  dimColor={isEmpty && !isCursor && !isPlayhead}
-                >
-                  {clip ? char.slice(0, 3).padEnd(3, ' ') : char + '  '}
-                </Text>
-              </Box>
-            );
-          })}
-        </Box>
         );
       })}
     </Box>
