@@ -44,8 +44,23 @@ interface Pattern {
   notes: Note[][]; // [channelIndex][noteIndex] - piano roll notes
 }
 
+// Playlist types
+export interface PlaylistClip {
+  patternId: number;
+  startBar: number;
+  length: number;
+}
+
+export interface PlaylistTrack {
+  name: string;
+  clips: PlaylistClip[];
+  muted: boolean;
+}
+
 const NUM_STEPS = 16;
 const NUM_CHANNELS = 99;
+const NUM_PLAYLIST_TRACKS = 99;
+const NUM_BARS = 16;
 
 const createEmptyChannel = (index: number): Channel => ({
   name: `Ch ${index + 1}`,
@@ -168,6 +183,13 @@ const createEmptyPattern = (id: number): Pattern => ({
   notes: Array.from({ length: NUM_CHANNELS }, () => []),
 });
 
+const createDefaultPlaylistTracks = (): PlaylistTrack[] =>
+  Array.from({ length: NUM_PLAYLIST_TRACKS }, (_, i) => ({
+    name: `Track ${i + 1}`,
+    clips: [],
+    muted: false,
+  }));
+
 // Channel with steps and notes for the current pattern (used by UI)
 interface ChannelWithSteps extends Channel {
   steps: boolean[];
@@ -226,6 +248,15 @@ interface SequencerContextType {
   // Synth management
   setChannelType: (channelIndex: number, type: ChannelType) => void;
   setChannelSynthPatch: (channelIndex: number, patch: SynthPatch) => void;
+  // Playlist management
+  playlistTracks: PlaylistTrack[];
+  setPlaylistTracks: React.Dispatch<React.SetStateAction<PlaylistTrack[]>>;
+  togglePlaylistClip: (
+    trackIndex: number,
+    bar: number,
+    patternId: number,
+  ) => void;
+  togglePlaylistTrackMute: (trackIndex: number) => void;
 }
 
 const SequencerContext = createContext<SequencerContextType | null>(null);
@@ -240,6 +271,9 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
   const [playheadStep, setPlayheadStep] = useState(0);
   const [bpm, setBpm] = useState(140);
   const [selectedChannel, setSelectedChannel] = useState(0);
+  const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrack[]>(
+    createDefaultPlaylistTracks,
+  );
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bpmRef = useRef(bpm);
@@ -666,6 +700,44 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // Toggle playlist clip at position (add if not exists, remove if exists)
+  const togglePlaylistClip = useCallback(
+    (trackIndex: number, bar: number, patternId: number) => {
+      setPlaylistTracks((prev) =>
+        prev.map((track, idx) => {
+          if (idx !== trackIndex) return track;
+          const existingClipIdx = track.clips.findIndex(
+            (c) => c.startBar === bar,
+          );
+          if (existingClipIdx >= 0) {
+            // Remove clip at this position
+            return {
+              ...track,
+              clips: track.clips.filter((_, i) => i !== existingClipIdx),
+            };
+          } else {
+            // Add new clip
+            return {
+              ...track,
+              clips: [...track.clips, { patternId, startBar: bar, length: 1 }],
+            };
+          }
+        }),
+      );
+    },
+    [],
+  );
+
+  // Toggle playlist track mute
+  const togglePlaylistTrackMute = useCallback((trackIndex: number) => {
+    setPlaylistTracks((prev) =>
+      prev.map((track, idx) => {
+        if (idx !== trackIndex) return track;
+        return { ...track, muted: !track.muted };
+      }),
+    );
+  }, []);
+
   return (
     <SequencerContext.Provider
       value={{
@@ -695,6 +767,10 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
         toggleNote,
         setChannelType,
         setChannelSynthPatch,
+        playlistTracks,
+        setPlaylistTracks,
+        togglePlaylistClip,
+        togglePlaylistTrackMute,
       }}
     >
       {children}

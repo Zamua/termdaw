@@ -34,8 +34,8 @@ export function getAudioContext(): AudioContext {
     // Create master gain -> analyser -> destination chain
     masterGain = new GainNode(audioContext, { gain: 1.0 });
     analyser = new AnalyserNode(audioContext, {
-      fftSize: 256, // Smaller = faster response
-      smoothingTimeConstant: 0.3, // Less smoothing = more responsive
+      fftSize: 2048, // Larger buffer captures more audio data
+      smoothingTimeConstant: 0.8, // Higher smoothing holds peaks longer for visualization
     });
 
     masterGain.connect(analyser);

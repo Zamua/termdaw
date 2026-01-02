@@ -1,20 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useIsFocused } from "../context/FocusContext.js";
+import {
+  useSequencer,
+  type PlaylistClip,
+} from "../context/SequencerContext.js";
 import { useVim } from "../hooks/useVim.js";
 import type { Position, Range, Key } from "../lib/vim/types.js";
-
-interface Clip {
-  patternId: number;
-  startBar: number;
-  length: number;
-}
-
-interface Track {
-  name: string;
-  clips: Clip[];
-  muted: boolean;
-}
 
 // Data type for yank/paste operations
 interface ClipData {
@@ -26,23 +18,19 @@ const NUM_BARS = 16;
 const NUM_TRACKS = 99;
 const HEADER_ROWS = 5;
 
-const createDefaultTracks = (): Track[] =>
-  Array.from({ length: NUM_TRACKS }, (_, i) => ({
-    name: `Track ${i + 1}`,
-    clips: [],
-    muted: false,
-  }));
-
 export default function Playlist() {
   const isFocused = useIsFocused("playlist");
+  const {
+    playlistTracks: tracks,
+    setPlaylistTracks: setTracks,
+    currentPatternId,
+  } = useSequencer();
   const { stdout } = useStdout();
   const [termHeight, setTermHeight] = useState(stdout?.rows || 24);
-  const [tracks, setTracks] = useState<Track[]>(createDefaultTracks);
   const [cursorTrack, setCursorTrack] = useState(0);
   const [cursorBar, setCursorBar] = useState(0);
   const [viewportTop, setViewportTop] = useState(0);
   const [playheadBar] = useState(0);
-  const [selectedPattern] = useState(1);
 
   useEffect(() => {
     const handleResize = () => {
@@ -94,8 +82,11 @@ export default function Playlist() {
       if (!track) return [];
 
       return track.clips
-        .filter((clip) => clip.startBar >= minCol && clip.startBar <= maxCol)
-        .map((clip) => ({
+        .filter(
+          (clip: PlaylistClip) =>
+            clip.startBar >= minCol && clip.startBar <= maxCol,
+        )
+        .map((clip: PlaylistClip) => ({
           patternId: clip.patternId,
           barOffset: clip.startBar - minCol,
         }));
@@ -114,7 +105,8 @@ export default function Playlist() {
           if (idx < minRow || idx > maxRow) return track;
 
           const toDelete = track.clips.filter(
-            (clip) => clip.startBar >= minCol && clip.startBar <= maxCol,
+            (clip: PlaylistClip) =>
+              clip.startBar >= minCol && clip.startBar <= maxCol,
           );
 
           for (const clip of toDelete) {
@@ -125,7 +117,8 @@ export default function Playlist() {
           }
 
           const remaining = track.clips.filter(
-            (clip) => clip.startBar < minCol || clip.startBar > maxCol,
+            (clip: PlaylistClip) =>
+              clip.startBar < minCol || clip.startBar > maxCol,
           );
 
           return { ...track, clips: remaining };
@@ -169,7 +162,7 @@ export default function Playlist() {
             if (idx !== cursorTrack) return track;
 
             const existingClipIndex = track.clips.findIndex(
-              (clip) => clip.startBar === cursorBar,
+              (clip: PlaylistClip) => clip.startBar === cursorBar,
             );
 
             if (existingClipIndex >= 0) {
@@ -182,7 +175,7 @@ export default function Playlist() {
                 clips: [
                   ...track.clips,
                   {
-                    patternId: selectedPattern,
+                    patternId: currentPatternId,
                     startBar: cursorBar,
                     length: 1,
                   },
@@ -234,9 +227,13 @@ export default function Playlist() {
   });
 
   // Helper to get clip at position
-  const getClipAt = (trackIndex: number, bar: number): Clip | undefined => {
+  const getClipAt = (
+    trackIndex: number,
+    bar: number,
+  ): PlaylistClip | undefined => {
     return tracks[trackIndex]?.clips.find(
-      (clip) => clip.startBar <= bar && bar < clip.startBar + clip.length,
+      (clip: PlaylistClip) =>
+        clip.startBar <= bar && bar < clip.startBar + clip.length,
     );
   };
 

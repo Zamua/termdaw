@@ -4,6 +4,7 @@ import { useIsFocused, useFocusContext } from "../context/FocusContext.js";
 import { useSequencer } from "../context/SequencerContext.js";
 import { useCommands } from "../context/CommandContext.js";
 import { previewSample, getSamplePath } from "../lib/audio.js";
+import { playSynthNote } from "../lib/synth.js";
 import { useVim } from "../hooks/useVim.js";
 import type { Position, Range, Key } from "../lib/vim/types.js";
 
@@ -196,7 +197,12 @@ export default function ChannelRack() {
       if (char === "s") {
         const channel = channels[cursorChannel];
         if (channel) {
-          previewSample(getSamplePath(channel.sample));
+          if (channel.type === "synth") {
+            // Preview synth with C4 note for 0.5 seconds
+            playSynthNote(channel.synthPatch, 60, 0.5);
+          } else if (channel.sample) {
+            previewSample(getSamplePath(channel.sample));
+          }
         }
         return true;
       }

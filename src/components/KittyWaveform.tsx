@@ -133,26 +133,33 @@ export function KittyWaveform({
     const step = waveform.length / width;
 
     // Check if data has actual audio signal (not just silence at 128 or zeros)
-    const hasSignal = waveform.some((v) => v !== 0 && Math.abs(v - 128) > 2);
+    // Lower threshold (1) to detect even subtle variations with higher smoothing
+    const hasSignal = waveform.some((v) => v !== 0 && Math.abs(v - 128) > 1);
+
+    // Amplitude gain to make waveform more visible
+    const gain = 4.0;
 
     for (let x = 0; x < width; x++) {
       const idx = Math.floor(x * step);
       // If no signal, treat as silence (128); otherwise use actual sample
       const sample = hasSignal ? (waveform[idx] ?? 128) : 128;
 
-      // Convert from 0-255 (128 = center) to y position
-      const normalized = (sample - 128) / 128;
+      // Convert from 0-255 (128 = center) to y position with gain amplification
+      const normalized = Math.max(
+        -1,
+        Math.min(1, ((sample - 128) / 128) * gain),
+      );
       const y = Math.floor(midY - normalized * (midY - 1));
 
-      // Draw vertical line from center to sample
+      // Draw vertical line from center to sample (yellow color)
       const intensity = Math.min(
         255,
         100 + Math.floor(Math.abs(normalized) * 155),
       );
       if (y < midY) {
-        canvas.vline(x, y, midY, 0, intensity, 80, 255);
+        canvas.vline(x, y, midY, intensity, intensity, 0, 255);
       } else if (y > midY) {
-        canvas.vline(x, midY, y, 0, intensity, 80, 255);
+        canvas.vline(x, midY, y, intensity, intensity, 0, 255);
       }
     }
 

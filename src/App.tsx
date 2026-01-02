@@ -37,6 +37,7 @@ function AppContent() {
   const { undo, redo, canUndo, canRedo } = useCommands();
   const [showBrowser, setShowBrowser] = useState(true);
   const [showMixer, setShowMixer] = useState(false);
+  const [windowMode, setWindowMode] = useState(false); // Ctrl+W prefix for pane navigation
 
   // Terminal dimensions with resize support
   const [dimensions, setDimensions] = useState({
@@ -96,37 +97,50 @@ function AppContent() {
       return;
     }
 
-    // Alt+hjkl for directional focus switching (Ctrl+hjkl are terminal control codes)
-    const mainPanel: FocusPanel =
-      viewMode === "playlist"
-        ? "playlist"
-        : viewMode === "pianoRoll"
-          ? "pianoRoll"
-          : "channelRack";
-    if (key.meta && input === "h") {
-      // Focus left (browser)
-      if (showBrowser) {
-        setFocusedPanel("browser");
+    // Ctrl+W prefix for window/pane navigation (vim-style)
+    // Ctrl+W shows as ASCII 23, which ink receives as input === '\x17'
+    if (key.ctrl && input === "w") {
+      setWindowMode(true);
+      return;
+    }
+
+    // If in window mode, hjkl switches panes
+    if (windowMode) {
+      setWindowMode(false); // Reset after any key
+      const mainPanel: FocusPanel =
+        viewMode === "playlist"
+          ? "playlist"
+          : viewMode === "pianoRoll"
+            ? "pianoRoll"
+            : "channelRack";
+
+      if (input === "h") {
+        // Focus left (browser)
+        if (showBrowser) {
+          setFocusedPanel("browser");
+        }
+        return;
       }
-      return;
-    }
-    if (key.meta && input === "l") {
-      // Focus right (main view)
-      setFocusedPanel(mainPanel);
-      return;
-    }
-    if (key.meta && input === "j") {
-      // Focus down (mixer)
-      if (showMixer) {
-        setFocusedPanel("mixer");
-      }
-      return;
-    }
-    if (key.meta && input === "k") {
-      // Focus up (main view from mixer, or stay)
-      if (focusedPanel === "mixer") {
+      if (input === "l") {
+        // Focus right (main view)
         setFocusedPanel(mainPanel);
+        return;
       }
+      if (input === "j") {
+        // Focus down (mixer)
+        if (showMixer) {
+          setFocusedPanel("mixer");
+        }
+        return;
+      }
+      if (input === "k") {
+        // Focus up (main view from mixer, or stay)
+        if (focusedPanel === "mixer") {
+          setFocusedPanel(mainPanel);
+        }
+        return;
+      }
+      // Any other key after Ctrl+W just cancels window mode
       return;
     }
 
