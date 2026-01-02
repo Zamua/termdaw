@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useIsFocused, useFocusContext } from '../context/FocusContext.js';
 import { useSequencer, type Note } from '../context/SequencerContext.js';
+import { useCommands } from '../context/CommandContext.js';
 import { previewSamplePitched, getSamplePath } from '../lib/audio.js';
 import { previewSynthNote } from '../lib/synth.js';
 import { useVim } from '../hooks/useVim.js';
@@ -50,10 +51,9 @@ export default function PianoRoll() {
     selectedChannel,
     playheadStep,
     isPlaying,
-    addNote,
-    removeNote,
-    updateNote,
+    currentPatternId,
   } = useSequencer();
+  const { addNote, removeNote, updateNote } = useCommands();
 
   const [cursorPitch, setCursorPitch] = useState(60); // C4
   const [cursorStep, setCursorStep] = useState(0);
@@ -264,7 +264,7 @@ export default function PianoRoll() {
       }));
 
       for (const note of toDelete) {
-        removeNote(selectedChannel, note.id);
+        removeNote(currentPatternId, selectedChannel, note.id);
       }
 
       return yanked;
@@ -277,7 +277,7 @@ export default function PianoRoll() {
         const pitch = basePitch + yanked.pitchOffset;
         const step = baseStep + yanked.stepOffset;
         if (pitch >= MIN_PITCH && pitch <= MAX_PITCH && step >= 0 && step + yanked.duration <= NUM_STEPS) {
-          addNote(selectedChannel, pitch, step, yanked.duration);
+          addNote(currentPatternId, selectedChannel, pitch, step, yanked.duration);
         }
       }
     },
@@ -338,12 +338,12 @@ export default function PianoRoll() {
           const startStep = Math.min(placingNote.startStep, cursorStep);
           const endStep = Math.max(placingNote.startStep, cursorStep);
           const duration = endStep - startStep + 1;
-          addNote(selectedChannel, cursorPitch, startStep, duration);
+          addNote(currentPatternId, selectedChannel, cursorPitch, startStep, duration);
           setPlacingNote(null);
         } else {
           const existingNote = getNoteCovering(cursorPitch, cursorStep);
           if (existingNote) {
-            removeNote(selectedChannel, existingNote.id);
+            removeNote(currentPatternId, selectedChannel, existingNote.id);
             setPlacingNote({ startStep: existingNote.startStep });
           } else {
             setPlacingNote({ startStep: cursorStep });
@@ -356,7 +356,7 @@ export default function PianoRoll() {
       if (char === '<') {
         const note = getNoteCovering(cursorPitch, cursorStep);
         if (note && note.startStep > 0) {
-          updateNote(selectedChannel, note.id, { startStep: note.startStep - 1 });
+          updateNote(currentPatternId, selectedChannel, note.id, { startStep: note.startStep - 1 });
           setCursorStep((prev) => Math.max(0, prev - 1));
         }
         return true;
@@ -364,7 +364,7 @@ export default function PianoRoll() {
       if (char === '>') {
         const note = getNoteCovering(cursorPitch, cursorStep);
         if (note && note.startStep + note.duration < NUM_STEPS) {
-          updateNote(selectedChannel, note.id, { startStep: note.startStep + 1 });
+          updateNote(currentPatternId, selectedChannel, note.id, { startStep: note.startStep + 1 });
           setCursorStep((prev) => Math.min(NUM_STEPS - 1, prev + 1));
         }
         return true;

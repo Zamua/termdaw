@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
 import { useIsFocused, useFocusContext } from '../context/FocusContext.js';
 import { useSequencer } from '../context/SequencerContext.js';
+import { useCommands } from '../context/CommandContext.js';
 import { previewSample, getSamplePath } from '../lib/audio.js';
 import { useVim } from '../hooks/useVim.js';
 import type { Position, Range, Key } from '../lib/vim/types.js';
@@ -23,17 +24,19 @@ export default function ChannelRack() {
     channels,
     playheadStep,
     isPlaying,
-    toggleStep,
-    cycleMuteState,
-    clearChannel,
-    clearStepRange,
-    setStepsAt,
     currentPatternId,
     switchPattern,
     patterns,
     selectedChannel,
     setSelectedChannel,
   } = useSequencer();
+  const {
+    toggleStep,
+    cycleMuteState,
+    clearChannel,
+    clearStepRange,
+    setSteps,
+  } = useCommands();
   const { stdout } = useStdout();
   const [termHeight, setTermHeight] = useState(stdout?.rows || 24);
   const [cursorChannel, setCursorChannel] = useState(selectedChannel);
@@ -193,13 +196,13 @@ export default function ChannelRack() {
       const startCol = Math.min(startRealCol, endRealCol);
       const endCol = Math.max(startRealCol, endRealCol);
       const deleted = channel.steps.slice(startCol, endCol + 1);
-      clearStepRange(range.start.row, startCol, endCol);
+      clearStepRange(currentPatternId, range.start.row, startCol, endCol);
       return deleted;
     },
 
     insertData: (pos: Position, data: boolean[]) => {
       const realCol = Math.max(0, pos.col - 2);
-      setStepsAt(pos.row, realCol, data);
+      setSteps(currentPatternId, pos.row, realCol, data);
     },
 
     onCustomAction: (char: string, key: Key, _count: number) => {
@@ -212,7 +215,7 @@ export default function ChannelRack() {
           cycleMuteState(cursorChannel);
           return true;
         } else {
-          toggleStep(cursorChannel, cursorStep);
+          toggleStep(currentPatternId, cursorChannel, cursorStep);
           return true;
         }
       }
@@ -256,7 +259,7 @@ export default function ChannelRack() {
       }
 
       if (char === 'c' && vim.mode === 'normal' && !vim.operator) {
-        clearChannel(cursorChannel);
+        clearChannel(currentPatternId, cursorChannel);
         return true;
       }
 

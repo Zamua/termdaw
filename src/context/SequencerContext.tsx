@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect, type ReactNode } from 'react';
 import { playSample, playSamplePitched, getSamplePath } from '../lib/audio.js';
 import { playSynthNote, defaultPatch, presets as synthPresets, type SynthPatch } from '../lib/synth.js';
+import { useCommands } from './CommandContext.js';
 
 export type { SynthPatch };
 export { synthPresets };
@@ -119,6 +120,18 @@ export function SequencerProvider({ children }: { children: ReactNode }) {
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bpmRef = useRef(bpm);
+
+  // Register state accessors with command system
+  const { setStateAccessors } = useCommands();
+  useEffect(() => {
+    setStateAccessors({
+      getPatterns: () => patterns,
+      setPatterns,
+      getCurrentPatternId: () => currentPatternId,
+      getChannelMeta: () => channelMeta,
+      setChannelMeta,
+    });
+  }, [setStateAccessors, patterns, currentPatternId, channelMeta]);
 
   // Keep bpmRef in sync
   useEffect(() => {

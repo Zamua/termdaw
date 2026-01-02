@@ -3,6 +3,7 @@ import { Box, Text, useInput, useApp, useStdout } from 'ink';
 import { TitledBox } from '@mishieck/ink-titled-box';
 import { FocusProvider, useFocusContext, type FocusPanel, type ViewMode } from './context/FocusContext.js';
 import { SequencerProvider, useSequencer } from './context/SequencerContext.js';
+import { CommandProvider, useCommands } from './context/CommandContext.js';
 import Transport from './components/Transport.js';
 import Browser from './components/Browser.js';
 import ChannelRack from './components/ChannelRack.js';
@@ -15,6 +16,7 @@ function AppContent() {
   const { stdout } = useStdout();
   const { focusedPanel, setFocusedPanel, viewMode, setViewMode } = useFocusContext();
   const { isPlaying, setIsPlaying, bpm, setBpm, currentPatternId, switchPattern, patterns, selectedChannel, channels } = useSequencer();
+  const { undo, redo, canUndo, canRedo } = useCommands();
   const [showBrowser, setShowBrowser] = useState(true);
   const [showMixer, setShowMixer] = useState(false);
 
@@ -162,6 +164,16 @@ function AppContent() {
       switchPattern(parseInt(input));
       return;
     }
+
+    // Undo/Redo (vim-style: u for undo, Ctrl+r for redo)
+    if (input === 'u' && !key.ctrl && !key.meta) {
+      undo();
+      return;
+    }
+    if (key.ctrl && input === 'r') {
+      redo();
+      return;
+    }
   });
 
   const renderMainView = () => {
@@ -262,11 +274,18 @@ function AppContent() {
       {/* Status Bar */}
       <Box paddingX={1} justifyContent="space-between">
         <Text dimColor>
-          6:Rack 5:Playlist 7:Piano 9:Mixer 8:Browser | Space:Play | Tab:Focus | q:Quit
+          6:Rack 5:Playlist 7:Piano 9:Mixer 8:Browser | Space:Play | u:Undo | ^r:Redo | q:Quit
         </Text>
-        <Text color="cyan">
-          [{focusedPanel.toUpperCase()}]
-        </Text>
+        <Box>
+          {(canUndo || canRedo) && (
+            <Text dimColor>
+              {canUndo ? 'u' : '-'}/{canRedo ? '^r' : '-'}{' '}
+            </Text>
+          )}
+          <Text color="cyan">
+            [{focusedPanel.toUpperCase()}]
+          </Text>
+        </Box>
       </Box>
     </Box>
   );
@@ -274,10 +293,12 @@ function AppContent() {
 
 export default function App() {
   return (
-    <SequencerProvider>
-      <FocusProvider>
-        <AppContent />
-      </FocusProvider>
-    </SequencerProvider>
+    <CommandProvider>
+      <SequencerProvider>
+        <FocusProvider>
+          <AppContent />
+        </FocusProvider>
+      </SequencerProvider>
+    </CommandProvider>
   );
 }
