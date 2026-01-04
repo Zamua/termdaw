@@ -95,10 +95,16 @@ struct PluginNoteEvent {
 }
 
 /// A parameter change event pending for a plugin
-#[allow(dead_code)]
+#[derive(Clone)]
 struct PluginParamEvent {
     param_id: u32,
     value: f64,
+}
+
+/// Initial plugin state when installing a plugin
+pub struct PluginInitState {
+    pub volume: f32,
+    pub params: Vec<(u32, f64)>, // (param_id, value) pairs
 }
 
 /// A plugin channel with processor and pending events
@@ -129,9 +135,9 @@ struct AudioState {
     /// Plugin channels (sparse - only Some if plugin is loaded)
     #[allow(dead_code)]
     plugin_channels: Vec<Option<PluginChannel>>,
-    /// Receiver for plugin processors from main thread
+    /// Receiver for plugin processors from main thread (channel, processor, initial state)
     #[allow(dead_code)]
-    plugin_rx: Receiver<(usize, ActivePluginProcessor)>,
+    plugin_rx: Receiver<(usize, ActivePluginProcessor, PluginInitState)>,
     /// Waveform buffer for visualization (shared with UI)
     waveform_buffer: WaveformBuffer,
     /// Write position in waveform buffer
@@ -142,7 +148,7 @@ struct AudioState {
 #[derive(Clone)]
 pub struct AudioHandle {
     tx: Sender<AudioCommand>,
-    plugin_tx: Sender<(usize, ActivePluginProcessor)>,
+    plugin_tx: Sender<(usize, ActivePluginProcessor, PluginInitState)>,
     sample_rate: u32,
     /// Shared waveform buffer for visualization
     waveform_buffer: WaveformBuffer,
@@ -217,9 +223,14 @@ impl AudioHandle {
             .send(AudioCommand::PluginSetVolume { channel, volume });
     }
 
-    /// Send an activated plugin processor to the audio thread
-    pub fn send_plugin(&self, channel: usize, processor: ActivePluginProcessor) {
-        let _ = self.plugin_tx.send((channel, processor));
+    /// Send an activated plugin processor to the audio thread with initial state
+    pub fn send_plugin(
+        &self,
+        channel: usize,
+        processor: ActivePluginProcessor,
+        init_state: PluginInitState,
+    ) {
+        let _ = self.plugin_tx.send((channel, processor, init_state));
     }
 
     /// Get the output sample rate
@@ -461,20 +472,27 @@ impl AudioEngine {
 
     fn receive_plugins(state: &mut AudioState) {
         // Receive new plugin processors from main thread
-        while let Ok((channel, processor)) = state.plugin_rx.try_recv() {
+        while let Ok((channel, processor, init_state)) = state.plugin_rx.try_recv() {
             // Ensure plugin_channels is large enough
             while state.plugin_channels.len() <= channel {
                 state.plugin_channels.push(None);
             }
 
-            // Store the plugin processor
+            // Convert initial params to pending params
+            let pending_params: Vec<PluginParamEvent> = init_state
+                .params
+                .into_iter()
+                .map(|(param_id, value)| PluginParamEvent { param_id, value })
+                .collect();
+
+            // Store the plugin processor with initial state
             state.plugin_channels[channel] = Some(PluginChannel {
                 processor,
                 pending_notes: Vec::new(),
-                pending_params: Vec::new(),
+                pending_params,
                 output_left: Vec::new(),
                 output_right: Vec::new(),
-                volume: 1.0, // Default to full volume
+                volume: init_state.volume,
             });
         }
     }

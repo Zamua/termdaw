@@ -62,17 +62,11 @@ impl PluginEditorState {
 
     /// Open the editor for a channel
     pub fn open(&mut self, channel_idx: usize, plugin_name: &str, params: Vec<PluginParam>) {
-        // If reopening the same channel, preserve existing param values
-        if self.channel_idx == channel_idx && !self.params.is_empty() {
-            // Just make it visible again, keep current params
-            self.visible = true;
-            return;
-        }
-
         self.visible = true;
         self.channel_idx = channel_idx;
-        self.selected_param = 0;
         self.plugin_name = plugin_name.to_string();
+        // Always use the passed params (which come from channel.plugin_params)
+        // to ensure we show the current saved state
         self.params = params;
         // Invalidate envelope cache so it regenerates with new params
         self.envelope_renderer.invalidate();

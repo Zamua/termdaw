@@ -213,7 +213,7 @@ impl App {
         }
 
         // Load project (either existing or newly created from template)
-        let (channels, patterns, bpm, current_pattern, created_at) =
+        let (channels, patterns, bpm, current_pattern, arrangement, created_at) =
             if project::is_valid_project(&project_path) {
                 match project::load_project(&project_path) {
                     Ok(project) => {
@@ -226,6 +226,7 @@ impl App {
                             patterns,
                             project.bpm,
                             project.current_pattern,
+                            project.arrangement,
                             Some(project.created_at),
                         )
                     }
@@ -272,7 +273,7 @@ impl App {
             playlist_cursor_row: 0,
             playlist_cursor_bar: 1, // Start on first bar, not mute column
             playlist_viewport_top: 0,
-            arrangement: Arrangement::new(),
+            arrangement,
             // Playback
             play_mode: PlayMode::default(),
             arrangement_bar: 0,
@@ -319,10 +320,10 @@ impl App {
                 match PluginHost::load(&plugin_path, sample_rate, buffer_size) {
                     Ok(mut host) => match host.activate() {
                         Ok(processor) => {
-                            // Send the activated processor to the audio thread
-                            self.audio.send_plugin(ch_idx, processor);
-                            // Sync the channel volume to the audio thread
-                            self.audio.plugin_set_volume(ch_idx, channel.volume);
+                            // Build initial state with volume and params
+                            let init_state = Self::build_plugin_init_state(channel);
+                            // Send the activated processor with initial state
+                            self.audio.send_plugin(ch_idx, processor, init_state);
                         }
                         Err(e) => {
                             eprintln!("Failed to activate plugin for channel {}: {}", ch_idx, e);
@@ -336,17 +337,63 @@ impl App {
         }
     }
 
+    /// Build initial plugin state from channel settings
+    fn build_plugin_init_state(channel: &Channel) -> crate::audio::PluginInitState {
+        use crate::audio::PluginInitState;
+
+        // Map param names to CLAP param IDs (nih-plug Rabin fingerprint hashes)
+        // Format: (name, clap_id, min, max, default)
+        let param_id_map: &[(&str, u32, f32, f32, f32)] = &[
+            ("Attack", 96920, 1.0, 5000.0, 10.0),
+            ("Decay", 99330, 1.0, 5000.0, 100.0),
+            ("Sustain", 114257, 0.0, 1.0, 0.7),
+            ("Release", 112793, 1.0, 5000.0, 200.0),
+            ("Gain", 3165055, 0.0, 1.0, 0.5),
+            ("Waveform", 3642105, 0.0, 3.0, 2.0),
+        ];
+
+        let params: Vec<(u32, f64)> = param_id_map
+            .iter()
+            .map(|(name, clap_id, min, max, default)| {
+                // Use saved value or default
+                let value = channel
+                    .plugin_params
+                    .get(*name)
+                    .copied()
+                    .unwrap_or(*default);
+
+                // Normalize the value for CLAP
+                let normalized = if *name == "Waveform" {
+                    // Discrete/enum param - send raw value (0, 1, 2, 3)
+                    // This matches how the UI sends it in get_selected_param_value()
+                    value.round() as f64
+                } else {
+                    // Continuous param - normalize to 0-1
+                    ((value - min) / (max - min)) as f64
+                };
+                (*clap_id, normalized)
+            })
+            .collect();
+
+        PluginInitState {
+            volume: channel.volume,
+            params,
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
     fn default_state() -> (
         Vec<Channel>,
         Vec<Pattern>,
         f64,
         usize,
+        Arrangement,
         Option<DateTime<Utc>>,
     ) {
         let channels = default_channels();
         let num_channels = channels.len();
         let patterns = vec![Pattern::new(0, num_channels, 16)];
-        (channels, patterns, 140.0, 0, None)
+        (channels, patterns, 140.0, 0, Arrangement::new(), None)
     }
 
     /// Get the current pattern
@@ -700,13 +747,6 @@ impl App {
     pub fn set_channel_plugin(&mut self, channel_idx: usize, plugin_path: String) {
         self.ensure_channel_exists(channel_idx);
 
-        // Get channel volume before mutating
-        let channel_volume = self
-            .channels
-            .get(channel_idx)
-            .map(|c| c.volume)
-            .unwrap_or(1.0);
-
         if let Some(channel) = self.channels.get_mut(channel_idx) {
             // Extract plugin name without extension for channel name
             let name = std::path::Path::new(&plugin_path)
@@ -732,8 +772,10 @@ impl App {
         match PluginHost::load(&full_plugin_path, sample_rate, buffer_size) {
             Ok(mut host) => match host.activate() {
                 Ok(processor) => {
-                    self.audio.send_plugin(channel_idx, processor);
-                    self.audio.plugin_set_volume(channel_idx, channel_volume);
+                    // For newly assigned plugin, use default params
+                    let channel = &self.channels[channel_idx];
+                    let init_state = Self::build_plugin_init_state(channel);
+                    self.audio.send_plugin(channel_idx, processor, init_state);
                 }
                 Err(e) => {
                     eprintln!(
@@ -843,6 +885,7 @@ impl App {
             self.current_pattern,
             &self.channels,
             &self.patterns,
+            &self.arrangement,
             Some(self.created_at),
         );
 

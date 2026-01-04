@@ -195,14 +195,27 @@ fn handle_plugin_editor_key(key: KeyEvent, app: &mut App) -> bool {
     }
 }
 
-/// Send the currently selected parameter to the plugin
-fn send_param_to_plugin(app: &App) {
-    if let (Some(param_id), Some(value)) = (
-        app.plugin_editor.get_selected_clap_param_id(),
-        app.plugin_editor.get_selected_param_value(),
-    ) {
-        app.audio
-            .plugin_set_param(app.plugin_editor.channel_idx, param_id, value);
+/// Send the currently selected parameter to the plugin and save to channel
+fn send_param_to_plugin(app: &mut App) {
+    let channel_idx = app.plugin_editor.channel_idx;
+    if let Some(param) = app.plugin_editor.selected_param() {
+        let param_name = param.name.clone();
+        let param_value = param.value;
+
+        // Save to channel's plugin_params for persistence
+        if let Some(channel) = app.channels.get_mut(channel_idx) {
+            channel.plugin_params.insert(param_name, param_value);
+        }
+
+        // Send to audio thread
+        if let (Some(param_id), Some(value)) = (
+            app.plugin_editor.get_selected_clap_param_id(),
+            app.plugin_editor.get_selected_param_value(),
+        ) {
+            app.audio.plugin_set_param(channel_idx, param_id, value);
+        }
+
+        app.mark_dirty();
     }
 }
 
@@ -291,13 +304,13 @@ fn handle_channel_rack_key(key: KeyEvent, app: &mut App) {
             use crate::sequencer::ChannelType;
             if let Some(channel) = app.channels.get(app.cursor_channel) {
                 if let ChannelType::Plugin { .. } = &channel.channel_type {
-                    // Get plugin params (hardcoded for simple-synth for now)
-                    // TODO: Query actual params from plugin via CLAP extensions
+                    // Build params list using stored values or defaults
+                    let stored = &channel.plugin_params;
                     let params = vec![
                         crate::plugin_host::PluginParam {
                             id: 0,
                             name: "Attack".to_string(),
-                            value: 10.0,
+                            value: *stored.get("Attack").unwrap_or(&10.0),
                             min: 1.0,
                             max: 5000.0,
                             default: 10.0,
@@ -305,7 +318,7 @@ fn handle_channel_rack_key(key: KeyEvent, app: &mut App) {
                         crate::plugin_host::PluginParam {
                             id: 1,
                             name: "Decay".to_string(),
-                            value: 100.0,
+                            value: *stored.get("Decay").unwrap_or(&100.0),
                             min: 1.0,
                             max: 5000.0,
                             default: 100.0,
@@ -313,7 +326,7 @@ fn handle_channel_rack_key(key: KeyEvent, app: &mut App) {
                         crate::plugin_host::PluginParam {
                             id: 2,
                             name: "Sustain".to_string(),
-                            value: 0.7,
+                            value: *stored.get("Sustain").unwrap_or(&0.7),
                             min: 0.0,
                             max: 1.0,
                             default: 0.7,
@@ -321,7 +334,7 @@ fn handle_channel_rack_key(key: KeyEvent, app: &mut App) {
                         crate::plugin_host::PluginParam {
                             id: 3,
                             name: "Release".to_string(),
-                            value: 200.0,
+                            value: *stored.get("Release").unwrap_or(&200.0),
                             min: 1.0,
                             max: 5000.0,
                             default: 200.0,
@@ -329,7 +342,7 @@ fn handle_channel_rack_key(key: KeyEvent, app: &mut App) {
                         crate::plugin_host::PluginParam {
                             id: 4,
                             name: "Gain".to_string(),
-                            value: 0.5,
+                            value: *stored.get("Gain").unwrap_or(&0.5),
                             min: 0.0,
                             max: 1.0,
                             default: 0.5,
@@ -337,7 +350,7 @@ fn handle_channel_rack_key(key: KeyEvent, app: &mut App) {
                         crate::plugin_host::PluginParam {
                             id: 5,
                             name: "Waveform".to_string(),
-                            value: 2.0, // Saw (matches synth default)
+                            value: *stored.get("Waveform").unwrap_or(&2.0), // Saw default
                             min: 0.0,
                             max: 3.0,
                             default: 2.0,

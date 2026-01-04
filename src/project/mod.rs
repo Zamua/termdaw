@@ -4,12 +4,14 @@
 //! - `project.json` at project root
 //! - `samples/` directory for audio files
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::arrangement::Arrangement;
 use crate::sequencer::{Channel, ChannelType, Note, Pattern};
 
 /// Current project file version
@@ -29,6 +31,8 @@ pub struct ProjectFile {
     pub current_pattern: usize,
     pub channels: Vec<ChannelData>,
     pub patterns: Vec<PatternData>,
+    #[serde(default)]
+    pub arrangement: Arrangement,
 }
 
 /// Serializable channel data
@@ -41,6 +45,9 @@ pub struct ChannelData {
     pub volume: f32,
     pub muted: bool,
     pub solo: bool,
+    /// Plugin parameter values (param_name -> value)
+    #[serde(default)]
+    pub plugin_params: HashMap<String, f32>,
 }
 
 /// Serializable pattern data
@@ -82,6 +89,7 @@ impl ProjectFile {
             current_pattern: 0,
             channels: Vec::new(),
             patterns: Vec::new(),
+            arrangement: Arrangement::default(),
         }
     }
 
@@ -92,6 +100,7 @@ impl ProjectFile {
         current_pattern: usize,
         channels: &[Channel],
         patterns: &[Pattern],
+        arrangement: &Arrangement,
         created_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
@@ -103,6 +112,7 @@ impl ProjectFile {
             current_pattern,
             channels: channels.iter().map(ChannelData::from).collect(),
             patterns: patterns.iter().map(PatternData::from).collect(),
+            arrangement: arrangement.clone(),
         }
     }
 }
@@ -116,6 +126,7 @@ impl From<&Channel> for ChannelData {
             volume: channel.volume,
             muted: channel.muted,
             solo: channel.solo,
+            plugin_params: channel.plugin_params.clone(),
         }
     }
 }
@@ -168,6 +179,7 @@ impl From<&ChannelData> for Channel {
             volume: data.volume,
             muted: data.muted,
             solo: data.solo,
+            plugin_params: data.plugin_params.clone(),
         }
     }
 }

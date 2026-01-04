@@ -1,5 +1,7 @@
 //! Sequencer data structures and timing
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -69,6 +71,9 @@ pub struct Channel {
     pub volume: f32,
     pub muted: bool,
     pub solo: bool,
+    /// Plugin parameter values (param_name -> value)
+    #[serde(default)]
+    pub plugin_params: HashMap<String, f32>,
 }
 
 #[allow(dead_code)]
@@ -82,6 +87,7 @@ impl Channel {
             volume: 1.0,
             muted: false,
             solo: false,
+            plugin_params: HashMap::new(),
         }
     }
 
@@ -96,6 +102,7 @@ impl Channel {
             volume: 1.0,
             muted: false,
             solo: false,
+            plugin_params: HashMap::new(),
         }
     }
 
