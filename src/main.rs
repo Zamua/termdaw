@@ -10,6 +10,7 @@ mod audio;
 mod browser;
 mod command_picker;
 mod coords;
+mod cursor;
 mod input;
 mod mode;
 mod playback;

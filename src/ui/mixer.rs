@@ -3,30 +3,17 @@
 use ratatui::{
     layout::Rect,
     style::{Color, Style},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
 use crate::app::{App, Panel};
+use crate::ui::render_panel_frame;
 
 /// Render the mixer panel
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.mode.current_panel() == Panel::Mixer;
-    let border_color = if focused {
-        Color::Cyan
-    } else {
-        Color::DarkGray
-    };
-
-    let title = if focused { "Mixer *" } else { "Mixer" };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = render_panel_frame(frame, area, "Mixer", Panel::Mixer, app);
 
     let channels = &app.channels;
     let channel_width = 8u16;
@@ -37,7 +24,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             break;
         }
 
-        let is_selected = i == app.mixer_selected_channel && focused;
+        let is_selected = i == app.mixer.selected_channel && focused;
 
         // Channel name
         let name_style = if is_selected {

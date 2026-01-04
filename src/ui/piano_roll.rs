@@ -9,12 +9,13 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
 use crate::app::{App, Panel};
 use crate::input::vim::Position;
+use crate::ui::render_panel_frame;
 
 /// Width of the pitch label column
 const PITCH_WIDTH: u16 = 5;
@@ -47,32 +48,16 @@ fn is_black_key(pitch: u8) -> bool {
 /// Render the piano roll
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.mode.current_panel() == Panel::PianoRoll;
-    let border_color = if focused {
-        Color::Cyan
-    } else {
-        Color::DarkGray
-    };
 
     // Get channel name for title
     let channel_name = app
         .channels
-        .get(app.cursor_channel)
+        .get(app.channel_rack.channel)
         .map(|c| c.name.as_str())
         .unwrap_or("Channel 1");
+    let title = format!("Piano Roll - {}", channel_name);
 
-    let title = if focused {
-        format!("Piano Roll - {} *", channel_name)
-    } else {
-        format!("Piano Roll - {}", channel_name)
-    };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = render_panel_frame(frame, area, &title, Panel::PianoRoll, app);
 
     if inner.height < HEADER_ROWS + 1 || inner.width < PITCH_WIDTH + STEP_WIDTH {
         return; // Not enough space
@@ -84,17 +69,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // Get notes from current pattern for current channel
     let notes = app
         .get_current_pattern()
-        .map(|p| p.get_notes(app.cursor_channel))
+        .map(|p| p.get_notes(app.channel_rack.channel))
         .unwrap_or(&[]);
 
     // Get current visual selection (if any)
-    let cursor_row = MAX_PITCH.saturating_sub(app.piano_cursor_pitch) as usize;
-    let cursor = Position::new(cursor_row, app.piano_cursor_step);
+    let cursor_row = MAX_PITCH.saturating_sub(app.piano_roll.pitch) as usize;
+    let cursor = Position::new(cursor_row, app.piano_roll.step);
     let selection = app.vim_piano_roll.get_selection(cursor);
 
     // Calculate visible pitch range based on viewport
     let visible_rows = (inner.height - HEADER_ROWS) as usize;
-    let viewport_top = app.piano_viewport_top.min(MAX_PITCH);
+    let viewport_top = app.piano_roll.viewport_top.min(MAX_PITCH);
 
     // Render pitch rows (from high to low)
     for row_idx in 0..visible_rows {
@@ -131,7 +116,7 @@ fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
         let step_num = step + 1;
         let is_beat = step % 4 == 0;
         let is_playhead = app.is_playing() && step as usize == app.playhead_step();
-        let is_cursor_col = focused && app.piano_cursor_step == step as usize;
+        let is_cursor_col = focused && app.piano_roll.step == step as usize;
 
         let color = if is_playhead {
             Color::Green
@@ -195,7 +180,7 @@ fn render_pitch_row(
 
     // Pitch label
     let pitch_name = get_pitch_name(pitch);
-    let is_cursor_row = focused && app.piano_cursor_pitch == pitch;
+    let is_cursor_row = focused && app.piano_roll.pitch == pitch;
     let is_black = is_black_key(pitch);
 
     let pitch_style = if is_cursor_row {
@@ -219,12 +204,12 @@ fn render_pitch_row(
     // Step cells
     for step in 0..16usize {
         let is_beat = step % 4 == 0;
-        let is_cursor = focused && app.piano_cursor_pitch == pitch && app.piano_cursor_step == step;
+        let is_cursor = focused && app.piano_roll.pitch == pitch && app.piano_roll.step == step;
         let is_playhead = app.is_playing() && step == app.playhead_step();
-        let is_placing_preview = app.placing_note.is_some_and(|start| {
-            let min = start.min(app.piano_cursor_step);
-            let max = start.max(app.piano_cursor_step);
-            pitch == app.piano_cursor_pitch && step >= min && step <= max
+        let is_placing_preview = app.piano_roll.placing_note.is_some_and(|start| {
+            let min = start.min(app.piano_roll.step);
+            let max = start.max(app.piano_roll.step);
+            pitch == app.piano_roll.pitch && step >= min && step <= max
         });
 
         // Check if this cell is in visual selection
@@ -244,7 +229,7 @@ fn render_pitch_row(
         spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
 
         // Cell content - use yellow cursor when in placement mode
-        let cursor_color = if app.placing_note.is_some() {
+        let cursor_color = if app.piano_roll.placing_note.is_some() {
             Color::Yellow
         } else {
             Color::Cyan

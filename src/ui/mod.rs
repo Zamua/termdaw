@@ -13,12 +13,46 @@ pub mod waveform;
 mod widgets;
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
+    widgets::{Block, Borders},
     Frame,
 };
 
-use crate::app::App;
+use crate::app::{App, Panel};
 use crate::mode::ViewMode;
+
+/// Render a panel frame with focus-aware styling.
+/// Returns the inner area for content rendering.
+pub fn render_panel_frame(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    panel: Panel,
+    app: &App,
+) -> Rect {
+    let focused = app.mode.current_panel() == panel;
+    let border_color = if focused {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
+
+    let display_title = if focused {
+        format!("{} *", title)
+    } else {
+        title.to_string()
+    };
+
+    let block = Block::default()
+        .title(display_title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    inner
+}
 
 /// Main render function - draws the entire UI
 pub fn render(frame: &mut Frame, app: &mut App) {

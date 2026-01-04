@@ -7,6 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::App;
 use crate::mode::ViewMode;
 
+use super::common::key_to_vim_char;
 use super::vim::{self, VimAction};
 
 /// Piano roll pitch range constants
@@ -28,7 +29,10 @@ fn row_to_pitch(row: usize) -> u8 {
 /// Handle keyboard input for piano roll
 pub fn handle_key(key: KeyEvent, app: &mut App) {
     // Handle Escape to return to channel rack (if not placing a note and not in visual mode)
-    if key.code == KeyCode::Esc && app.placing_note.is_none() && !app.vim_piano_roll.is_visual() {
+    if key.code == KeyCode::Esc
+        && app.piano_roll.placing_note.is_none()
+        && !app.vim_piano_roll.is_visual()
+    {
         app.set_view_mode(ViewMode::ChannelRack);
         return;
     }
@@ -66,20 +70,13 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     }
 
     // Convert key to char for vim
-    let (ch, ctrl) = match key.code {
-        KeyCode::Char(c) => (c, key.modifiers.contains(KeyModifiers::CONTROL)),
-        KeyCode::Esc => ('\x1b', false),
-        KeyCode::Up => ('k', false),
-        KeyCode::Down => ('j', false),
-        KeyCode::Left => ('h', false),
-        KeyCode::Right => ('l', false),
-        KeyCode::Enter => ('x', false), // Map Enter to toggle
-        _ => return,
+    let Some((ch, ctrl)) = key_to_vim_char(key) else {
+        return;
     };
 
     // Get cursor position in vim coordinates (row 0 = highest pitch)
-    let cursor_row = pitch_to_row(app.piano_cursor_pitch);
-    let cursor = vim::Position::new(cursor_row, app.piano_cursor_step);
+    let cursor_row = pitch_to_row(app.piano_roll.pitch);
+    let cursor = vim::Position::new(cursor_row, app.piano_roll.step);
 
     // Update vim dimensions for current pitch range
     app.vim_piano_roll
@@ -101,8 +98,8 @@ fn execute_piano_roll_vim_action(action: VimAction, app: &mut App) {
 
         VimAction::MoveCursor(pos) => {
             // Convert vim row back to pitch
-            app.piano_cursor_pitch = row_to_pitch(pos.row).clamp(PIANO_MIN_PITCH, PIANO_MAX_PITCH);
-            app.piano_cursor_step = pos.col.min(PIANO_NUM_STEPS - 1);
+            app.piano_roll.pitch = row_to_pitch(pos.row).clamp(PIANO_MIN_PITCH, PIANO_MAX_PITCH);
+            app.piano_roll.step = pos.col.min(PIANO_NUM_STEPS - 1);
 
             // Update viewport
             update_piano_viewport(app);
@@ -138,12 +135,12 @@ fn execute_piano_roll_vim_action(action: VimAction, app: &mut App) {
 /// Update piano roll viewport to keep cursor visible
 fn update_piano_viewport(app: &mut App) {
     // Keep cursor in viewport (viewport_top is highest visible pitch)
-    if app.piano_cursor_pitch > app.piano_viewport_top {
-        app.piano_viewport_top = app.piano_cursor_pitch;
+    if app.piano_roll.pitch > app.piano_roll.viewport_top {
+        app.piano_roll.viewport_top = app.piano_roll.pitch;
     }
     // Assume ~20 visible rows
-    if app.piano_cursor_pitch < app.piano_viewport_top.saturating_sub(20) {
-        app.piano_viewport_top = app.piano_cursor_pitch + 10;
+    if app.piano_roll.pitch < app.piano_roll.viewport_top.saturating_sub(20) {
+        app.piano_roll.viewport_top = app.piano_roll.pitch + 10;
     }
 }
 
@@ -151,11 +148,11 @@ fn update_piano_viewport(app: &mut App) {
 fn handle_piano_roll_toggle(app: &mut App) {
     use crate::sequencer::Note;
 
-    let pitch = app.piano_cursor_pitch;
-    let step = app.piano_cursor_step;
-    let channel = app.cursor_channel;
+    let pitch = app.piano_roll.pitch;
+    let step = app.piano_roll.step;
+    let channel = app.channel_rack.channel;
 
-    if let Some(start_step) = app.placing_note {
+    if let Some(start_step) = app.piano_roll.placing_note {
         // Finish placing note
         let min_step = start_step.min(step);
         let max_step = start_step.max(step);
@@ -165,7 +162,7 @@ fn handle_piano_roll_toggle(app: &mut App) {
         if let Some(pattern) = app.get_current_pattern_mut() {
             pattern.add_note(channel, note);
         }
-        app.placing_note = None;
+        app.piano_roll.placing_note = None;
         app.mark_dirty();
     } else {
         // Check for existing note at cursor
@@ -179,20 +176,20 @@ fn handle_piano_roll_toggle(app: &mut App) {
             if let Some(pattern) = app.get_current_pattern_mut() {
                 pattern.remove_note(channel, &note_id);
             }
-            app.placing_note = Some(start);
+            app.piano_roll.placing_note = Some(start);
             app.mark_dirty();
         } else {
             // Start new placement
-            app.placing_note = Some(step);
+            app.piano_roll.placing_note = Some(step);
         }
     }
 }
 
 /// Nudge a note at the current cursor position
 fn nudge_note(app: &mut App, delta: i32) {
-    let pitch = app.piano_cursor_pitch;
-    let step = app.piano_cursor_step;
-    let channel = app.cursor_channel;
+    let pitch = app.piano_roll.pitch;
+    let step = app.piano_roll.step;
+    let channel = app.channel_rack.channel;
 
     // Find note at cursor
     let note_info = app
@@ -217,9 +214,9 @@ fn nudge_note(app: &mut App, delta: i32) {
 
 /// Transpose a note at the current cursor position
 fn transpose_note(app: &mut App, delta: i32) {
-    let pitch = app.piano_cursor_pitch;
-    let step = app.piano_cursor_step;
-    let channel = app.cursor_channel;
+    let pitch = app.piano_roll.pitch;
+    let step = app.piano_roll.step;
+    let channel = app.channel_rack.channel;
 
     // Find note at cursor
     let note_info = app
@@ -247,7 +244,7 @@ fn transpose_note(app: &mut App, delta: i32) {
 fn get_piano_roll_data(app: &App, range: &vim::Range) -> Vec<crate::sequencer::YankedNote> {
     use crate::sequencer::YankedNote;
 
-    let channel = app.cursor_channel;
+    let channel = app.channel_rack.channel;
     let (start, end) = range.normalized();
 
     // Convert vim rows to pitches
@@ -298,7 +295,7 @@ fn get_piano_roll_data(app: &App, range: &vim::Range) -> Vec<crate::sequencer::Y
 
 /// Delete notes in range from pattern
 fn delete_piano_roll_data(app: &mut App, range: &vim::Range) {
-    let channel = app.cursor_channel;
+    let channel = app.channel_rack.channel;
     let (start, end) = range.normalized();
 
     let min_pitch = row_to_pitch(end.row);
@@ -353,9 +350,9 @@ fn delete_piano_roll_data(app: &mut App, range: &vim::Range) {
 fn paste_piano_roll_data(app: &mut App) {
     use crate::sequencer::Note;
 
-    let channel = app.cursor_channel;
-    let cursor_pitch = app.piano_cursor_pitch;
-    let cursor_step = app.piano_cursor_step;
+    let channel = app.channel_rack.channel;
+    let cursor_pitch = app.piano_roll.pitch;
+    let cursor_step = app.piano_roll.step;
 
     // Clone register data to avoid borrow issues
     let paste_data = app.vim_piano_roll.get_register().cloned();

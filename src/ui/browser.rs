@@ -14,32 +14,41 @@ use crate::browser::BrowserMode;
 /// Render the browser panel
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.mode.current_panel() == Panel::Browser;
-    let border_color = if focused {
+
+    // Browser has special title logic for selection mode
+    let (title, always_highlight) = if app.browser.selection_mode {
+        let t = if let Some(ch) = app.browser.target_channel {
+            match app.browser.mode {
+                BrowserMode::Samples => format!("Select Sample for CH{}", ch + 1),
+                BrowserMode::Plugins => format!("Select Plugin for CH{}", ch + 1),
+            }
+        } else {
+            match app.browser.mode {
+                BrowserMode::Samples => "Select Sample".to_string(),
+                BrowserMode::Plugins => "Select Plugin".to_string(),
+            }
+        };
+        (t, true) // Selection mode always shows as highlighted
+    } else {
+        ("Browser".to_string(), false)
+    };
+
+    // Selection mode always shows highlighted border
+    let show_focused = focused || always_highlight;
+    let border_color = if show_focused {
         Color::Cyan
     } else {
         Color::DarkGray
     };
 
-    let title = if app.browser.selection_mode {
-        if let Some(ch) = app.browser.target_channel {
-            match app.browser.mode {
-                BrowserMode::Samples => format!("Select Sample for CH{} *", ch + 1),
-                BrowserMode::Plugins => format!("Select Plugin for CH{} *", ch + 1),
-            }
-        } else {
-            match app.browser.mode {
-                BrowserMode::Samples => "Select Sample *".to_string(),
-                BrowserMode::Plugins => "Select Plugin *".to_string(),
-            }
-        }
-    } else if focused {
-        "Browser *".to_string()
+    let display_title = if show_focused {
+        format!("{} *", title)
     } else {
-        "Browser".to_string()
+        title
     };
 
     let block = Block::default()
-        .title(title)
+        .title(display_title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 

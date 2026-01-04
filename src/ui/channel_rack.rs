@@ -9,12 +9,13 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
 use crate::app::{App, Panel};
 use crate::input::vim::Position;
+use crate::ui::render_panel_frame;
 
 /// Width of the sample name column
 const SAMPLE_WIDTH: u16 = 10;
@@ -30,30 +31,15 @@ const TOTAL_CHANNEL_SLOTS: usize = 99;
 /// Render the channel rack
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.mode.current_panel() == Panel::ChannelRack;
-    let border_color = if focused {
-        Color::Cyan
-    } else {
-        Color::DarkGray
-    };
 
     // Title shows "Channel Rack - Pattern N"
     let pattern_name = app
         .get_current_pattern()
         .map(|p| p.name.as_str())
         .unwrap_or("Pattern 1");
-    let title = if focused {
-        format!("Channel Rack - {} *", pattern_name)
-    } else {
-        format!("Channel Rack - {}", pattern_name)
-    };
+    let title = format!("Channel Rack - {}", pattern_name);
 
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = render_panel_frame(frame, area, &title, Panel::ChannelRack, app);
 
     // Render header rows
     render_header(frame, inner, app);
@@ -63,12 +49,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // Calculate visible rows
     let visible_rows = (inner.height - HEADER_ROWS) as usize;
-    let viewport_top = app.channel_rack_viewport_top;
+    let viewport_top = app.channel_rack.viewport_top;
 
     // Get current visual selection (if any)
     // Convert cursor_col to vim space for selection check
-    let vim_col: crate::coords::VimCol = app.cursor_col.into();
-    let cursor = Position::new(app.cursor_channel, vim_col.0);
+    let vim_col: crate::coords::VimCol = app.channel_rack.col.into();
+    let cursor = Position::new(app.channel_rack.channel, vim_col.0);
     let selection = app.vim_channel_rack.get_selection(cursor);
 
     // Render all 99 channel slots (within viewport)
@@ -86,8 +72,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         let is_allocated = channel.is_some();
 
         // === MUTE ZONE (col -2) - now comes first ===
-        let is_mute_cursor =
-            channel_idx == app.cursor_channel && app.cursor_col.is_mute_zone() && focused;
+        let is_mute_cursor = channel_idx == app.channel_rack.channel
+            && app.channel_rack.col.is_mute_zone()
+            && focused;
         let (mute_char, mute_color) = if let Some(ch) = channel {
             if ch.solo {
                 ("S", Color::Yellow)
@@ -117,14 +104,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         x += MUTE_WIDTH;
 
         // === SAMPLE ZONE (col -1) ===
-        let is_sample_cursor =
-            channel_idx == app.cursor_channel && app.cursor_col.is_sample_zone() && focused;
+        let is_sample_cursor = channel_idx == app.channel_rack.channel
+            && app.channel_rack.col.is_sample_zone()
+            && focused;
         let sample_style = if is_sample_cursor {
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
-        } else if channel_idx == app.cursor_channel && focused {
+        } else if channel_idx == app.channel_rack.channel && focused {
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
@@ -172,8 +160,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             // For selection, use vim coordinates (step + 2)
             let pos = Position::new(channel_idx, step_idx + 2);
 
-            let is_cursor =
-                channel_idx == app.cursor_channel && app.cursor_col.0 == step && focused;
+            let is_cursor = channel_idx == app.channel_rack.channel
+                && app.channel_rack.col.0 == step
+                && focused;
             let is_selected = selection.map(|r| r.contains(pos)).unwrap_or(false);
             let is_beat = step % 4 == 0;
             let is_active = steps
@@ -261,7 +250,8 @@ fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
         let step_num = step + 1; // 1-indexed
         let is_beat = step % 4 == 0;
         let is_playhead = app.is_playing() && step as usize == app.playhead_step();
-        let is_cursor_col = focused && app.cursor_col.0 == step && app.cursor_col.is_step_zone();
+        let is_cursor_col =
+            focused && app.channel_rack.col.0 == step && app.channel_rack.col.is_step_zone();
 
         let color = if is_playhead {
             Color::Green

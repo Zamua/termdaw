@@ -10,12 +10,13 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
 use crate::app::{App, Panel};
 use crate::input::vim::Position;
+use crate::ui::render_panel_frame;
 
 /// Width of the pattern name column
 const PATTERN_NAME_WIDTH: u16 = 12;
@@ -31,21 +32,7 @@ const NUM_BARS: usize = 16;
 /// Render the playlist
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.mode.current_panel() == Panel::Playlist;
-    let border_color = if focused {
-        Color::Cyan
-    } else {
-        Color::DarkGray
-    };
-
-    let title = if focused { "Playlist *" } else { "Playlist" };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = render_panel_frame(frame, area, "Playlist", Panel::Playlist, app);
 
     if inner.height < HEADER_ROWS + 1 || inner.width < PATTERN_NAME_WIDTH + MUTE_WIDTH + BAR_WIDTH {
         return; // Not enough space
@@ -73,12 +60,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     // Get current visual selection (if any)
-    let cursor = Position::new(app.playlist_cursor_row, app.playlist_cursor_bar);
+    let cursor = Position::new(app.playlist.row, app.playlist.bar);
     let selection = app.vim_playlist.get_selection(cursor);
 
     // Calculate visible pattern range based on viewport
     let visible_rows = (inner.height - HEADER_ROWS) as usize;
-    let viewport_top = app.playlist_viewport_top;
+    let viewport_top = app.playlist.viewport_top;
 
     // Render pattern rows
     for row_idx in 0..visible_rows {
@@ -129,9 +116,8 @@ fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
     for bar in 0..NUM_BARS {
         let bar_num = bar + 1;
         let is_beat = bar % 4 == 0;
-        let is_playhead =
-            app.playback.is_playing_arrangement() && bar == app.playback.bar_or_zero();
-        let is_cursor_col = focused && app.playlist_cursor_bar == bar;
+        let is_playhead = app.is_playing_arrangement() && bar == app.arrangement_bar();
+        let is_cursor_col = focused && app.playlist.bar == bar;
 
         let color = if is_playhead {
             Color::Green
@@ -200,7 +186,7 @@ fn render_pattern_row(
     let mut spans = Vec::new();
 
     // Pattern name
-    let is_cursor_row = focused && app.playlist_cursor_row == row_idx;
+    let is_cursor_row = focused && app.playlist.row == row_idx;
     let pattern_style = if is_cursor_row {
         Style::default()
             .fg(Color::Cyan)
@@ -236,7 +222,7 @@ fn render_pattern_row(
         ("○", Color::Green)
     };
 
-    let mute_style = if is_cursor_row && app.playlist_cursor_bar == 0 {
+    let mute_style = if is_cursor_row && app.playlist.bar == 0 {
         Style::default().fg(Color::Black).bg(Color::Cyan)
     } else {
         Style::default().fg(mute_color)
@@ -250,10 +236,8 @@ fn render_pattern_row(
     // Bar cells
     for bar in 0..NUM_BARS {
         let is_beat = bar % 4 == 0;
-        let is_cursor =
-            focused && app.playlist_cursor_row == row_idx && app.playlist_cursor_bar == bar + 1;
-        let is_playhead =
-            app.playback.is_playing_arrangement() && bar == app.playback.bar_or_zero();
+        let is_cursor = focused && app.playlist.row == row_idx && app.playlist.bar == bar + 1;
+        let is_playhead = app.is_playing_arrangement() && bar == app.arrangement_bar();
 
         // Check if this cell is in visual selection (bar + 1 because bar 0 is mute column)
         let pos = Position::new(row_idx, bar + 1);

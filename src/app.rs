@@ -9,7 +9,7 @@ use crate::arrangement::Arrangement;
 use crate::audio::AudioHandle;
 use crate::browser::BrowserState;
 use crate::command_picker::CommandPicker;
-use crate::coords::AppCol;
+use crate::cursor::{ChannelRackCursor, MixerCursor, PianoRollCursor, PlaylistCursor};
 use crate::input::vim::{GridSemantics, VimState, Zone};
 use crate::playback::{PlaybackEvent, PlaybackState};
 use crate::plugin_host::params::build_init_params;
@@ -63,27 +63,20 @@ pub struct App {
     pub terminal_width: u16,
     pub terminal_height: u16,
 
-    /// Cursor position in channel rack (channel, column)
-    /// Column: -2 = mute zone, -1 = sample zone, 0-15 = steps
-    pub cursor_channel: usize,
-    pub cursor_col: AppCol,
-    /// Viewport top for channel rack scrolling
-    pub channel_rack_viewport_top: usize,
+    /// Channel rack cursor state
+    pub channel_rack: ChannelRackCursor,
 
-    /// Piano roll state
-    pub piano_cursor_pitch: u8,
-    pub piano_cursor_step: usize,
-    pub piano_viewport_top: u8,
-    pub placing_note: Option<usize>,
+    /// Piano roll cursor state
+    pub piano_roll: PianoRollCursor,
 
-    /// Playlist state
-    pub playlist_cursor_row: usize,
-    pub playlist_cursor_bar: usize,
-    pub playlist_viewport_top: usize,
+    /// Playlist cursor state
+    pub playlist: PlaylistCursor,
+
+    /// Arrangement data
     pub arrangement: Arrangement,
 
-    /// Mixer state
-    pub mixer_selected_channel: usize,
+    /// Mixer cursor state
+    pub mixer: MixerCursor,
 
     /// Channels (instruments)
     pub channels: Vec<Channel>,
@@ -188,20 +181,11 @@ impl App {
             step_accumulator: Duration::ZERO,
             terminal_width: 80,
             terminal_height: 24,
-            cursor_channel: 0,
-            cursor_col: AppCol::FIRST_STEP, // Start in steps zone
-            channel_rack_viewport_top: 0,
-            // Piano roll state
-            piano_cursor_pitch: 60, // Middle C (C4)
-            piano_cursor_step: 0,
-            piano_viewport_top: 72, // Start showing around C5
-            placing_note: None,
-            // Playlist state
-            playlist_cursor_row: 0,
-            playlist_cursor_bar: 1, // Start on first bar, not mute column
-            playlist_viewport_top: 0,
+            channel_rack: ChannelRackCursor::default(),
+            piano_roll: PianoRollCursor::default(),
+            playlist: PlaylistCursor::default(),
             arrangement,
-            mixer_selected_channel: 0,
+            mixer: MixerCursor::default(),
             channels,
             patterns,
             current_pattern,
@@ -398,93 +382,61 @@ impl App {
 
     /// Play step from current pattern (pattern loop mode)
     fn play_pattern_step(&self) {
-        let Some(pattern) = self.get_current_pattern() else {
-            return;
-        };
-
-        let playhead_step = self.playback.step_or_zero();
-
-        // Check if any channel has solo enabled
-        let has_solo = self.channels.iter().any(|c| c.solo);
-
-        for (ch_idx, channel) in self.channels.iter().enumerate() {
-            // Skip muted channels, or non-solo channels when solo is active
-            if channel.muted || (has_solo && !channel.solo) {
-                continue;
-            }
-
-            match &channel.channel_type {
-                ChannelType::Sampler => {
-                    // Sampler channels use step sequencer grid
-                    if pattern.get_step(ch_idx, playhead_step) {
-                        if let Some(ref sample_path) = channel.sample_path {
-                            let full_path = self.project_path.join("samples").join(sample_path);
-                            self.audio.play_sample(&full_path, channel.volume);
-                        }
-                    }
-                }
-                ChannelType::Plugin { path: _ } => {
-                    // Plugin channels use piano roll notes
-                    // Check for note-on events (notes that start at this step)
-                    for note in pattern.get_notes(ch_idx) {
-                        if note.start_step == playhead_step {
-                            self.audio.plugin_note_on(ch_idx, note.pitch, note.velocity);
-                        }
-                        // Check for note-off events (notes that end at this step)
-                        if note.start_step + note.duration == playhead_step {
-                            self.audio.plugin_note_off(ch_idx, note.pitch);
-                        }
-                    }
-                }
-            }
-        }
+        let patterns = self.get_current_pattern().into_iter();
+        self.play_step_from_patterns(patterns, self.playback.step_or_zero());
     }
 
     /// Play step from arrangement (all active patterns at current bar)
     fn play_arrangement_step(&self) {
-        let playhead_step = self.playback.step_or_zero();
-        let arrangement_bar = self.playback.bar_or_zero();
+        let bar = self.playback.bar_or_zero();
+        let placements = self.arrangement.get_active_placements_at_bar(bar);
+        let patterns = placements
+            .iter()
+            .filter_map(|p| self.patterns.get(p.pattern_id));
+        self.play_step_from_patterns(patterns, self.playback.step_or_zero());
+    }
 
-        // Get all active placements at current bar
-        let active_placements = self
-            .arrangement
-            .get_active_placements_at_bar(arrangement_bar);
-
+    /// Play a step from the given patterns (unified playback logic)
+    fn play_step_from_patterns<'a>(
+        &self,
+        patterns: impl Iterator<Item = &'a Pattern>,
+        step: usize,
+    ) {
         // Check if any channel has solo enabled
         let has_solo = self.channels.iter().any(|c| c.solo);
 
-        for placement in active_placements {
-            // Get the pattern for this placement
-            let Some(pattern) = self.patterns.get(placement.pattern_id) else {
-                continue;
-            };
-
+        for pattern in patterns {
             for (ch_idx, channel) in self.channels.iter().enumerate() {
                 // Skip muted channels, or non-solo channels when solo is active
                 if channel.muted || (has_solo && !channel.solo) {
                     continue;
                 }
+                self.play_channel_step(ch_idx, channel, pattern, step);
+            }
+        }
+    }
 
-                match &channel.channel_type {
-                    ChannelType::Sampler => {
-                        // Sampler channels use step sequencer grid
-                        if pattern.get_step(ch_idx, playhead_step) {
-                            if let Some(ref sample_path) = channel.sample_path {
-                                let full_path = self.project_path.join("samples").join(sample_path);
-                                self.audio.play_sample(&full_path, channel.volume);
-                            }
-                        }
+    /// Play a single channel's step from a pattern
+    fn play_channel_step(&self, ch_idx: usize, channel: &Channel, pattern: &Pattern, step: usize) {
+        match &channel.channel_type {
+            ChannelType::Sampler => {
+                // Sampler channels use step sequencer grid
+                if pattern.get_step(ch_idx, step) {
+                    if let Some(ref sample_path) = channel.sample_path {
+                        let full_path = self.project_path.join("samples").join(sample_path);
+                        self.audio.play_sample(&full_path, channel.volume);
                     }
-                    ChannelType::Plugin { path: _ } => {
-                        // Plugin channels use piano roll notes
-                        for note in pattern.get_notes(ch_idx) {
-                            if note.start_step == playhead_step {
-                                self.audio.plugin_note_on(ch_idx, note.pitch, note.velocity);
-                            }
-                            if note.start_step + note.duration == playhead_step {
-                                self.audio.plugin_note_off(ch_idx, note.pitch);
-                            }
-                        }
+                }
+            }
+            ChannelType::Plugin { path: _ } => {
+                // Plugin channels use piano roll notes
+                for note in pattern.get_notes(ch_idx) {
+                    if note.start_step == step {
+                        self.audio.plugin_note_on(ch_idx, note.pitch, note.velocity);
+                    }
+                    // Check for note-off events (notes that end at this step)
+                    if note.start_step + note.duration == step {
+                        self.audio.plugin_note_off(ch_idx, note.pitch);
                     }
                 }
             }
@@ -503,7 +455,7 @@ impl App {
             // Start playback based on focused panel
             if self.mode.current_panel() == Panel::Playlist {
                 // Start from cursor position in playlist (col 0 is mute, so bar = col - 1)
-                let start_bar = self.playlist_cursor_bar.saturating_sub(1);
+                let start_bar = self.playlist.bar.saturating_sub(1);
                 self.playback.play_arrangement_from(start_bar);
             } else {
                 self.playback.play_pattern();
@@ -523,10 +475,14 @@ impl App {
         self.playback.step_or_zero()
     }
 
-    /// Get current arrangement bar (for backward compatibility)
-    #[allow(dead_code)]
+    /// Get current arrangement bar
     pub fn arrangement_bar(&self) -> usize {
         self.playback.bar_or_zero()
+    }
+
+    /// Check if playing arrangement (not pattern)
+    pub fn is_playing_arrangement(&self) -> bool {
+        self.playback.is_playing_arrangement()
     }
 
     /// Stop all notes on plugin channels (all notes off)
@@ -592,21 +548,21 @@ impl App {
     /// Get the current step index (0-15) from cursor column
     /// Returns 0 if in sample or mute zone
     pub fn cursor_step(&self) -> usize {
-        self.cursor_col.to_step_or_zero()
+        self.channel_rack.col.to_step_or_zero()
     }
 
     /// Get the current zone name
     pub fn cursor_zone(&self) -> &'static str {
-        self.cursor_col.zone_name()
+        self.channel_rack.col.zone_name()
     }
 
     /// Toggle step at cursor in channel rack (only works in steps zone)
     pub fn toggle_step(&mut self) {
-        if !self.cursor_col.is_step_zone() {
+        if !self.channel_rack.col.is_step_zone() {
             return; // Not in steps zone
         }
-        let channel = self.cursor_channel;
-        let step = self.cursor_col.to_step_or_zero();
+        let channel = self.channel_rack.channel;
+        let step = self.channel_rack.col.to_step_or_zero();
         if let Some(pattern) = self.get_current_pattern_mut() {
             pattern.toggle_step(channel, step);
             self.mark_dirty();
@@ -620,12 +576,12 @@ impl App {
 
     /// Adjust mixer channel volume
     pub fn adjust_mixer_volume(&mut self, delta: f32) {
-        if let Some(channel) = self.channels.get_mut(self.mixer_selected_channel) {
+        if let Some(channel) = self.channels.get_mut(self.mixer.selected_channel) {
             channel.volume = (channel.volume + delta).clamp(0.0, 1.0);
             // Sync volume to audio thread for plugin channels
             if channel.is_plugin() {
                 self.audio
-                    .plugin_set_volume(self.mixer_selected_channel, channel.volume);
+                    .plugin_set_volume(self.mixer.selected_channel, channel.volume);
             }
             self.mark_dirty();
         }
@@ -633,7 +589,7 @@ impl App {
 
     /// Toggle mute on selected mixer channel
     pub fn toggle_mute(&mut self) {
-        if let Some(channel) = self.channels.get_mut(self.mixer_selected_channel) {
+        if let Some(channel) = self.channels.get_mut(self.mixer.selected_channel) {
             channel.muted = !channel.muted;
             self.mark_dirty();
         }
@@ -641,7 +597,7 @@ impl App {
 
     /// Toggle solo on selected mixer channel
     pub fn toggle_solo(&mut self) {
-        if let Some(channel) = self.channels.get_mut(self.mixer_selected_channel) {
+        if let Some(channel) = self.channels.get_mut(self.mixer.selected_channel) {
             channel.solo = !channel.solo;
             self.mark_dirty();
         }
@@ -776,10 +732,10 @@ impl App {
 
     /// Preview the current note in piano roll (for plugin channels)
     pub fn preview_piano_note(&mut self) {
-        let channel_idx = self.cursor_channel;
+        let channel_idx = self.channel_rack.channel;
         if let Some(channel) = self.channels.get(channel_idx) {
             if let ChannelType::Plugin { .. } = &channel.channel_type {
-                let note = self.piano_cursor_pitch;
+                let note = self.piano_roll.pitch;
                 self.audio.plugin_note_on(channel_idx, note, 0.8);
                 self.is_previewing = true;
                 self.preview_channel = Some(channel_idx);

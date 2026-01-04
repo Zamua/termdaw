@@ -1,9 +1,34 @@
 //! Common utilities for input handlers
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
 use crate::app::App;
 use crate::command_picker::Command;
 use crate::mode::ViewMode;
 use crate::plugin_host::params::{ParamDef, PluginParamId};
+
+/// Convert a KeyEvent to vim-compatible (char, is_ctrl) tuple.
+/// Returns None for keys that shouldn't be passed to vim.
+///
+/// Mappings:
+/// - Char(c) -> (c, ctrl_pressed)
+/// - Esc -> ('\x1b', false)
+/// - Arrow keys -> hjkl
+/// - Enter -> 'x' (toggle action)
+pub fn key_to_vim_char(key: KeyEvent) -> Option<(char, bool)> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let ch = match key.code {
+        KeyCode::Char(c) => c,
+        KeyCode::Esc => '\x1b',
+        KeyCode::Enter => 'x',
+        KeyCode::Up => 'k',
+        KeyCode::Down => 'j',
+        KeyCode::Left => 'h',
+        KeyCode::Right => 'l',
+        _ => return None,
+    };
+    Some((ch, ctrl))
+}
 
 /// Send the currently selected parameter to the plugin and save to channel
 pub fn send_param_to_plugin(app: &mut App) {

@@ -9,6 +9,7 @@ use crate::coords::{AppCol, VimCol};
 use crate::mode::ViewMode;
 use crate::plugin_host::params::build_editor_params;
 
+use super::common::key_to_vim_char;
 use super::vim::{Position, Range, RangeType, VimAction};
 
 /// Handle keyboard input for channel rack
@@ -17,7 +18,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     match key.code {
         // 'm' to cycle mute state: normal -> muted -> solo -> normal
         KeyCode::Char('m') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(channel) = app.channels.get_mut(app.cursor_channel) {
+            if let Some(channel) = app.channels.get_mut(app.channel_rack.channel) {
                 channel.cycle_mute_state();
                 app.mark_dirty();
             }
@@ -27,13 +28,13 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Start preview (release is handled at top level of handle_key)
             if !app.is_previewing {
-                app.start_preview(app.cursor_channel);
+                app.start_preview(app.channel_rack.channel);
             }
             return;
         }
         // 'S' (shift+s) to toggle solo on current channel
         KeyCode::Char('S') => {
-            if let Some(channel) = app.channels.get_mut(app.cursor_channel) {
+            if let Some(channel) = app.channels.get_mut(app.channel_rack.channel) {
                 channel.solo = !channel.solo;
                 app.mark_dirty();
             }
@@ -47,12 +48,12 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         // 'p' to open plugin editor for plugin channels
         KeyCode::Char('p') => {
             use crate::sequencer::ChannelType;
-            if let Some(channel) = app.channels.get(app.cursor_channel) {
+            if let Some(channel) = app.channels.get(app.channel_rack.channel) {
                 if let ChannelType::Plugin { .. } = &channel.channel_type {
                     // Build params list using stored values or defaults from registry
                     let params = build_editor_params(&channel.plugin_params);
                     app.plugin_editor
-                        .open(app.cursor_channel, &channel.name, params);
+                        .open(app.channel_rack.channel, &channel.name, params);
                 }
             }
             return;
@@ -82,23 +83,23 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // 'd' in sample zone to delete channel
         KeyCode::Char('d') if app.cursor_zone() == "sample" => {
-            if app.cursor_channel < app.channels.len() {
+            if app.channel_rack.channel < app.channels.len() {
                 // Remove the channel
-                app.channels.remove(app.cursor_channel);
+                app.channels.remove(app.channel_rack.channel);
 
                 // Remove corresponding steps/notes from all patterns
                 for pattern in &mut app.patterns {
-                    if app.cursor_channel < pattern.steps.len() {
-                        pattern.steps.remove(app.cursor_channel);
+                    if app.channel_rack.channel < pattern.steps.len() {
+                        pattern.steps.remove(app.channel_rack.channel);
                     }
-                    if app.cursor_channel < pattern.notes.len() {
-                        pattern.notes.remove(app.cursor_channel);
+                    if app.channel_rack.channel < pattern.notes.len() {
+                        pattern.notes.remove(app.channel_rack.channel);
                     }
                 }
 
                 // Adjust cursor if it's now out of bounds
-                if app.cursor_channel >= app.channels.len() && app.cursor_channel > 0 {
-                    app.cursor_channel = app.channels.len().saturating_sub(1);
+                if app.channel_rack.channel >= app.channels.len() && app.channel_rack.channel > 0 {
+                    app.channel_rack.channel = app.channels.len().saturating_sub(1);
                 }
 
                 app.mark_dirty();
@@ -107,16 +108,16 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // 'x' or Enter in non-steps zones - zone-aware action
         // In steps zone, let vim handle 'x' (for visual mode delete, counts, etc.)
-        KeyCode::Char('x') | KeyCode::Enter if !app.cursor_col.is_step_zone() => {
-            if app.cursor_col.is_mute_zone() {
+        KeyCode::Char('x') | KeyCode::Enter if !app.channel_rack.col.is_step_zone() => {
+            if app.channel_rack.col.is_mute_zone() {
                 // Cycle mute state: normal -> muted -> solo -> normal
-                if let Some(channel) = app.channels.get_mut(app.cursor_channel) {
+                if let Some(channel) = app.channels.get_mut(app.channel_rack.channel) {
                     channel.cycle_mute_state();
                     app.mark_dirty();
                 }
-            } else if app.cursor_col.is_sample_zone() {
+            } else if app.channel_rack.col.is_sample_zone() {
                 // Open sample browser
-                app.browser.start_selection(app.cursor_channel);
+                app.browser.start_selection(app.channel_rack.channel);
                 app.mode.switch_panel(Panel::Browser);
                 app.show_browser = true;
             }
@@ -124,8 +125,8 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // Arrow keys mapped to vim motions
         KeyCode::Left => {
-            let vim_col: VimCol = app.cursor_col.into();
-            let cursor = Position::new(app.cursor_channel, vim_col.0);
+            let vim_col: VimCol = app.channel_rack.col.into();
+            let cursor = Position::new(app.channel_rack.channel, vim_col.0);
             let actions = app.vim_channel_rack.process_key('h', false, cursor);
             for action in actions {
                 execute_vim_action(action, app);
@@ -133,8 +134,8 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             return;
         }
         KeyCode::Right => {
-            let vim_col: VimCol = app.cursor_col.into();
-            let cursor = Position::new(app.cursor_channel, vim_col.0);
+            let vim_col: VimCol = app.channel_rack.col.into();
+            let cursor = Position::new(app.channel_rack.channel, vim_col.0);
             let actions = app.vim_channel_rack.process_key('l', false, cursor);
             for action in actions {
                 execute_vim_action(action, app);
@@ -145,17 +146,13 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     }
 
     // Convert crossterm key to char for vim (for j/k/w/b/e/gg/G/v/d/y/c etc)
-    let (ch, ctrl) = match key.code {
-        KeyCode::Char(c) => (c, key.modifiers.contains(KeyModifiers::CONTROL)),
-        KeyCode::Esc => ('\x1b', false),
-        KeyCode::Up => ('k', false),
-        KeyCode::Down => ('j', false),
-        _ => return,
+    let Some((ch, ctrl)) = key_to_vim_char(key) else {
+        return;
     };
 
     // Get current cursor position (convert to vim space)
-    let vim_col: VimCol = app.cursor_col.into();
-    let cursor = Position::new(app.cursor_channel, vim_col.0);
+    let vim_col: VimCol = app.channel_rack.col.into();
+    let cursor = Position::new(app.channel_rack.channel, vim_col.0);
 
     // Let vim process the key
     let actions = app.vim_channel_rack.process_key(ch, ctrl, cursor);
@@ -173,26 +170,26 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
 
         VimAction::MoveCursor(pos) => {
             // Clamp to valid channel range (99 slots)
-            app.cursor_channel = pos.row.min(98);
+            app.channel_rack.channel = pos.row.min(98);
             // Convert vim col back to cursor_col
-            app.cursor_col = AppCol::from(VimCol(pos.col)).clamp();
+            app.channel_rack.col = AppCol::from(VimCol(pos.col)).clamp();
 
             // Update viewport to keep cursor visible
             // Assume ~15 visible rows (will be recalculated at render time)
             let visible_rows = 15;
-            if app.cursor_channel >= app.channel_rack_viewport_top + visible_rows {
-                app.channel_rack_viewport_top = app.cursor_channel - visible_rows + 1;
+            if app.channel_rack.channel >= app.channel_rack.viewport_top + visible_rows {
+                app.channel_rack.viewport_top = app.channel_rack.channel - visible_rows + 1;
             }
-            if app.cursor_channel < app.channel_rack_viewport_top {
-                app.channel_rack_viewport_top = app.cursor_channel;
+            if app.channel_rack.channel < app.channel_rack.viewport_top {
+                app.channel_rack.viewport_top = app.channel_rack.channel;
             }
         }
 
         VimAction::Toggle => {
             // Only toggle step if in steps zone
-            if app.cursor_col.is_step_zone() {
+            if app.channel_rack.col.is_step_zone() {
                 // For plugin channels, open piano roll instead of toggling step
-                if let Some(channel) = app.channels.get(app.cursor_channel) {
+                if let Some(channel) = app.channels.get(app.channel_rack.channel) {
                     use crate::sequencer::ChannelType;
                     if matches!(&channel.channel_type, ChannelType::Plugin { .. }) {
                         app.set_view_mode(ViewMode::PianoRoll);
@@ -332,7 +329,7 @@ fn delete_pattern_data(app: &mut App, range: &Range) {
 
 /// Paste clipboard at cursor position
 fn paste_at_cursor(app: &mut App, before: bool) {
-    let cursor_row = app.cursor_channel;
+    let cursor_row = app.channel_rack.channel;
     let cursor_col = app.cursor_step(); // Use method to get step index
 
     // Clone register data to avoid borrow issues
