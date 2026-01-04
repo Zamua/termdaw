@@ -15,6 +15,7 @@ use ratatui::{
 
 use crate::app::{App, Panel};
 use crate::input::vim::Position;
+use crate::ui::colors::{self, ColGroup};
 use crate::ui::render_panel_frame;
 
 /// Width of the pitch label column
@@ -178,6 +179,12 @@ fn render_pitch_row(
 ) {
     let mut spans = Vec::new();
 
+    // Calculate vim row for this pitch (high pitches at top = low row numbers)
+    let vim_row = MAX_PITCH.saturating_sub(pitch) as usize;
+
+    // Default background for pitch label zone
+    let zone_bg = colors::bg::COL_A;
+
     // Pitch label
     let pitch_name = get_pitch_name(pitch);
     let is_cursor_row = focused && app.piano_roll.pitch == pitch;
@@ -186,20 +193,18 @@ fn render_pitch_row(
     let pitch_style = if is_cursor_row {
         Style::default()
             .fg(Color::Cyan)
+            .bg(zone_bg)
             .add_modifier(Modifier::BOLD)
     } else if is_black {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::DarkGray).bg(zone_bg)
     } else {
-        Style::default().fg(Color::White)
+        Style::default().fg(Color::White).bg(zone_bg)
     };
 
     spans.push(Span::styled(
         format!("{:<width$}", pitch_name, width = PITCH_WIDTH as usize),
         pitch_style,
     ));
-
-    // Calculate vim row for this pitch (high pitches at top = low row numbers)
-    let vim_row = MAX_PITCH.saturating_sub(pitch) as usize;
 
     // Step cells
     for step in 0..16usize {
@@ -228,51 +233,53 @@ fn render_pitch_row(
         let sep = if is_beat { "┃" } else { "│" };
         spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
 
-        // Cell content - use yellow cursor when in placement mode
-        let cursor_color = if app.piano_roll.placing_note.is_some() {
-            Color::Yellow
+        // Determine if there's a note/content at this position
+        let has_note = note_at.is_some();
+
+        // Special handling for placement mode cursor
+        let is_placement_mode = app.piano_roll.placing_note.is_some();
+
+        // Get column group for this step (alternates every 4 steps)
+        let col_group = ColGroup::from_step(step);
+
+        // Determine cell state using unified logic
+        let cell_state = colors::determine_cell_state(
+            is_cursor,
+            is_selected,
+            is_playhead,
+            has_note || is_placing_preview,
+        );
+
+        // Get base style, but override cursor bg when in placement mode
+        let cell_style = if is_cursor && is_placement_mode {
+            // Yellow cursor when placing notes
+            if has_note || is_placing_preview {
+                Style::default()
+                    .fg(colors::fg::CURSOR_CONTENT)
+                    .bg(Color::Yellow)
+            } else {
+                Style::default().bg(Color::Yellow)
+            }
+        } else if is_placing_preview && !is_cursor && !is_selected && !is_playhead {
+            // Preview for note being placed (not under cursor)
+            Style::default()
+                .fg(colors::filled_fg(col_group))
+                .bg(colors::col_bg(col_group))
         } else {
-            Color::Cyan
+            colors::cell_style(cell_state, col_group)
         };
 
-        let (cell, cell_style) = if is_cursor {
-            if note_at.is_some() {
-                ("██", Style::default().fg(cursor_color).bg(cursor_color))
-            } else if is_placing_preview {
-                ("░░", Style::default().fg(cursor_color).bg(cursor_color))
+        // Determine cell content
+        let cell = if has_note {
+            if is_note_start {
+                colors::chars::FILLED_2
             } else {
-                ("  ", Style::default().bg(cursor_color))
-            }
-        } else if is_selected {
-            if let Some(_note) = note_at {
-                // Selected notes: show note block with contrasting colors
-                if is_note_start {
-                    ("██", Style::default().fg(Color::Red).bg(Color::Yellow))
-                } else {
-                    ("──", Style::default().fg(Color::Red).bg(Color::Yellow))
-                }
-            } else {
-                // Empty selected cell
-                ("  ", Style::default().bg(Color::Yellow))
-            }
-        } else if is_playhead {
-            if note_at.is_some() {
-                ("██", Style::default().fg(Color::Green).bg(Color::Green))
-            } else {
-                ("  ", Style::default().bg(Color::Green))
+                colors::chars::NOTE_CONT_2
             }
         } else if is_placing_preview {
-            ("░░", Style::default().fg(Color::Yellow))
-        } else if let Some(_note) = note_at {
-            if is_note_start {
-                ("██", Style::default().fg(Color::Magenta))
-            } else {
-                ("──", Style::default().fg(Color::Magenta))
-            }
-        } else if is_black {
-            ("  ", Style::default().fg(Color::DarkGray))
+            "░░" // Preview character
         } else {
-            ("  ", Style::default())
+            colors::chars::EMPTY_2
         };
 
         spans.push(Span::styled(cell, cell_style));

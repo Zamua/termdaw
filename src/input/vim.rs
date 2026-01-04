@@ -658,9 +658,13 @@ impl<T: Clone> VimState<T> {
             }
 
             // Operators (enter operator-pending mode)
-            'd' | 'y' | 'c' => {
+            'd' if !ctrl => {
+                self.operator = Some(Operator::Delete);
+                self.mode = VimMode::OperatorPending;
+                actions.push(VimAction::ModeChanged(VimMode::OperatorPending));
+            }
+            'y' | 'c' => {
                 self.operator = Some(match key {
-                    'd' => Operator::Delete,
                     'y' => Operator::Yank,
                     'c' => Operator::Change,
                     _ => unreachable!(),
@@ -768,6 +772,18 @@ impl<T: Clone> VimState<T> {
                 }
             }
 
+            // Half-page scroll (Ctrl+d / Ctrl+u)
+            'd' if ctrl => {
+                let half_page = self.dimensions.rows / 2;
+                let new_row = (cursor.row + half_page).min(self.dimensions.rows.saturating_sub(1));
+                actions.push(VimAction::MoveCursor(Position::new(new_row, cursor.col)));
+            }
+            'u' if ctrl => {
+                let half_page = self.dimensions.rows / 2;
+                let new_row = cursor.row.saturating_sub(half_page);
+                actions.push(VimAction::MoveCursor(Position::new(new_row, cursor.col)));
+            }
+
             _ => {}
         }
     }
@@ -812,7 +828,7 @@ impl<T: Clone> VimState<T> {
                 actions.push(VimAction::SelectionChanged(None));
                 actions.push(VimAction::ModeChanged(VimMode::Normal));
             }
-            'd' | 'x' => {
+            'd' if !ctrl => {
                 if let Some(range) = self.get_selection(cursor) {
                     actions.push(VimAction::Yank(range)); // Yank before delete
                     actions.push(VimAction::Delete(range));
@@ -820,6 +836,31 @@ impl<T: Clone> VimState<T> {
                 self.reset_to_normal();
                 actions.push(VimAction::SelectionChanged(None));
                 actions.push(VimAction::ModeChanged(VimMode::Normal));
+            }
+            'x' => {
+                if let Some(range) = self.get_selection(cursor) {
+                    actions.push(VimAction::Yank(range)); // Yank before delete
+                    actions.push(VimAction::Delete(range));
+                }
+                self.reset_to_normal();
+                actions.push(VimAction::SelectionChanged(None));
+                actions.push(VimAction::ModeChanged(VimMode::Normal));
+            }
+
+            // Half-page scroll (Ctrl+d / Ctrl+u) in visual mode
+            'd' if ctrl => {
+                let half_page = self.dimensions.rows / 2;
+                let new_row = (cursor.row + half_page).min(self.dimensions.rows.saturating_sub(1));
+                let new_pos = Position::new(new_row, cursor.col);
+                actions.push(VimAction::MoveCursor(new_pos));
+                actions.push(VimAction::SelectionChanged(self.get_selection(new_pos)));
+            }
+            'u' if ctrl => {
+                let half_page = self.dimensions.rows / 2;
+                let new_row = cursor.row.saturating_sub(half_page);
+                let new_pos = Position::new(new_row, cursor.col);
+                actions.push(VimAction::MoveCursor(new_pos));
+                actions.push(VimAction::SelectionChanged(self.get_selection(new_pos)));
             }
 
             // Motions (extend selection)

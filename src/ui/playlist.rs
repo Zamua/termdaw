@@ -16,6 +16,7 @@ use ratatui::{
 
 use crate::app::{App, Panel};
 use crate::input::vim::Position;
+use crate::ui::colors::{self, ColGroup};
 use crate::ui::render_panel_frame;
 
 /// Width of the pattern name column
@@ -185,14 +186,18 @@ fn render_pattern_row(
 ) {
     let mut spans = Vec::new();
 
+    // Default background for non-bar zones
+    let zone_bg = colors::bg::COL_A;
+
     // Pattern name
     let is_cursor_row = focused && app.playlist.row == row_idx;
     let pattern_style = if is_cursor_row {
         Style::default()
             .fg(Color::Cyan)
+            .bg(zone_bg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::White)
+        Style::default().fg(Color::White).bg(zone_bg)
     };
 
     let name = if pattern.name.len() > PATTERN_NAME_WIDTH as usize - 1 {
@@ -222,10 +227,14 @@ fn render_pattern_row(
         ("○", Color::Green)
     };
 
-    let mute_style = if is_cursor_row && app.playlist.bar == 0 {
-        Style::default().fg(Color::Black).bg(Color::Cyan)
+    let is_mute_cursor = is_cursor_row && app.playlist.bar == 0;
+    let mute_style = if is_mute_cursor {
+        Style::default()
+            .fg(colors::fg::CURSOR_CONTENT)
+            .bg(colors::bg::CURSOR)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(mute_color)
+        Style::default().fg(mute_color).bg(zone_bg)
     };
 
     spans.push(Span::styled(
@@ -250,33 +259,29 @@ fn render_pattern_row(
         let sep = if is_beat { "┃" } else { "│" };
         spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
 
-        // Cell content
-        let (cell, cell_style) = if is_cursor {
-            if has_placement {
-                ("███", Style::default().fg(Color::Cyan).bg(Color::Cyan))
-            } else {
-                ("   ", Style::default().bg(Color::Cyan))
-            }
-        } else if is_selected {
-            if has_placement {
-                ("███", Style::default().fg(Color::Yellow).bg(Color::Yellow))
-            } else {
-                ("   ", Style::default().bg(Color::Yellow))
-            }
-        } else if is_playhead {
-            if has_placement {
-                ("███", Style::default().fg(Color::Green).bg(Color::Green))
-            } else {
-                ("   ", Style::default().bg(Color::Green))
-            }
-        } else if has_placement {
-            if is_muted {
-                ("███", Style::default().fg(Color::DarkGray))
-            } else {
-                ("███", Style::default().fg(Color::Magenta))
-            }
+        // Get column group for this bar (alternates every 4 bars)
+        let col_group = ColGroup::from_step(bar);
+
+        // Determine cell state using unified color logic
+        let cell_state =
+            colors::determine_cell_state(is_cursor, is_selected, is_playhead, has_placement);
+
+        // Get style from unified color scheme
+        let cell_style = if has_placement && is_muted && !is_cursor && !is_selected && !is_playhead
+        {
+            // Muted placements get dimmed
+            Style::default()
+                .fg(colors::fg::MUTED)
+                .bg(colors::col_bg(col_group))
         } else {
-            ("   ", Style::default())
+            colors::cell_style(cell_state, col_group)
+        };
+
+        // Cell content (3 chars for playlist)
+        let cell = if has_placement {
+            colors::chars::FILLED_3
+        } else {
+            colors::chars::EMPTY_3
         };
 
         spans.push(Span::styled(cell, cell_style));

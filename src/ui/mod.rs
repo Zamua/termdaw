@@ -2,6 +2,7 @@
 
 mod browser;
 mod channel_rack;
+pub mod colors;
 mod command_picker;
 mod envelope;
 mod mixer;

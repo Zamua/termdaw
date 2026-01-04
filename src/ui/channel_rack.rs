@@ -15,6 +15,7 @@ use ratatui::{
 
 use crate::app::{App, Panel};
 use crate::input::vim::Position;
+use crate::ui::colors::{self, CellState, ColGroup};
 use crate::ui::render_panel_frame;
 
 /// Width of the sample name column
@@ -71,6 +72,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         let channel = channels.get(channel_idx);
         let is_allocated = channel.is_some();
 
+        // Default background for non-step zones
+        let zone_bg = colors::bg::COL_A;
+
         // === MUTE ZONE (col -2) - now comes first ===
         let is_mute_cursor = channel_idx == app.channel_rack.channel
             && app.channel_rack.col.is_mute_zone()
@@ -88,11 +92,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         };
         let mute_style = if is_mute_cursor {
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
+                .fg(colors::fg::CURSOR_CONTENT)
+                .bg(colors::bg::CURSOR)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(mute_color)
+            Style::default().fg(mute_color).bg(zone_bg)
         };
         let mute_widget = Paragraph::new(format!(
             "{:<width$}",
@@ -109,17 +113,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             && focused;
         let sample_style = if is_sample_cursor {
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
+                .fg(colors::fg::CURSOR_CONTENT)
+                .bg(colors::bg::CURSOR)
                 .add_modifier(Modifier::BOLD)
         } else if channel_idx == app.channel_rack.channel && focused {
             Style::default()
                 .fg(Color::Cyan)
+                .bg(zone_bg)
                 .add_modifier(Modifier::BOLD)
         } else if !is_allocated {
-            Style::default().fg(Color::DarkGray) // Greyed out for unallocated
+            Style::default().fg(Color::DarkGray).bg(zone_bg)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(Color::White).bg(zone_bg)
         };
 
         // Display channel name or empty slot indicator
@@ -174,34 +179,31 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             let sep = if is_beat { "┃" } else { "│" };
             let sep_color = Color::DarkGray;
 
-            // Cell content (2 chars: empty or filled based on active state)
-            let (cell, cell_style) = if is_cursor {
-                if is_active {
-                    ("██", Style::default().fg(Color::Cyan).bg(Color::Cyan))
-                } else {
-                    ("  ", Style::default().bg(Color::Cyan))
-                }
-            } else if is_selected {
-                if is_active {
-                    // Selected active step: show with contrasting colors
-                    ("██", Style::default().fg(Color::Red).bg(Color::Yellow))
-                } else {
-                    // Empty selected cell
-                    ("  ", Style::default().bg(Color::Yellow))
-                }
-            } else if is_playhead {
-                if is_active {
-                    ("██", Style::default().fg(Color::Green).bg(Color::Green))
-                } else {
-                    ("  ", Style::default().bg(Color::Green))
-                }
-            } else if is_active {
-                ("██", Style::default().fg(Color::Yellow))
-            } else if !is_allocated {
-                // Greyed out step cells for unallocated slots
-                ("  ", Style::default().fg(Color::DarkGray))
+            // Get column group for this step (alternates every 4 steps)
+            let col_group = ColGroup::from_step(step_idx);
+
+            // Determine cell state using unified color logic
+            let cell_state = if !is_allocated {
+                // Unallocated slots are always shown as empty with muted style
+                CellState::Empty
             } else {
-                ("  ", Style::default())
+                colors::determine_cell_state(is_cursor, is_selected, is_playhead, is_active)
+            };
+
+            // Get style from unified color scheme
+            let cell_style = if !is_allocated {
+                Style::default()
+                    .bg(colors::col_bg(col_group))
+                    .fg(Color::DarkGray)
+            } else {
+                colors::cell_style(cell_state, col_group)
+            };
+
+            // Cell content
+            let cell = if is_active {
+                colors::chars::FILLED_2
+            } else {
+                colors::chars::EMPTY_2
             };
 
             // Render separator + cell (2 chars) as a combined line
