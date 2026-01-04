@@ -1,15 +1,16 @@
-# daw
+# termdaw
 
-To install dependencies:
+A terminal-based Digital Audio Workstation.
 
-```bash
-bun install
-```
-
-To run:
+## Usage
 
 ```bash
-bun run index.ts
-```
+# Build
+cargo build --release
 
-This project was created using `bun init` in bun v1.3.5. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+# Run with a project name (creates if doesn't exist)
+cargo run -- my-project
+
+# Run tests
+cargo test
+```
