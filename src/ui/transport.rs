@@ -43,7 +43,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     // Play/Stop indicator
-    let play_indicator = if app.is_playing {
+    let play_indicator = if app.is_playing() {
         Span::styled("▶ Playing", Style::default().fg(Color::Green))
     } else {
         Span::styled("■ Stopped", Style::default().fg(Color::Red))
@@ -60,7 +60,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // Playhead position
     let position = Span::styled(
-        format!("  Step: {:02}", app.playhead_step + 1),
+        format!("  Step: {:02}", app.playhead_step() + 1),
         Style::default().fg(Color::DarkGray),
     );
 

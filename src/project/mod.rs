@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::arrangement::Arrangement;
+use crate::plugin_host::PluginParamId;
 use crate::sequencer::{Channel, ChannelType, Note, Pattern};
 
 /// Current project file version
@@ -126,7 +127,12 @@ impl From<&Channel> for ChannelData {
             volume: channel.volume,
             muted: channel.muted,
             solo: channel.solo,
-            plugin_params: channel.plugin_params.clone(),
+            // Convert PluginParamId -> String for serialization
+            plugin_params: channel
+                .plugin_params
+                .iter()
+                .map(|(k, v)| (k.as_str().to_string(), *v))
+                .collect(),
         }
     }
 }
@@ -179,7 +185,17 @@ impl From<&ChannelData> for Channel {
             volume: data.volume,
             muted: data.muted,
             solo: data.solo,
-            plugin_params: data.plugin_params.clone(),
+            // Convert String -> PluginParamId for deserialization
+            plugin_params: data
+                .plugin_params
+                .iter()
+                .filter_map(|(k, v)| {
+                    PluginParamId::ALL
+                        .iter()
+                        .find(|id| id.as_str() == k)
+                        .map(|id| (*id, *v))
+                })
+                .collect(),
         }
     }
 }

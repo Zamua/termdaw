@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::plugin_host::PluginParamId;
+
 /// A note in the piano roll
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
@@ -71,9 +73,9 @@ pub struct Channel {
     pub volume: f32,
     pub muted: bool,
     pub solo: bool,
-    /// Plugin parameter values (param_name -> value)
+    /// Plugin parameter values (param_id -> value)
     #[serde(default)]
-    pub plugin_params: HashMap<String, f32>,
+    pub plugin_params: HashMap<PluginParamId, f32>,
 }
 
 #[allow(dead_code)]
@@ -116,6 +118,19 @@ impl Channel {
         match &self.channel_type {
             ChannelType::Plugin { path } => Some(path),
             ChannelType::Sampler => None,
+        }
+    }
+
+    /// Cycle through mute states: unmuted -> muted -> solo -> unmuted
+    pub fn cycle_mute_state(&mut self) {
+        if self.solo {
+            self.solo = false;
+            self.muted = false;
+        } else if self.muted {
+            self.muted = false;
+            self.solo = true;
+        } else {
+            self.muted = true;
         }
     }
 }

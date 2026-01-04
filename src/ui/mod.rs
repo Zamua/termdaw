@@ -17,7 +17,8 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, ViewMode};
+use crate::app::App;
+use crate::mode::ViewMode;
 
 /// Main render function - draws the entire UI
 pub fn render(frame: &mut Frame, app: &mut App) {

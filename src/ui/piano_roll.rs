@@ -13,7 +13,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, FocusedPanel};
+use crate::app::{App, Panel};
 use crate::input::vim::Position;
 
 /// Width of the pitch label column
@@ -46,7 +46,7 @@ fn is_black_key(pitch: u8) -> bool {
 
 /// Render the piano roll
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let focused = app.focused_panel == FocusedPanel::PianoRoll;
+    let focused = app.mode.current_panel() == Panel::PianoRoll;
     let border_color = if focused {
         Color::Cyan
     } else {
@@ -115,7 +115,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
 /// Render the header rows (step numbers + separator)
 fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
-    let focused = app.focused_panel == FocusedPanel::PianoRoll;
+    let focused = app.mode.current_panel() == Panel::PianoRoll;
 
     // Row 1: Step number headers
     let mut spans = Vec::new();
@@ -130,7 +130,7 @@ fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
     for step in 0..16i32 {
         let step_num = step + 1;
         let is_beat = step % 4 == 0;
-        let is_playhead = app.is_playing && step as usize == app.playhead_step;
+        let is_playhead = app.is_playing() && step as usize == app.playhead_step();
         let is_cursor_col = focused && app.piano_cursor_step == step as usize;
 
         let color = if is_playhead {
@@ -220,7 +220,7 @@ fn render_pitch_row(
     for step in 0..16usize {
         let is_beat = step % 4 == 0;
         let is_cursor = focused && app.piano_cursor_pitch == pitch && app.piano_cursor_step == step;
-        let is_playhead = app.is_playing && step == app.playhead_step;
+        let is_playhead = app.is_playing() && step == app.playhead_step();
         let is_placing_preview = app.placing_note.is_some_and(|start| {
             let min = start.min(app.piano_cursor_step);
             let max = start.max(app.piano_cursor_step);

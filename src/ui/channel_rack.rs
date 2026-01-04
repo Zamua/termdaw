@@ -13,7 +13,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, FocusedPanel};
+use crate::app::{App, Panel};
 use crate::input::vim::Position;
 
 /// Width of the sample name column
@@ -29,7 +29,7 @@ const TOTAL_CHANNEL_SLOTS: usize = 99;
 
 /// Render the channel rack
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let focused = app.focused_panel == FocusedPanel::ChannelRack;
+    let focused = app.mode.current_panel() == Panel::ChannelRack;
     let border_color = if focused {
         Color::Cyan
     } else {
@@ -67,8 +67,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // Get current visual selection (if any)
     // Convert cursor_col to vim space for selection check
-    let vim_col = (app.cursor_col + 2).max(0) as usize;
-    let cursor = Position::new(app.cursor_channel, vim_col);
+    let vim_col: crate::coords::VimCol = app.cursor_col.into();
+    let cursor = Position::new(app.cursor_channel, vim_col.0);
     let selection = app.vim_channel_rack.get_selection(cursor);
 
     // Render all 99 channel slots (within viewport)
@@ -86,7 +86,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         let is_allocated = channel.is_some();
 
         // === MUTE ZONE (col -2) - now comes first ===
-        let is_mute_cursor = channel_idx == app.cursor_channel && app.cursor_col == -2 && focused;
+        let is_mute_cursor =
+            channel_idx == app.cursor_channel && app.cursor_col.is_mute_zone() && focused;
         let (mute_char, mute_color) = if let Some(ch) = channel {
             if ch.solo {
                 ("S", Color::Yellow)
@@ -116,7 +117,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         x += MUTE_WIDTH;
 
         // === SAMPLE ZONE (col -1) ===
-        let is_sample_cursor = channel_idx == app.cursor_channel && app.cursor_col == -1 && focused;
+        let is_sample_cursor =
+            channel_idx == app.cursor_channel && app.cursor_col.is_sample_zone() && focused;
         let sample_style = if is_sample_cursor {
             Style::default()
                 .fg(Color::Black)
@@ -170,13 +172,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             // For selection, use vim coordinates (step + 2)
             let pos = Position::new(channel_idx, step_idx + 2);
 
-            let is_cursor = channel_idx == app.cursor_channel && app.cursor_col == step && focused;
+            let is_cursor =
+                channel_idx == app.cursor_channel && app.cursor_col.0 == step && focused;
             let is_selected = selection.map(|r| r.contains(pos)).unwrap_or(false);
             let is_beat = step % 4 == 0;
             let is_active = steps
                 .map(|s| s.get(step_idx).copied().unwrap_or(false))
                 .unwrap_or(false);
-            let is_playhead = app.is_playing && step_idx == app.playhead_step;
+            let is_playhead = app.is_playing() && step_idx == app.playhead_step();
 
             // Separator character (always shown)
             let sep = if is_beat { "┃" } else { "│" };
@@ -226,7 +229,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
 /// Render the header rows (pattern hint + column headers)
 fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
-    let focused = app.focused_panel == FocusedPanel::ChannelRack;
+    let focused = app.mode.current_panel() == Panel::ChannelRack;
 
     // Row 1: Pattern hint
     let hint = Line::from(vec![
@@ -257,8 +260,8 @@ fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
     for step in 0..16i32 {
         let step_num = step + 1; // 1-indexed
         let is_beat = step % 4 == 0;
-        let is_playhead = app.is_playing && step as usize == app.playhead_step;
-        let is_cursor_col = focused && app.cursor_col == step && app.cursor_col >= 0;
+        let is_playhead = app.is_playing() && step as usize == app.playhead_step();
+        let is_cursor_col = focused && app.cursor_col.0 == step && app.cursor_col.is_step_zone();
 
         let color = if is_playhead {
             Color::Green

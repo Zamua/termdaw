@@ -14,7 +14,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, FocusedPanel, PlayMode};
+use crate::app::{App, Panel};
 use crate::input::vim::Position;
 
 /// Width of the pattern name column
@@ -30,7 +30,7 @@ const NUM_BARS: usize = 16;
 
 /// Render the playlist
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let focused = app.focused_panel == FocusedPanel::Playlist;
+    let focused = app.mode.current_panel() == Panel::Playlist;
     let border_color = if focused {
         Color::Cyan
     } else {
@@ -108,7 +108,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
 /// Render the header rows (bar numbers + separator)
 fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
-    let focused = app.focused_panel == FocusedPanel::Playlist;
+    let focused = app.mode.current_panel() == Panel::Playlist;
 
     // Row 1: Bar number headers
     let mut spans = Vec::new();
@@ -130,7 +130,7 @@ fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
         let bar_num = bar + 1;
         let is_beat = bar % 4 == 0;
         let is_playhead =
-            app.is_playing && app.play_mode == PlayMode::Arrangement && bar == app.arrangement_bar;
+            app.playback.is_playing_arrangement() && bar == app.playback.bar_or_zero();
         let is_cursor_col = focused && app.playlist_cursor_bar == bar;
 
         let color = if is_playhead {
@@ -253,7 +253,7 @@ fn render_pattern_row(
         let is_cursor =
             focused && app.playlist_cursor_row == row_idx && app.playlist_cursor_bar == bar + 1;
         let is_playhead =
-            app.is_playing && app.play_mode == PlayMode::Arrangement && bar == app.arrangement_bar;
+            app.playback.is_playing_arrangement() && bar == app.playback.bar_or_zero();
 
         // Check if this cell is in visual selection (bar + 1 because bar 0 is mute column)
         let pos = Position::new(row_idx, bar + 1);

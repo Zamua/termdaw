@@ -8,12 +8,12 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, FocusedPanel};
+use crate::app::{App, Panel};
 use crate::browser::BrowserMode;
 
 /// Render the browser panel
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let focused = app.focused_panel == FocusedPanel::Browser;
+    let focused = app.mode.current_panel() == Panel::Browser;
     let border_color = if focused {
         Color::Cyan
     } else {

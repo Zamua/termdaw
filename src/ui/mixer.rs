@@ -7,11 +7,11 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, FocusedPanel};
+use crate::app::{App, Panel};
 
 /// Render the mixer panel
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let focused = app.focused_panel == FocusedPanel::Mixer;
+    let focused = app.mode.current_panel() == Panel::Mixer;
     let border_color = if focused {
         Color::Cyan
     } else {
