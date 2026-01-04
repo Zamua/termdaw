@@ -129,6 +129,32 @@ fn execute_piano_roll_vim_action(action: VimAction, app: &mut App) {
         VimAction::SelectionChanged(_) | VimAction::ModeChanged(_) | VimAction::Escape => {
             // UI handles these via vim.mode() and vim.get_selection()
         }
+
+        VimAction::ScrollViewport(delta) => {
+            // Scroll viewport without moving cursor
+            let visible_rows = 20u8;
+            if delta > 0 {
+                // Scroll down (lower pitches)
+                app.piano_roll.viewport_top =
+                    app.piano_roll.viewport_top.saturating_sub(delta as u8);
+                app.piano_roll.viewport_top = app
+                    .piano_roll
+                    .viewport_top
+                    .max(PIANO_MIN_PITCH + visible_rows);
+            } else {
+                // Scroll up (higher pitches)
+                app.piano_roll.viewport_top =
+                    (app.piano_roll.viewport_top + (-delta) as u8).min(PIANO_MAX_PITCH);
+            }
+            // Keep cursor visible
+            if app.piano_roll.pitch > app.piano_roll.viewport_top {
+                app.piano_roll.pitch = app.piano_roll.viewport_top;
+            } else if app.piano_roll.pitch
+                < app.piano_roll.viewport_top.saturating_sub(visible_rows)
+            {
+                app.piano_roll.pitch = app.piano_roll.viewport_top.saturating_sub(visible_rows);
+            }
+        }
     }
 }
 

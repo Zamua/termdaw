@@ -260,6 +260,10 @@ pub enum VimAction {
 
     /// Escape was pressed (component may want to do cleanup)
     Escape,
+
+    /// Scroll viewport by N lines (positive = down, negative = up)
+    /// Used by Ctrl+e (scroll down) and Ctrl+y (scroll up)
+    ScrollViewport(i32),
 }
 
 // ============================================================================
@@ -663,12 +667,13 @@ impl<T: Clone> VimState<T> {
                 self.mode = VimMode::OperatorPending;
                 actions.push(VimAction::ModeChanged(VimMode::OperatorPending));
             }
-            'y' | 'c' => {
-                self.operator = Some(match key {
-                    'y' => Operator::Yank,
-                    'c' => Operator::Change,
-                    _ => unreachable!(),
-                });
+            'y' if !ctrl => {
+                self.operator = Some(Operator::Yank);
+                self.mode = VimMode::OperatorPending;
+                actions.push(VimAction::ModeChanged(VimMode::OperatorPending));
+            }
+            'c' => {
+                self.operator = Some(Operator::Change);
                 self.mode = VimMode::OperatorPending;
                 actions.push(VimAction::ModeChanged(VimMode::OperatorPending));
             }
@@ -720,8 +725,14 @@ impl<T: Clone> VimState<T> {
                 }
             }
 
-            // Motions
-            'h' | 'j' | 'k' | 'l' | 'w' | 'b' | 'e' => {
+            // Motions (note: 'e' has guard to avoid conflict with Ctrl+e)
+            'h' | 'j' | 'k' | 'l' | 'w' | 'b' => {
+                if let Some(new_pos) = self.apply_motion(key, cursor) {
+                    actions.push(VimAction::MoveCursor(new_pos));
+                }
+                self.count = None; // Reset count after motion
+            }
+            'e' if !ctrl => {
                 if let Some(new_pos) = self.apply_motion(key, cursor) {
                     actions.push(VimAction::MoveCursor(new_pos));
                 }
@@ -784,6 +795,14 @@ impl<T: Clone> VimState<T> {
                 actions.push(VimAction::MoveCursor(Position::new(new_row, cursor.col)));
             }
 
+            // Single-line scroll (Ctrl+e / Ctrl+y)
+            'e' if ctrl => {
+                actions.push(VimAction::ScrollViewport(1));
+            }
+            'y' if ctrl => {
+                actions.push(VimAction::ScrollViewport(-1));
+            }
+
             _ => {}
         }
     }
@@ -820,7 +839,7 @@ impl<T: Clone> VimState<T> {
             }
 
             // Operators on selection
-            'y' => {
+            'y' if !ctrl => {
                 if let Some(range) = self.get_selection(cursor) {
                     actions.push(VimAction::Yank(range));
                 }
@@ -861,6 +880,16 @@ impl<T: Clone> VimState<T> {
                 let new_pos = Position::new(new_row, cursor.col);
                 actions.push(VimAction::MoveCursor(new_pos));
                 actions.push(VimAction::SelectionChanged(self.get_selection(new_pos)));
+            }
+
+            // Single-line scroll (Ctrl+e / Ctrl+y) in visual mode
+            'e' if ctrl => {
+                actions.push(VimAction::ScrollViewport(1));
+                actions.push(VimAction::SelectionChanged(self.get_selection(cursor)));
+            }
+            'y' if ctrl => {
+                actions.push(VimAction::ScrollViewport(-1));
+                actions.push(VimAction::SelectionChanged(self.get_selection(cursor)));
             }
 
             // Motions (extend selection)

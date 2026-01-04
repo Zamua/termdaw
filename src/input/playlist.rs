@@ -97,6 +97,28 @@ fn execute_playlist_vim_action(action: VimAction, app: &mut App) {
         VimAction::SelectionChanged(_) | VimAction::ModeChanged(_) | VimAction::Escape => {
             // UI handles these via vim.mode() and vim.get_selection()
         }
+
+        VimAction::ScrollViewport(delta) => {
+            // Scroll viewport without moving cursor
+            let visible_rows = 10usize;
+            let pattern_count = get_playlist_pattern_count(app);
+            if delta > 0 {
+                // Scroll down
+                let max_top = pattern_count.saturating_sub(visible_rows);
+                app.playlist.viewport_top =
+                    (app.playlist.viewport_top + delta as usize).min(max_top);
+            } else {
+                // Scroll up
+                app.playlist.viewport_top =
+                    app.playlist.viewport_top.saturating_sub((-delta) as usize);
+            }
+            // Keep cursor visible
+            if app.playlist.row < app.playlist.viewport_top {
+                app.playlist.row = app.playlist.viewport_top;
+            } else if app.playlist.row >= app.playlist.viewport_top + visible_rows {
+                app.playlist.row = app.playlist.viewport_top + visible_rows - 1;
+            }
+        }
     }
 }
 

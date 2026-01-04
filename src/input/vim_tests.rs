@@ -1573,3 +1573,90 @@ fn test_clear_grid_semantics() {
     let actions = vim.process_key('0', false, cursor);
     assert_eq!(get_cursor_move(&actions), Some(Position::new(0, 0)));
 }
+
+// ============================================================================
+// 20. VIEWPORT SCROLLING (Ctrl+e / Ctrl+y)
+// ============================================================================
+
+/// Helper to get ScrollViewport delta from actions
+fn get_scroll_viewport(actions: &[VimAction]) -> Option<i32> {
+    actions.iter().find_map(|a| {
+        if let VimAction::ScrollViewport(delta) = a {
+            Some(*delta)
+        } else {
+            None
+        }
+    })
+}
+
+#[test]
+fn test_ctrl_e_scrolls_viewport_down_one_line() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+    let actions = process_ctrl_key(&mut vim, 'e', cursor);
+    assert_eq!(get_scroll_viewport(&actions), Some(1));
+}
+
+#[test]
+fn test_ctrl_y_scrolls_viewport_up_one_line() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+    let actions = process_ctrl_key(&mut vim, 'y', cursor);
+    assert_eq!(get_scroll_viewport(&actions), Some(-1));
+}
+
+#[test]
+fn test_ctrl_e_in_visual_mode_scrolls_and_updates_selection() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+
+    // Enter visual mode
+    vim.process_key('v', false, cursor);
+    assert_eq!(vim.mode(), VimMode::Visual);
+
+    // Ctrl+e should scroll and update selection
+    let actions = process_ctrl_key(&mut vim, 'e', cursor);
+    assert_eq!(get_scroll_viewport(&actions), Some(1));
+    assert!(has_action(&actions, |a| matches!(
+        a,
+        VimAction::SelectionChanged(Some(_))
+    )));
+    // Should still be in visual mode
+    assert_eq!(vim.mode(), VimMode::Visual);
+}
+
+#[test]
+fn test_ctrl_y_in_visual_mode_scrolls_and_updates_selection() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+
+    // Enter visual mode
+    vim.process_key('v', false, cursor);
+    assert_eq!(vim.mode(), VimMode::Visual);
+
+    // Ctrl+y should scroll and update selection
+    let actions = process_ctrl_key(&mut vim, 'y', cursor);
+    assert_eq!(get_scroll_viewport(&actions), Some(-1));
+    assert!(has_action(&actions, |a| matches!(
+        a,
+        VimAction::SelectionChanged(Some(_))
+    )));
+    // Should still be in visual mode
+    assert_eq!(vim.mode(), VimMode::Visual);
+}
+
+#[test]
+fn test_ctrl_e_stays_in_normal_mode() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+    process_ctrl_key(&mut vim, 'e', cursor);
+    assert_eq!(vim.mode(), VimMode::Normal);
+}
+
+#[test]
+fn test_ctrl_y_stays_in_normal_mode() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+    process_ctrl_key(&mut vim, 'y', cursor);
+    assert_eq!(vim.mode(), VimMode::Normal);
+}

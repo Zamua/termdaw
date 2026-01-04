@@ -234,6 +234,29 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
         VimAction::Escape => {
             // Could do cleanup here if needed
         }
+
+        VimAction::ScrollViewport(delta) => {
+            // Scroll viewport without moving cursor
+            let visible_rows = 15usize;
+            if delta > 0 {
+                // Scroll down
+                let max_top = 99usize.saturating_sub(visible_rows);
+                app.channel_rack.viewport_top =
+                    (app.channel_rack.viewport_top + delta as usize).min(max_top);
+            } else {
+                // Scroll up
+                app.channel_rack.viewport_top = app
+                    .channel_rack
+                    .viewport_top
+                    .saturating_sub((-delta) as usize);
+            }
+            // Keep cursor visible
+            if app.channel_rack.channel < app.channel_rack.viewport_top {
+                app.channel_rack.channel = app.channel_rack.viewport_top;
+            } else if app.channel_rack.channel >= app.channel_rack.viewport_top + visible_rows {
+                app.channel_rack.channel = app.channel_rack.viewport_top + visible_rows - 1;
+            }
+        }
     }
 }
 

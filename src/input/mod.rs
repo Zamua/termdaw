@@ -41,9 +41,26 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
         return false;
     }
 
-    // Ignore key repeat events entirely
+    // Allow key repeat events for navigation/scroll keys only
     if key.kind == KeyEventKind::Repeat {
-        return false;
+        let is_nav_key = matches!(
+            key.code,
+            KeyCode::Char('h')
+                | KeyCode::Char('j')
+                | KeyCode::Char('k')
+                | KeyCode::Char('l')
+                | KeyCode::Char('e')
+                | KeyCode::Char('y')
+                | KeyCode::Char('d')
+                | KeyCode::Char('u')
+                | KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Left
+                | KeyCode::Right
+        );
+        if !is_nav_key {
+            return false;
+        }
     }
 
     // From here on, we only handle Press events
