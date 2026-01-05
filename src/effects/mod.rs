@@ -8,6 +8,7 @@
 
 pub mod delay;
 pub mod filter;
+pub mod test_helpers;
 
 use std::collections::HashMap;
 

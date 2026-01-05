@@ -7,6 +7,8 @@
 //! - Master and per-channel volume control
 //! - Per-track mixing with routing (FL Studio-style mixer)
 
+pub mod mock;
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -66,12 +68,75 @@ impl Default for AudioMixerState {
 impl AudioMixerState {
     /// Apply pan law to get L/R gains (constant-power pan law)
     pub fn pan_gains(&self, track: usize) -> (f32, f32) {
-        let pan = self.track_pans[track];
-        // Constant power pan law: at center both channels are at ~0.707
-        let angle = (pan + 1.0) * std::f32::consts::FRAC_PI_4; // 0 to PI/2
-        let left = angle.cos();
-        let right = angle.sin();
-        (left, right)
+        constant_power_pan(self.track_pans[track])
+    }
+}
+
+/// Constant-power pan law calculation
+///
+/// Converts a pan value (-1.0 = full left, 0.0 = center, 1.0 = full right)
+/// to left/right gain multipliers. At center, both channels are at ~0.707 (-3dB)
+/// to maintain constant perceived loudness.
+///
+/// # Arguments
+/// * `pan` - Pan position from -1.0 (left) to 1.0 (right)
+///
+/// # Returns
+/// Tuple of (left_gain, right_gain) where each is in range 0.0-1.0
+pub fn constant_power_pan(pan: f32) -> (f32, f32) {
+    let angle = (pan + 1.0) * std::f32::consts::FRAC_PI_4; // 0 to PI/2
+    (angle.cos(), angle.sin())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pan_center() {
+        let (left, right) = constant_power_pan(0.0);
+        // At center, both should be ~0.707 (-3dB)
+        let expected = std::f32::consts::FRAC_1_SQRT_2; // 0.7071...
+        assert!((left - expected).abs() < 0.001);
+        assert!((right - expected).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pan_full_left() {
+        let (left, right) = constant_power_pan(-1.0);
+        assert!((left - 1.0).abs() < 0.001);
+        assert!(right.abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pan_full_right() {
+        let (left, right) = constant_power_pan(1.0);
+        assert!(left.abs() < 0.001);
+        assert!((right - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pan_constant_power() {
+        // At any pan position, left^2 + right^2 should equal 1.0
+        for pan in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+            let (left, right) = constant_power_pan(pan);
+            let sum_of_squares = left * left + right * right;
+            assert!(
+                (sum_of_squares - 1.0).abs() < 0.001,
+                "pan={} sum_of_squares={}",
+                pan,
+                sum_of_squares
+            );
+        }
+    }
+
+    #[test]
+    fn test_pan_symmetry() {
+        // Pan left and right should be symmetric
+        let (left_neg, right_neg) = constant_power_pan(-0.5);
+        let (left_pos, right_pos) = constant_power_pan(0.5);
+        assert!((left_neg - right_pos).abs() < 0.001);
+        assert!((right_neg - left_pos).abs() < 0.001);
     }
 }
 

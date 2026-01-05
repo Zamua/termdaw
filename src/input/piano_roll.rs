@@ -11,19 +11,66 @@ use super::common::key_to_vim_char;
 use super::vim::{self, VimAction};
 
 /// Piano roll pitch range constants
-const PIANO_MIN_PITCH: u8 = 36; // C2
-const PIANO_MAX_PITCH: u8 = 84; // C6
-const PIANO_PITCH_RANGE: usize = (PIANO_MAX_PITCH - PIANO_MIN_PITCH + 1) as usize; // 49 pitches
-const PIANO_NUM_STEPS: usize = 16;
+pub const PIANO_MIN_PITCH: u8 = 36; // C2
+pub const PIANO_MAX_PITCH: u8 = 84; // C6
+pub const PIANO_PITCH_RANGE: usize = (PIANO_MAX_PITCH - PIANO_MIN_PITCH + 1) as usize; // 49 pitches
+pub const PIANO_NUM_STEPS: usize = 16;
 
 /// Convert pitch to vim row (row 0 = highest pitch)
-fn pitch_to_row(pitch: u8) -> usize {
-    (PIANO_MAX_PITCH - pitch) as usize
+///
+/// In the piano roll, higher pitches appear at the top of the screen (lower row numbers),
+/// while lower pitches appear at the bottom (higher row numbers).
+///
+/// # Arguments
+/// * `pitch` - MIDI pitch value (typically 36-84 for C2-C6)
+///
+/// # Returns
+/// Vim row index where row 0 = PIANO_MAX_PITCH
+pub fn pitch_to_row(pitch: u8) -> usize {
+    (PIANO_MAX_PITCH.saturating_sub(pitch)) as usize
 }
 
 /// Convert vim row to pitch
-fn row_to_pitch(row: usize) -> u8 {
+///
+/// Inverse of `pitch_to_row`. Converts a vim row index back to MIDI pitch.
+///
+/// # Arguments
+/// * `row` - Vim row index (0 = highest pitch)
+///
+/// # Returns
+/// MIDI pitch value
+pub fn row_to_pitch(row: usize) -> u8 {
     PIANO_MAX_PITCH.saturating_sub(row as u8)
+}
+
+/// Check if placing a note would collide with existing notes
+///
+/// A collision occurs when a note at the given pitch overlaps in time with
+/// any existing note at the same pitch.
+///
+/// # Arguments
+/// * `notes` - Slice of existing notes to check against
+/// * `pitch` - MIDI pitch of the note being placed
+/// * `start` - Starting step of the note being placed
+/// * `end` - Ending step (inclusive) of the note being placed
+///
+/// # Returns
+/// `true` if the note would collide with any existing note
+#[allow(dead_code)] // Public for testing, will be used in future note placement validation
+pub fn check_note_collision(
+    notes: &[crate::sequencer::Note],
+    pitch: u8,
+    start: usize,
+    end: usize,
+) -> bool {
+    notes.iter().any(|n| {
+        if n.pitch != pitch {
+            return false;
+        }
+        let note_end = n.start_step + n.duration - 1;
+        // Check for overlap: not (end < n.start OR start > note_end)
+        !(end < n.start_step || start > note_end)
+    })
 }
 
 /// Handle keyboard input for piano roll
@@ -593,5 +640,131 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                 app.context_menu.show(*x, *y, items, context);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sequencer::Note;
+
+    // ========================================================================
+    // Pitch conversion tests
+    // ========================================================================
+
+    #[test]
+    fn test_pitch_to_row_max_pitch() {
+        // MAX_PITCH (84 = C6) should be row 0
+        assert_eq!(pitch_to_row(PIANO_MAX_PITCH), 0);
+    }
+
+    #[test]
+    fn test_pitch_to_row_min_pitch() {
+        // MIN_PITCH (36 = C2) should be row 48
+        assert_eq!(pitch_to_row(PIANO_MIN_PITCH), 48);
+    }
+
+    #[test]
+    fn test_pitch_to_row_middle_c() {
+        // Middle C (60 = C4) should be row 24
+        assert_eq!(pitch_to_row(60), 24);
+    }
+
+    #[test]
+    fn test_row_to_pitch_zero() {
+        // Row 0 should be MAX_PITCH
+        assert_eq!(row_to_pitch(0), PIANO_MAX_PITCH);
+    }
+
+    #[test]
+    fn test_row_to_pitch_last() {
+        // Row 48 should be MIN_PITCH
+        assert_eq!(row_to_pitch(48), PIANO_MIN_PITCH);
+    }
+
+    #[test]
+    fn test_pitch_row_roundtrip() {
+        // Converting pitch -> row -> pitch should be identity
+        for pitch in PIANO_MIN_PITCH..=PIANO_MAX_PITCH {
+            let row = pitch_to_row(pitch);
+            let back = row_to_pitch(row);
+            assert_eq!(back, pitch, "Roundtrip failed for pitch {}", pitch);
+        }
+    }
+
+    // ========================================================================
+    // Note collision tests
+    // ========================================================================
+
+    #[test]
+    fn test_collision_no_notes() {
+        let notes: Vec<Note> = vec![];
+        assert!(!check_note_collision(&notes, 60, 0, 3));
+    }
+
+    #[test]
+    fn test_collision_different_pitch() {
+        let notes = vec![Note::new(60, 4, 4)]; // C4 at steps 4-7
+                                               // Check for collision at different pitch (C5)
+        assert!(!check_note_collision(&notes, 72, 4, 7));
+    }
+
+    #[test]
+    fn test_collision_before_note() {
+        let notes = vec![Note::new(60, 4, 4)]; // C4 at steps 4-7
+                                               // Place note at steps 0-3 (just before)
+        assert!(!check_note_collision(&notes, 60, 0, 3));
+    }
+
+    #[test]
+    fn test_collision_after_note() {
+        let notes = vec![Note::new(60, 4, 4)]; // C4 at steps 4-7
+                                               // Place note at steps 8-11 (just after)
+        assert!(!check_note_collision(&notes, 60, 8, 11));
+    }
+
+    #[test]
+    fn test_collision_overlap_start() {
+        let notes = vec![Note::new(60, 4, 4)]; // C4 at steps 4-7
+                                               // Place note at steps 2-5 (overlaps start)
+        assert!(check_note_collision(&notes, 60, 2, 5));
+    }
+
+    #[test]
+    fn test_collision_overlap_end() {
+        let notes = vec![Note::new(60, 4, 4)]; // C4 at steps 4-7
+                                               // Place note at steps 6-9 (overlaps end)
+        assert!(check_note_collision(&notes, 60, 6, 9));
+    }
+
+    #[test]
+    fn test_collision_contained() {
+        let notes = vec![Note::new(60, 4, 4)]; // C4 at steps 4-7
+                                               // Place note at steps 5-6 (inside existing)
+        assert!(check_note_collision(&notes, 60, 5, 6));
+    }
+
+    #[test]
+    fn test_collision_contains() {
+        let notes = vec![Note::new(60, 4, 4)]; // C4 at steps 4-7
+                                               // Place note at steps 2-10 (contains existing)
+        assert!(check_note_collision(&notes, 60, 2, 10));
+    }
+
+    #[test]
+    fn test_collision_exact_overlap() {
+        let notes = vec![Note::new(60, 4, 4)]; // C4 at steps 4-7
+                                               // Place note at exact same position
+        assert!(check_note_collision(&notes, 60, 4, 7));
+    }
+
+    #[test]
+    fn test_collision_touching_boundary() {
+        let notes = vec![Note::new(60, 4, 4)]; // C4 at steps 4-7
+                                               // Place note touching at boundary (end of new = start of existing)
+                                               // Step 3 ends just before step 4 starts, so no collision
+        assert!(!check_note_collision(&notes, 60, 0, 3));
+        // Step 8 starts just after step 7 ends, so no collision
+        assert!(!check_note_collision(&notes, 60, 8, 10));
     }
 }

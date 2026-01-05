@@ -11,6 +11,7 @@ use crate::browser::BrowserState;
 use crate::command_picker::CommandPicker;
 use crate::cursor::{ChannelRackCursor, PianoRollCursor, PlaylistCursor};
 use crate::effects::{EffectSlot, EffectType, EFFECT_SLOTS};
+use crate::input::context::{PianoRollContext, PlaylistContext, StepGridContext};
 use crate::input::mouse::MouseState;
 use crate::input::vim::{GridSemantics, VimState, Zone};
 use crate::mixer::{Mixer, TrackId};
@@ -19,7 +20,7 @@ use crate::plugin_host::params::build_init_params;
 use crate::plugin_host::PluginHost;
 use crate::project::{self, ProjectFile};
 use crate::sequencer::{
-    default_channels, Channel, ChannelSource, Pattern, YankedNote, YankedPlacement,
+    default_channels, Channel, ChannelSource, Note, Pattern, YankedNote, YankedPlacement,
 };
 use crate::ui::areas::ScreenAreas;
 use crate::ui::context_menu::ContextMenu;
@@ -988,5 +989,111 @@ impl App {
         for track_idx in 0..crate::mixer::NUM_TRACKS {
             self.sync_effects_to_audio(track_idx);
         }
+    }
+}
+
+// ============================================================================
+// Context Trait Implementations
+// ============================================================================
+
+impl StepGridContext for App {
+    fn channel_count(&self) -> usize {
+        self.channels.len()
+    }
+
+    fn pattern_length(&self) -> usize {
+        self.patterns
+            .get(self.current_pattern)
+            .map(|p| p.length)
+            .unwrap_or(16)
+    }
+
+    fn get_step(&self, channel: usize, step: usize) -> bool {
+        self.channels
+            .get(channel)
+            .and_then(|c| c.get_pattern(self.current_pattern))
+            .map(|s| s.get_step(step))
+            .unwrap_or(false)
+    }
+
+    fn set_step(&mut self, channel: usize, step: usize, active: bool) {
+        let pattern_id = self.current_pattern;
+        let pattern_length = self.pattern_length();
+        if let Some(ch) = self.channels.get_mut(channel) {
+            let slice = ch.get_or_create_pattern(pattern_id, pattern_length);
+            slice.set_step(step, active);
+            self.mark_dirty();
+        }
+    }
+}
+
+impl PianoRollContext for App {
+    fn notes(&self) -> &[Note] {
+        let channel = self.channel_rack.channel;
+        let pattern_id = self.current_pattern;
+        self.channels
+            .get(channel)
+            .and_then(|c| c.get_pattern(pattern_id))
+            .map(|s| s.notes.as_slice())
+            .unwrap_or(&[])
+    }
+
+    fn add_note(&mut self, note: Note) {
+        let channel = self.channel_rack.channel;
+        let pattern_id = self.current_pattern;
+        let pattern_length = self.pattern_length();
+        if let Some(ch) = self.channels.get_mut(channel) {
+            let slice = ch.get_or_create_pattern(pattern_id, pattern_length);
+            slice.notes.push(note);
+            self.mark_dirty();
+        }
+    }
+
+    fn remove_note(&mut self, id: &str) -> Option<Note> {
+        let channel = self.channel_rack.channel;
+        let pattern_id = self.current_pattern;
+        let pattern_length = self.pattern_length();
+        let removed = if let Some(ch) = self.channels.get_mut(channel) {
+            let slice = ch.get_or_create_pattern(pattern_id, pattern_length);
+            if let Some(idx) = slice.notes.iter().position(|n| n.id == id) {
+                Some(slice.notes.remove(idx))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if removed.is_some() {
+            self.mark_dirty();
+        }
+        removed
+    }
+}
+
+impl PlaylistContext for App {
+    fn pattern_count(&self) -> usize {
+        self.patterns.len()
+    }
+
+    fn has_placement(&self, pattern_id: usize, bar: usize) -> bool {
+        self.arrangement
+            .placements
+            .iter()
+            .any(|p| p.pattern_id == pattern_id && p.start_bar == bar)
+    }
+
+    fn add_placement(&mut self, pattern_id: usize, bar: usize) {
+        use crate::arrangement::PatternPlacement;
+        self.arrangement
+            .placements
+            .push(PatternPlacement::new(pattern_id, bar));
+        self.mark_dirty();
+    }
+
+    fn remove_placement(&mut self, pattern_id: usize, bar: usize) {
+        self.arrangement
+            .placements
+            .retain(|p| !(p.pattern_id == pattern_id && p.start_bar == bar));
+        self.mark_dirty();
     }
 }

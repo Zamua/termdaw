@@ -9,6 +9,7 @@
 //! - `common` - Shared utilities
 //! - `mouse` - Encapsulated mouse state machine
 
+pub mod context;
 pub mod mouse;
 pub mod vim;
 

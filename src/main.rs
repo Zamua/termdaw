@@ -4,23 +4,6 @@
 
 #![deny(warnings)]
 
-mod app;
-mod arrangement;
-mod audio;
-mod browser;
-mod command_picker;
-mod coords;
-mod cursor;
-mod effects;
-mod input;
-mod mixer;
-mod mode;
-mod playback;
-mod plugin_host;
-mod project;
-mod sequencer;
-mod ui;
-
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -36,8 +19,10 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-use crate::app::App;
-use crate::audio::AudioEngine;
+use termdaw::app::App;
+use termdaw::audio::AudioEngine;
+use termdaw::input;
+use termdaw::ui;
 
 /// TermDAW - Terminal Digital Audio Workstation
 #[derive(Parser, Debug)]
@@ -55,7 +40,7 @@ fn main() -> Result<()> {
     // Determine project name: use provided name or auto-generate
     let project_name = args
         .project
-        .unwrap_or_else(crate::project::generate_project_name);
+        .unwrap_or_else(termdaw::project::generate_project_name);
 
     // Initialize audio engine
     let (mut audio_engine, audio_handle) =
