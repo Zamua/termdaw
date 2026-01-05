@@ -63,6 +63,11 @@ impl AppCol {
     pub fn clamp(self) -> Self {
         Self(self.0.clamp(-3, 15))
     }
+
+    /// Create an AppCol from a step index (0-15)
+    pub fn from_step(step: usize) -> Self {
+        Self(step.min(15) as i32)
+    }
 }
 
 /// Channel rack column in vim space: 0-18 (0=mute, 1=track, 2=sample, 3-18=steps)

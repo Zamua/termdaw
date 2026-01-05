@@ -205,14 +205,22 @@ fn execute_piano_roll_vim_action(action: VimAction, app: &mut App) {
 
         VimAction::NextTab => {
             // Switch to Playlist view and focus it
-            app.view_mode = crate::mode::ViewMode::Playlist;
+            // Use set_view_mode() to record position in global jumplist
+            app.set_view_mode(crate::mode::ViewMode::Playlist);
             app.mode.switch_panel(crate::app::Panel::Playlist);
         }
 
         VimAction::PrevTab => {
             // Switch to Playlist view (only 2 tabs, so same as next)
-            app.view_mode = crate::mode::ViewMode::Playlist;
+            // Use set_view_mode() to record position in global jumplist
+            app.set_view_mode(crate::mode::ViewMode::Playlist);
             app.mode.switch_panel(crate::app::Panel::Playlist);
+        }
+
+        VimAction::RecordJump => {
+            // Record current position in global jumplist before a jump movement (G, gg)
+            let current = app.current_jump_position();
+            app.global_jumplist.push(current);
         }
     }
 }
@@ -237,7 +245,6 @@ fn handle_piano_roll_toggle(app: &mut App) {
     let step = app.piano_roll.step;
     let channel_idx = app.channel_rack.channel;
     let pattern_id = app.current_pattern;
-    let pattern_length = app.get_current_pattern().map(|p| p.length).unwrap_or(16);
 
     if let Some(start_step) = app.piano_roll.placing_note {
         // Finish placing note
@@ -246,12 +253,9 @@ fn handle_piano_roll_toggle(app: &mut App) {
         let duration = max_step - min_step + 1;
 
         let note = Note::new(pitch, min_step, duration);
-        if let Some(channel) = app.channels.get_mut(channel_idx) {
-            let slice = channel.get_or_create_pattern(pattern_id, pattern_length);
-            slice.add_note(note);
-        }
+        // Use history-aware add for undo/redo support
+        app.add_note_with_history(note);
         app.piano_roll.placing_note = None;
-        app.mark_dirty();
     } else {
         // Check for existing note at cursor
         let existing = app
@@ -262,14 +266,9 @@ fn handle_piano_roll_toggle(app: &mut App) {
             .map(|n| (n.id.clone(), n.start_step));
 
         if let Some((note_id, start)) = existing {
-            // Remove existing note and start new placement from its position
-            if let Some(channel) = app.channels.get_mut(channel_idx) {
-                if let Some(slice) = channel.get_pattern_mut(pattern_id) {
-                    slice.remove_note(&note_id);
-                }
-            }
+            // Remove existing note with history and start new placement from its position
+            app.remove_note_with_history(note_id);
             app.piano_roll.placing_note = Some(start);
-            app.mark_dirty();
         } else {
             // Start new placement
             app.piano_roll.placing_note = Some(step);

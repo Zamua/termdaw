@@ -9,8 +9,10 @@ use crate::arrangement::Arrangement;
 use crate::audio::AudioHandle;
 use crate::browser::BrowserState;
 use crate::command_picker::CommandPicker;
+use crate::coords::AppCol;
 use crate::cursor::{ChannelRackCursor, PianoRollCursor, PlaylistCursor};
 use crate::effects::{EffectSlot, EffectType, EFFECT_SLOTS};
+use crate::history::{GlobalJumplist, History, JumpPosition};
 use crate::input::context::{PianoRollContext, PlaylistContext, StepGridContext};
 use crate::input::mouse::MouseState;
 use crate::input::vim::{GridSemantics, VimState, Zone};
@@ -136,6 +138,12 @@ pub struct App {
 
     /// Which note is being previewed (for plugins)
     preview_note: Option<u8>,
+
+    /// Undo/redo history
+    pub history: History,
+
+    /// Global cross-view jump list for Ctrl+O/Ctrl+I
+    pub global_jumplist: GlobalJumplist,
 }
 
 impl App {
@@ -232,6 +240,8 @@ impl App {
             is_previewing: false,
             preview_channel: None,
             preview_note: None,
+            history: History::new(),
+            global_jumplist: GlobalJumplist::new(),
         };
 
         // Load plugins for plugin channels
@@ -585,7 +595,16 @@ impl App {
     }
 
     /// Set the view mode and focus
+    ///
+    /// Records the current position in the global jumplist before switching,
+    /// enabling Ctrl+O/Ctrl+I navigation between views.
     pub fn set_view_mode(&mut self, view_mode: ViewMode) {
+        // Record current position before switching (if actually changing views)
+        if self.view_mode != view_mode {
+            let current = self.current_jump_position();
+            self.global_jumplist.push(current);
+        }
+
         self.view_mode = view_mode;
         let panel = match view_mode {
             ViewMode::ChannelRack => Panel::ChannelRack,
@@ -596,9 +615,15 @@ impl App {
     }
 
     /// Toggle browser visibility
+    ///
+    /// Records current position in jumplist when opening browser,
+    /// so Ctrl+O can return to it.
     pub fn toggle_browser(&mut self) {
         self.show_browser = !self.show_browser;
         if self.show_browser {
+            // Record current position before switching to browser
+            let current = self.current_jump_position();
+            self.global_jumplist.push(current);
             self.mode.switch_panel(Panel::Browser);
         } else if self.mode.current_panel() == Panel::Browser {
             let panel = match self.view_mode {
@@ -611,9 +636,15 @@ impl App {
     }
 
     /// Toggle mixer visibility
+    ///
+    /// Records current position in jumplist when opening mixer,
+    /// so Ctrl+O can return to it.
     pub fn toggle_mixer(&mut self) {
         self.show_mixer = !self.show_mixer;
         if self.show_mixer {
+            // Record current position before switching to mixer
+            let current = self.current_jump_position();
+            self.global_jumplist.push(current);
             self.mode.switch_panel(Panel::Mixer);
         } else if self.mode.current_panel() == Panel::Mixer {
             let panel = match self.view_mode {
@@ -637,6 +668,7 @@ impl App {
     }
 
     /// Toggle step at cursor in channel rack (only works in steps zone)
+    #[allow(dead_code)]
     pub fn toggle_step(&mut self) {
         if !self.channel_rack.col.is_step_zone() {
             return; // Not in steps zone
@@ -990,6 +1022,150 @@ impl App {
             self.sync_effects_to_audio(track_idx);
         }
     }
+
+    // ============ Undo/Redo History Helpers ============
+
+    /// Toggle step at cursor with undo/redo support
+    pub fn toggle_step_with_history(&mut self) {
+        use crate::history::command::ToggleStepCmd;
+
+        if !self.channel_rack.col.is_step_zone() {
+            return;
+        }
+
+        let cmd = Box::new(ToggleStepCmd::new(
+            self.current_pattern,
+            self.channel_rack.channel,
+            self.channel_rack.col.to_step_or_zero(),
+        ));
+        // Take history out temporarily to avoid borrow conflict
+        let mut history = std::mem::take(&mut self.history);
+        history.execute(cmd, self);
+        self.history = history;
+    }
+
+    /// Add a note to the piano roll with undo/redo support
+    pub fn add_note_with_history(&mut self, note: Note) {
+        use crate::history::command::AddNoteCmd;
+
+        let cmd = Box::new(AddNoteCmd::new(
+            self.current_pattern,
+            self.channel_rack.channel,
+            note,
+        ));
+        // Take history out temporarily to avoid borrow conflict
+        let mut history = std::mem::take(&mut self.history);
+        history.execute(cmd, self);
+        self.history = history;
+    }
+
+    /// Remove a note from the piano roll with undo/redo support
+    pub fn remove_note_with_history(&mut self, note_id: String) {
+        use crate::history::command::RemoveNoteCmd;
+
+        let cmd = Box::new(RemoveNoteCmd::new(
+            self.current_pattern,
+            self.channel_rack.channel,
+            note_id,
+        ));
+        // Take history out temporarily to avoid borrow conflict
+        let mut history = std::mem::take(&mut self.history);
+        history.execute(cmd, self);
+        self.history = history;
+    }
+
+    /// Toggle placement in playlist with undo/redo support
+    pub fn toggle_placement_with_history(&mut self, pattern_id: usize, bar: usize) {
+        use crate::history::command::TogglePlacementCmd;
+
+        let cmd = Box::new(TogglePlacementCmd::new(pattern_id, bar));
+        // Take history out temporarily to avoid borrow conflict
+        let mut history = std::mem::take(&mut self.history);
+        history.execute(cmd, self);
+        self.history = history;
+    }
+
+    // ============ Jump List Helpers ============
+
+    /// Get current position for the global jump list
+    pub fn current_jump_position(&self) -> JumpPosition {
+        match self.view_mode {
+            ViewMode::ChannelRack => JumpPosition::channel_rack(
+                self.channel_rack.channel,
+                self.channel_rack.col.to_step_or_zero(),
+            ),
+            ViewMode::PianoRoll => {
+                // Convert pitch to row (higher pitch = lower row number)
+                let pitch_row = (84 - self.piano_roll.pitch) as usize;
+                JumpPosition::piano_roll(pitch_row, self.piano_roll.step)
+            }
+            ViewMode::Playlist => {
+                JumpPosition::playlist(self.playlist.row, self.playlist.bar)
+            }
+        }
+    }
+
+    /// Navigate to a jump position (may switch views)
+    ///
+    /// NOTE: This directly sets view_mode WITHOUT calling set_view_mode(),
+    /// because we don't want to record jumps during Ctrl+O/Ctrl+I navigation.
+    pub fn goto_jump_position(&mut self, pos: &JumpPosition) {
+        // Switch view directly (don't call set_view_mode to avoid recording jump)
+        self.view_mode = pos.view;
+
+        // Switch panel focus to match the view
+        let panel = match pos.view {
+            ViewMode::ChannelRack => Panel::ChannelRack,
+            ViewMode::PianoRoll => Panel::PianoRoll,
+            ViewMode::Playlist => Panel::Playlist,
+        };
+        self.mode.switch_panel(panel);
+
+        // Set cursor position and scroll viewport based on view
+        match pos.view {
+            ViewMode::ChannelRack => {
+                self.channel_rack.channel = pos.row.min(self.channels.len().saturating_sub(1));
+                // Convert step to AppCol (step zone starts at col 3 in vim space)
+                self.channel_rack.col = AppCol::from_step(pos.col);
+                // Scroll viewport to keep cursor visible
+                let visible_rows = 15;
+                if self.channel_rack.channel >= self.channel_rack.viewport_top + visible_rows {
+                    self.channel_rack.viewport_top =
+                        self.channel_rack.channel - visible_rows + 1;
+                }
+                if self.channel_rack.channel < self.channel_rack.viewport_top {
+                    self.channel_rack.viewport_top = self.channel_rack.channel;
+                }
+            }
+            ViewMode::PianoRoll => {
+                // Convert row back to pitch (row 0 = pitch 84, row 48 = pitch 36)
+                self.piano_roll.pitch = (84 - pos.row as i32).clamp(36, 84) as u8;
+                self.piano_roll.step = pos.col.min(15);
+                // Scroll viewport to keep cursor visible (viewport_top is highest visible pitch)
+                if self.piano_roll.pitch > self.piano_roll.viewport_top {
+                    self.piano_roll.viewport_top = self.piano_roll.pitch;
+                }
+                let visible_rows = 20u8;
+                if self.piano_roll.pitch < self.piano_roll.viewport_top.saturating_sub(visible_rows)
+                {
+                    self.piano_roll.viewport_top = self.piano_roll.pitch + 10;
+                }
+            }
+            ViewMode::Playlist => {
+                self.playlist.row = pos.row.min(self.patterns.len().saturating_sub(1));
+                self.playlist.bar = pos.col.min(16);
+                // Scroll viewport to keep cursor visible
+                let visible_rows = 10;
+                if self.playlist.row >= self.playlist.viewport_top + visible_rows {
+                    self.playlist.viewport_top = self.playlist.row - visible_rows + 1;
+                }
+                if self.playlist.row < self.playlist.viewport_top {
+                    self.playlist.viewport_top = self.playlist.row;
+                }
+            }
+        }
+    }
+
 }
 
 // ============================================================================

@@ -13,6 +13,7 @@ pub mod command_picker;
 pub mod coords;
 pub mod cursor;
 pub mod effects;
+pub mod history;
 pub mod input;
 pub mod mixer;
 pub mod mode;

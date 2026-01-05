@@ -147,7 +147,9 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
                     app.mark_dirty();
                 }
             } else if app.channel_rack.col.is_sample_zone() {
-                // Open sample browser
+                // Open sample browser - record position for Ctrl+O
+                let current = app.current_jump_position();
+                app.global_jumplist.push(current);
                 app.browser.start_selection(app.channel_rack.channel);
                 app.mode.switch_panel(Panel::Browser);
                 app.show_browser = true;
@@ -256,7 +258,8 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
                         return;
                     }
                 }
-                app.toggle_step();
+                // Use history-aware toggle for undo/redo support
+                app.toggle_step_with_history();
             }
         }
 
@@ -320,14 +323,22 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
 
         VimAction::NextTab => {
             // Switch to Playlist view and focus it
-            app.view_mode = ViewMode::Playlist;
+            // Use set_view_mode() to record position in global jumplist
+            app.set_view_mode(ViewMode::Playlist);
             app.mode.switch_panel(Panel::Playlist);
         }
 
         VimAction::PrevTab => {
             // Switch to Playlist view (only 2 tabs, so same as next)
-            app.view_mode = ViewMode::Playlist;
+            // Use set_view_mode() to record position in global jumplist
+            app.set_view_mode(ViewMode::Playlist);
             app.mode.switch_panel(Panel::Playlist);
+        }
+
+        VimAction::RecordJump => {
+            // Record current position in global jumplist before a jump movement (G, gg)
+            let current = app.current_jump_position();
+            app.global_jumplist.push(current);
         }
     }
 }
@@ -521,12 +532,12 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                             // Plugin channels open piano roll on click
                             app.set_view_mode(ViewMode::PianoRoll);
                         } else {
-                            // Toggle step for sampler channels
-                            app.toggle_step();
+                            // Toggle step for sampler channels (with undo support)
+                            app.toggle_step_with_history();
                         }
                     } else {
-                        // Empty slot - toggle anyway
-                        app.toggle_step();
+                        // Empty slot - toggle anyway (with undo support)
+                        app.toggle_step_with_history();
                     }
                 }
                 // Sample zone click just moves cursor

@@ -270,6 +270,10 @@ pub enum VimAction {
 
     /// Switch to previous tab (gT)
     PrevTab,
+
+    /// Record current position in global jumplist before a jump movement (G, gg)
+    /// Component should push current position to app.global_jumplist
+    RecordJump,
 }
 
 // ============================================================================
@@ -628,14 +632,15 @@ impl<T: Clone> VimState<T> {
             self.g_prefix = false; // Always clear the prefix
             match key {
                 'g' => {
-                    // gg - go to top
+                    // gg - go to top (jump movement)
                     let new_pos = Position::new(0, cursor.col);
+                    self.jumplist.push(cursor); // Save current position before jumping (per-view)
+                    actions.push(VimAction::RecordJump); // Record in global jumplist
                     if self.mode.is_visual() {
                         // In visual mode, extend selection
                         actions.push(VimAction::MoveCursor(new_pos));
                         actions.push(VimAction::SelectionChanged(self.get_selection(new_pos)));
                     } else {
-                        self.jumplist.push(cursor);
                         actions.push(VimAction::MoveCursor(new_pos));
                     }
                     return actions;
@@ -810,7 +815,8 @@ impl<T: Clone> VimState<T> {
             }
             // G - go to bottom (jump movement)
             'G' => {
-                self.jumplist.push(cursor); // Save current position before jumping
+                self.jumplist.push(cursor); // Save current position before jumping (per-view)
+                actions.push(VimAction::RecordJump); // Record in global jumplist
                 let last_row = self.dimensions.rows.saturating_sub(1);
                 actions.push(VimAction::MoveCursor(Position::new(last_row, cursor.col)));
             }
@@ -972,6 +978,9 @@ impl<T: Clone> VimState<T> {
                 self.g_prefix = true;
             }
             'G' => {
+                // G in visual mode - go to bottom (jump movement)
+                self.jumplist.push(cursor); // Save current position before jumping (per-view)
+                actions.push(VimAction::RecordJump); // Record in global jumplist
                 let last_row = self.dimensions.rows.saturating_sub(1);
                 let new_pos = Position::new(last_row, cursor.col);
                 actions.push(VimAction::MoveCursor(new_pos));

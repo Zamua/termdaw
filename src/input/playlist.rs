@@ -133,14 +133,22 @@ fn execute_playlist_vim_action(action: VimAction, app: &mut App) {
 
         VimAction::NextTab => {
             // Switch to Channel Rack view and focus it
-            app.view_mode = crate::mode::ViewMode::ChannelRack;
+            // Use set_view_mode() to record position in global jumplist
+            app.set_view_mode(crate::mode::ViewMode::ChannelRack);
             app.mode.switch_panel(crate::app::Panel::ChannelRack);
         }
 
         VimAction::PrevTab => {
             // Switch to Channel Rack view (only 2 tabs, so same as next)
-            app.view_mode = crate::mode::ViewMode::ChannelRack;
+            // Use set_view_mode() to record position in global jumplist
+            app.set_view_mode(crate::mode::ViewMode::ChannelRack);
             app.mode.switch_panel(crate::app::Panel::ChannelRack);
+        }
+
+        VimAction::RecordJump => {
+            // Record current position in global jumplist before a jump movement (G, gg)
+            let current = app.current_jump_position();
+            app.global_jumplist.push(current);
         }
     }
 }
@@ -172,8 +180,8 @@ fn handle_playlist_toggle(app: &mut App) {
     if let Some(pattern_id) = get_pattern_id_at_row(app, app.playlist.row) {
         // Convert cursor_bar (1-16) to bar index (0-15)
         let bar = app.playlist.bar - 1;
-        app.arrangement.toggle_placement(pattern_id, bar);
-        app.mark_dirty();
+        // Use history-aware toggle for undo/redo support
+        app.toggle_placement_with_history(pattern_id, bar);
     }
 }
 

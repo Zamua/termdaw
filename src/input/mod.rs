@@ -43,6 +43,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
     }
 
     // Allow key repeat events for navigation/scroll keys only
+    // Note: 'u' is NOT included - it's undo, not scroll/navigation
     if key.kind == KeyEventKind::Repeat {
         let is_nav_key = matches!(
             key.code,
@@ -53,7 +54,6 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
                 | KeyCode::Char('e')
                 | KeyCode::Char('y')
                 | KeyCode::Char('d')
-                | KeyCode::Char('u')
                 | KeyCode::Up
                 | KeyCode::Down
                 | KeyCode::Left
@@ -97,16 +97,53 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
     }
 
     // Global keybindings (always active)
-    match key.code {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+    match (key.code, ctrl) {
         // Tab to cycle focus
-        KeyCode::Tab => {
+        (KeyCode::Tab, false) => {
             app.next_panel();
             return false;
         }
 
         // Space to show command picker
-        KeyCode::Char(' ') => {
+        (KeyCode::Char(' '), false) => {
             app.command_picker.show();
+            return false;
+        }
+
+        // Undo (u in normal mode)
+        (KeyCode::Char('u'), false) if app.mode.is_normal() => {
+            // Take history out temporarily to avoid borrow conflict
+            let mut history = std::mem::take(&mut app.history);
+            history.undo(app);
+            app.history = history;
+            return false;
+        }
+
+        // Redo (Ctrl+R)
+        (KeyCode::Char('r'), true) if app.mode.is_normal() => {
+            // Take history out temporarily to avoid borrow conflict
+            let mut history = std::mem::take(&mut app.history);
+            history.redo(app);
+            app.history = history;
+            return false;
+        }
+
+        // Jump back (Ctrl+O)
+        (KeyCode::Char('o'), true) => {
+            let current = app.current_jump_position();
+            if let Some(pos) = app.global_jumplist.go_back(current) {
+                app.goto_jump_position(&pos);
+            }
+            return false;
+        }
+
+        // Jump forward (Ctrl+I)
+        (KeyCode::Char('i'), true) => {
+            if let Some(pos) = app.global_jumplist.go_forward() {
+                app.goto_jump_position(&pos);
+            }
             return false;
         }
 
@@ -552,16 +589,15 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
             }
 
             // Main view tabs (the tabbed pane at top of main view)
+            // Use set_view_mode() to record position in global jumplist
             Some(AreaId::MainViewTabChannelRack) => {
                 if matches!(action, MouseAction::Click { .. }) {
-                    app.view_mode = crate::mode::ViewMode::ChannelRack;
-                    app.mode.switch_panel(Panel::ChannelRack);
+                    app.set_view_mode(crate::mode::ViewMode::ChannelRack);
                 }
             }
             Some(AreaId::MainViewTabPlaylist) => {
                 if matches!(action, MouseAction::Click { .. }) {
-                    app.view_mode = crate::mode::ViewMode::Playlist;
-                    app.mode.switch_panel(Panel::Playlist);
+                    app.set_view_mode(crate::mode::ViewMode::Playlist);
                 }
             }
 
@@ -848,7 +884,9 @@ fn execute_context_menu_action(
             }
         }
         ContextMenuAction::AssignSample => {
-            // Start selection mode and switch to browser
+            // Start selection mode and switch to browser - record position for Ctrl+O
+            let current = app.current_jump_position();
+            app.global_jumplist.push(current);
             if let Some(MenuContext::ChannelRack { channel }) = context {
                 app.browser.start_selection(channel);
             }
@@ -856,7 +894,9 @@ fn execute_context_menu_action(
             app.show_browser = true;
         }
         ContextMenuAction::AssignPlugin => {
-            // Start plugin selection mode and switch to browser
+            // Start plugin selection mode and switch to browser - record position for Ctrl+O
+            let current = app.current_jump_position();
+            app.global_jumplist.push(current);
             if let Some(MenuContext::ChannelRack { channel }) = context {
                 app.browser.start_selection(channel);
                 app.browser.mode = crate::browser::BrowserMode::Plugins;
@@ -865,11 +905,11 @@ fn execute_context_menu_action(
             app.show_browser = true;
         }
         ContextMenuAction::OpenPianoRoll => {
-            // Switch to piano roll view for the channel
+            // Switch to piano roll view for the channel - use set_view_mode for jumplist
             if let Some(MenuContext::ChannelRack { channel }) = context {
                 app.channel_rack.channel = channel;
             }
-            app.view_mode = crate::mode::ViewMode::PianoRoll;
+            app.set_view_mode(crate::mode::ViewMode::PianoRoll);
         }
 
         // Piano Roll actions
