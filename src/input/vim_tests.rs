@@ -532,6 +532,8 @@ fn test_dollar_goes_to_last_column() {
 fn test_g_goes_to_first_row() {
     let mut vim = create_vim();
     let cursor = Position::new(5, 5);
+    // Single 'g' enters g-prefix mode, need 'gg' to go to top
+    vim.process_key('g', false, cursor);
     let actions = vim.process_key('g', false, cursor);
     assert_eq!(get_cursor_move(&actions), Some(Position::new(0, 5)));
 }
@@ -942,6 +944,8 @@ fn test_shift_p_pastes_before_cursor() {
 fn test_gg_adds_to_jumplist() {
     let mut vim = create_vim();
     let cursor = Position::new(5, 5);
+    // Use 'gg' to go to top
+    vim.process_key('g', false, cursor);
     let actions = vim.process_key('g', false, cursor);
 
     // Should move to row 0
@@ -956,8 +960,9 @@ fn test_gg_adds_to_jumplist() {
 fn test_ctrl_o_jumps_back() {
     let mut vim = create_vim();
 
-    // Jump from (5, 5) to top
+    // Jump from (5, 5) to top using gg
     let cursor = Position::new(5, 5);
+    vim.process_key('g', false, cursor);
     vim.process_key('g', false, cursor);
 
     // Now at (0, 5), press Ctrl+o to go back
@@ -969,8 +974,9 @@ fn test_ctrl_o_jumps_back() {
 fn test_ctrl_i_jumps_forward() {
     let mut vim = create_vim();
 
-    // Jump from (5, 5) to top
+    // Jump from (5, 5) to top using gg
     let cursor = Position::new(5, 5);
+    vim.process_key('g', false, cursor);
     vim.process_key('g', false, cursor);
 
     // Now at (0, 5), go back with Ctrl+o
@@ -985,10 +991,11 @@ fn test_ctrl_i_jumps_forward() {
 fn test_multiple_jumps_and_navigation() {
     let mut vim = create_vim();
 
-    // Jump 1: from (0, 0) to top (already at top, but still records)
+    // Jump 1: from (0, 0) to bottom
     vim.process_key('G', false, Position::new(0, 0)); // Jump to row 7
 
-    // Jump 2: from (7, 0) to top
+    // Jump 2: from (7, 0) to top using gg
+    vim.process_key('g', false, Position::new(7, 0));
     vim.process_key('g', false, Position::new(7, 0)); // Jump to row 0
 
     // Now at (0, 0), go back twice
@@ -1659,4 +1666,110 @@ fn test_ctrl_y_stays_in_normal_mode() {
     let cursor = Position::new(2, 5);
     process_ctrl_key(&mut vim, 'y', cursor);
     assert_eq!(vim.mode(), VimMode::Normal);
+}
+
+// ============================================================================
+// 21. TAB SWITCHING (gt / gT)
+// ============================================================================
+
+#[test]
+fn test_g_enters_g_prefix_mode() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+    let actions = vim.process_key('g', false, cursor);
+
+    // g alone should enter GPrefix mode and not produce movement yet
+    assert!(vim.g_prefix);
+    // Should not have moved cursor yet (waiting for second key)
+    assert!(!has_action(&actions, |a| matches!(a, VimAction::MoveCursor(_))));
+}
+
+#[test]
+fn test_gg_goes_to_top() {
+    let mut vim = create_vim();
+    let cursor = Position::new(5, 5);
+
+    // First g
+    vim.process_key('g', false, cursor);
+    assert!(vim.g_prefix);
+
+    // Second g - should go to top
+    let actions = vim.process_key('g', false, cursor);
+    assert!(!vim.g_prefix); // Prefix cleared
+    assert_eq!(get_cursor_move(&actions), Some(Position::new(0, 5)));
+}
+
+#[test]
+fn test_gt_emits_next_tab() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+
+    // First g
+    vim.process_key('g', false, cursor);
+
+    // Then t - should emit NextTab
+    let actions = vim.process_key('t', false, cursor);
+    assert!(!vim.g_prefix);
+    assert!(has_action(&actions, |a| matches!(a, VimAction::NextTab)));
+}
+
+#[test]
+fn test_g_shift_t_emits_prev_tab() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+
+    // First g
+    vim.process_key('g', false, cursor);
+
+    // Then T (shift+t) - should emit PrevTab
+    let actions = vim.process_key('T', false, cursor);
+    assert!(!vim.g_prefix);
+    assert!(has_action(&actions, |a| matches!(a, VimAction::PrevTab)));
+}
+
+#[test]
+fn test_g_escape_cancels_prefix() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+
+    // First g
+    vim.process_key('g', false, cursor);
+    assert!(vim.g_prefix);
+
+    // Escape should cancel
+    vim.process_key('\x1b', false, cursor);
+    assert!(!vim.g_prefix);
+}
+
+#[test]
+fn test_g_other_key_cancels_prefix() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+
+    // First g
+    vim.process_key('g', false, cursor);
+    assert!(vim.g_prefix);
+
+    // Any other key should cancel prefix and be processed normally
+    let actions = vim.process_key('j', false, cursor);
+    assert!(!vim.g_prefix);
+    // j should still move down
+    assert_eq!(get_cursor_move(&actions), Some(Position::new(3, 5)));
+}
+
+#[test]
+fn test_gt_in_visual_mode() {
+    let mut vim = create_vim();
+    let cursor = Position::new(2, 5);
+
+    // Enter visual mode
+    vim.process_key('v', false, cursor);
+
+    // gt should still work
+    vim.process_key('g', false, cursor);
+    let actions = vim.process_key('t', false, cursor);
+
+    assert!(has_action(&actions, |a| matches!(a, VimAction::NextTab)));
+    // Should remain in visual mode
+    assert_eq!(vim.mode(), VimMode::Visual);
 }

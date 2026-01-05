@@ -257,6 +257,18 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
                 app.channel_rack.channel = app.channel_rack.viewport_top + visible_rows - 1;
             }
         }
+
+        VimAction::NextTab => {
+            // Switch to Playlist view and focus it
+            app.view_mode = ViewMode::Playlist;
+            app.mode.switch_panel(Panel::Playlist);
+        }
+
+        VimAction::PrevTab => {
+            // Switch to Playlist view (only 2 tabs, so same as next)
+            app.view_mode = ViewMode::Playlist;
+            app.mode.switch_panel(Panel::Playlist);
+        }
     }
 }
 
@@ -390,5 +402,163 @@ fn paste_at_cursor(app: &mut App, before: bool) {
                 }
             }
         }
+    }
+}
+
+// ============================================================================
+// Mouse handling
+// ============================================================================
+
+use super::mouse::MouseAction;
+
+/// Handle mouse actions for channel rack
+///
+/// This mirrors the keyboard handler pattern - receives actions from MouseState
+/// and executes component-specific behavior.
+pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
+    match action {
+        MouseAction::Click { x, y, .. } => {
+            // Look up which cell was clicked
+            if let Some((row, vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
+                // Exit visual mode if active
+                if app.vim_channel_rack.is_visual() {
+                    let vim_col_current: VimCol = app.channel_rack.col.into();
+                    let cursor = Position::new(app.channel_rack.channel, vim_col_current.0);
+                    let actions = app.vim_channel_rack.process_key('\x1b', false, cursor);
+                    for action in actions {
+                        execute_vim_action(action, app);
+                    }
+                }
+
+                // Move cursor to clicked cell
+                app.channel_rack.channel = row.min(98);
+                app.channel_rack.col = AppCol::from(VimCol(vim_col)).clamp();
+                update_viewport(app);
+
+                // Handle zone-specific click behavior
+                let col = AppCol::from(VimCol(vim_col));
+                if col.is_mute_zone() {
+                    // Click on mute column - cycle mute state
+                    if let Some(channel) = app.channels.get_mut(row) {
+                        channel.cycle_mute_state();
+                        app.mark_dirty();
+                    }
+                } else if col.is_step_zone() {
+                    // Click on step - toggle it (if sampler channel)
+                    if let Some(channel) = app.channels.get(row) {
+                        use crate::sequencer::ChannelType;
+                        if matches!(&channel.channel_type, ChannelType::Plugin { .. }) {
+                            // Plugin channels open piano roll on click
+                            app.set_view_mode(ViewMode::PianoRoll);
+                        } else {
+                            // Toggle step for sampler channels
+                            app.toggle_step();
+                        }
+                    } else {
+                        // Empty slot - toggle anyway
+                        app.toggle_step();
+                    }
+                }
+                // Sample zone click just moves cursor
+            }
+        }
+
+        MouseAction::DoubleClick { x, y } => {
+            // Double-click to preview sample
+            if let Some((row, vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
+                let col = AppCol::from(VimCol(vim_col));
+                if col.is_sample_zone() {
+                    // Preview the channel
+                    app.start_preview(row);
+                } else if col.is_sample_zone() {
+                    // Double-click sample zone to open browser
+                    app.browser.start_selection(row);
+                    app.mode.switch_panel(Panel::Browser);
+                    app.show_browser = true;
+                }
+            }
+        }
+
+        MouseAction::DragStart { x, y, .. } => {
+            // Start selection drag in step zone
+            if let Some((row, vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
+                let col = AppCol::from(VimCol(vim_col));
+                if col.is_step_zone() {
+                    // Move cursor to start position
+                    app.channel_rack.channel = row.min(98);
+                    app.channel_rack.col = col.clamp();
+                    update_viewport(app);
+
+                    // Enter visual block mode
+                    let cursor = Position::new(row, vim_col);
+                    let actions = app.vim_channel_rack.process_key('v', true, cursor); // Ctrl+v for block
+                    for action in actions {
+                        execute_vim_action(action, app);
+                    }
+                }
+            }
+        }
+
+        MouseAction::DragMove { x, y, .. } => {
+            // Extend selection
+            if app.vim_channel_rack.is_visual() {
+                if let Some((row, vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
+                    // Move cursor to extend selection
+                    app.channel_rack.channel = row.min(98);
+                    app.channel_rack.col = AppCol::from(VimCol(vim_col)).clamp();
+                    update_viewport(app);
+                }
+            }
+        }
+
+        MouseAction::DragEnd { .. } => {
+            // Selection is complete, vim stays in visual mode
+            // User can now press d/y/x to operate on selection
+        }
+
+        MouseAction::Scroll { delta, .. } => {
+            // Scroll viewport
+            if *delta < 0 {
+                // Scroll up
+                app.channel_rack.viewport_top = app.channel_rack.viewport_top.saturating_sub(3);
+            } else {
+                // Scroll down
+                app.channel_rack.viewport_top = (app.channel_rack.viewport_top + 3).min(98);
+            }
+        }
+
+        MouseAction::RightClick { x, y } => {
+            // Show context menu for channel rack
+            if let Some((row, _vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
+                use crate::sequencer::ChannelType;
+                use crate::ui::context_menu::{channel_rack_menu, MenuContext};
+
+                // Determine channel properties for menu
+                let (has_sample, is_plugin) = app
+                    .channels
+                    .get(row)
+                    .map(|ch| {
+                        let has_sample = ch.sample_path.is_some();
+                        let is_plugin = matches!(&ch.channel_type, ChannelType::Plugin { .. });
+                        (has_sample, is_plugin)
+                    })
+                    .unwrap_or((false, false));
+
+                let items = channel_rack_menu(has_sample, is_plugin);
+                let context = MenuContext::ChannelRack { channel: row };
+                app.context_menu.show(*x, *y, items, context);
+            }
+        }
+    }
+}
+
+/// Update viewport to keep cursor visible
+fn update_viewport(app: &mut App) {
+    let visible_rows = 15; // Approximate
+    if app.channel_rack.channel >= app.channel_rack.viewport_top + visible_rows {
+        app.channel_rack.viewport_top = app.channel_rack.channel - visible_rows + 1;
+    }
+    if app.channel_rack.channel < app.channel_rack.viewport_top {
+        app.channel_rack.viewport_top = app.channel_rack.channel;
     }
 }

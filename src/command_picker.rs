@@ -213,6 +213,27 @@ impl CommandPicker {
             c => c.to_string(),
         }
     }
+
+    /// Get a command by its flattened index (for mouse click handling)
+    /// Commands are enumerated in order across all groups.
+    pub fn get_command_at(&self, index: usize) -> Option<Command> {
+        let mut current_idx = 0;
+        for group in &self.groups {
+            for cmd in &group.commands {
+                if current_idx == index {
+                    return Some(*cmd);
+                }
+                current_idx += 1;
+            }
+        }
+        None
+    }
+
+    /// Get total number of commands (for area registration)
+    #[allow(dead_code)]
+    pub fn command_count(&self) -> usize {
+        self.groups.iter().map(|g| g.commands.len()).sum()
+    }
 }
 
 impl Default for CommandPicker {

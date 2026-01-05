@@ -10,6 +10,7 @@ use crate::audio::AudioHandle;
 use crate::browser::BrowserState;
 use crate::command_picker::CommandPicker;
 use crate::cursor::{ChannelRackCursor, MixerCursor, PianoRollCursor, PlaylistCursor};
+use crate::input::mouse::MouseState;
 use crate::input::vim::{GridSemantics, VimState, Zone};
 use crate::playback::{PlaybackEvent, PlaybackState};
 use crate::plugin_host::params::build_init_params;
@@ -18,6 +19,8 @@ use crate::project::{self, ProjectFile};
 use crate::sequencer::{
     default_channels, Channel, ChannelType, Pattern, YankedNote, YankedPlacement,
 };
+use crate::ui::areas::ScreenAreas;
+use crate::ui::context_menu::ContextMenu;
 use crate::ui::plugin_editor::PluginEditorState;
 
 // Re-export types from mode module for external use
@@ -103,6 +106,15 @@ pub struct App {
 
     /// Plugin editor modal
     pub plugin_editor: PluginEditorState,
+
+    /// Screen areas for mouse hit testing (populated during render)
+    pub screen_areas: ScreenAreas,
+
+    /// Mouse state machine (gesture tracking)
+    pub mouse: MouseState,
+
+    /// Context menu state
+    pub context_menu: ContextMenu,
 
     /// Dirty flag for auto-save
     dirty: bool,
@@ -198,6 +210,9 @@ impl App {
             browser: BrowserState::new(samples_path),
             command_picker: CommandPicker::new(),
             plugin_editor: PluginEditorState::new(),
+            screen_areas: ScreenAreas::new(),
+            mouse: MouseState::new(),
+            context_menu: ContextMenu::new(),
             dirty: false,
             last_change: Instant::now(),
             is_previewing: false,

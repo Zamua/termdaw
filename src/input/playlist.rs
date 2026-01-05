@@ -119,6 +119,18 @@ fn execute_playlist_vim_action(action: VimAction, app: &mut App) {
                 app.playlist.row = app.playlist.viewport_top + visible_rows - 1;
             }
         }
+
+        VimAction::NextTab => {
+            // Switch to Channel Rack view and focus it
+            app.view_mode = crate::mode::ViewMode::ChannelRack;
+            app.mode.switch_panel(crate::app::Panel::ChannelRack);
+        }
+
+        VimAction::PrevTab => {
+            // Switch to Channel Rack view (only 2 tabs, so same as next)
+            app.view_mode = crate::mode::ViewMode::ChannelRack;
+            app.mode.switch_panel(crate::app::Panel::ChannelRack);
+        }
     }
 }
 
@@ -282,5 +294,137 @@ fn paste_playlist_data(app: &mut App) {
             app.arrangement
                 .add_placement(PatternPlacement::new(yanked.pattern_id, new_bar));
         }
+    }
+}
+
+// ============================================================================
+// Mouse handling
+// ============================================================================
+
+use super::mouse::MouseAction;
+
+/// Handle mouse actions for playlist
+///
+/// This mirrors the keyboard handler pattern - receives actions from MouseState
+/// and executes component-specific behavior.
+pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
+    match action {
+        MouseAction::Click { x, y, .. } => {
+            // Look up which cell was clicked
+            if let Some((row, bar_col)) = app.screen_areas.playlist_cell_at(*x, *y) {
+                let pattern_count = get_playlist_pattern_count(app);
+
+                // Exit visual mode if active
+                if app.vim_playlist.is_visual() {
+                    let cursor = vim::Position::new(app.playlist.row, app.playlist.bar);
+                    let actions = app.vim_playlist.process_key('\x1b', false, cursor);
+                    for action in actions {
+                        execute_playlist_vim_action(action, app);
+                    }
+                }
+
+                // Move cursor
+                app.playlist.row = row.min(pattern_count.saturating_sub(1));
+                app.playlist.bar = bar_col.min(NUM_BARS);
+                update_playlist_viewport(app);
+
+                // Handle zone-specific click behavior
+                if bar_col == 0 {
+                    // Click on mute column
+                    handle_playlist_mute(app);
+                } else {
+                    // Click on bar - toggle placement
+                    handle_playlist_toggle(app);
+                }
+            }
+        }
+
+        MouseAction::DoubleClick { .. } => {
+            // Double-click doesn't have special behavior in playlist
+        }
+
+        MouseAction::DragStart { x, y, .. } => {
+            // Start selection drag
+            if let Some((row, bar_col)) = app.screen_areas.playlist_cell_at(*x, *y) {
+                let pattern_count = get_playlist_pattern_count(app);
+
+                // Move cursor to start position (skip mute column for selection)
+                if bar_col > 0 {
+                    app.playlist.row = row.min(pattern_count.saturating_sub(1));
+                    app.playlist.bar = bar_col.min(NUM_BARS);
+                    update_playlist_viewport(app);
+
+                    // Enter visual block mode
+                    let cursor = vim::Position::new(row, bar_col);
+                    let actions = app.vim_playlist.process_key('v', true, cursor); // Ctrl+v for block
+                    for action in actions {
+                        execute_playlist_vim_action(action, app);
+                    }
+                }
+            }
+        }
+
+        MouseAction::DragMove { x, y, .. } => {
+            // Extend selection
+            if app.vim_playlist.is_visual() {
+                if let Some((row, bar_col)) = app.screen_areas.playlist_cell_at(*x, *y) {
+                    let pattern_count = get_playlist_pattern_count(app);
+                    app.playlist.row = row.min(pattern_count.saturating_sub(1));
+                    app.playlist.bar = bar_col.min(NUM_BARS);
+                    update_playlist_viewport(app);
+                }
+            }
+        }
+
+        MouseAction::DragEnd { .. } => {
+            // Selection is complete, vim stays in visual mode
+        }
+
+        MouseAction::Scroll { delta, .. } => {
+            // Scroll viewport
+            let pattern_count = get_playlist_pattern_count(app);
+            if *delta < 0 {
+                // Scroll up
+                app.playlist.viewport_top = app.playlist.viewport_top.saturating_sub(3);
+            } else {
+                // Scroll down
+                app.playlist.viewport_top =
+                    (app.playlist.viewport_top + 3).min(pattern_count.saturating_sub(1));
+            }
+        }
+
+        MouseAction::RightClick { x, y } => {
+            // Show context menu for playlist
+            if let Some((row, bar_col)) = app.screen_areas.playlist_cell_at(*x, *y) {
+                use crate::ui::context_menu::{playlist_menu, MenuContext};
+
+                // Check if there's a placement at this position
+                let bar = bar_col.saturating_sub(1); // bar_col 0 is mute column
+                let has_placement = if bar_col > 0 {
+                    if let Some(pattern_id) = get_pattern_id_at_row(app, row) {
+                        app.arrangement.get_placement_at(pattern_id, bar).is_some()
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                let items = playlist_menu(has_placement);
+                let context = MenuContext::Playlist { row, bar };
+                app.context_menu.show(*x, *y, items, context);
+            }
+        }
+    }
+}
+
+/// Update playlist viewport to keep cursor visible
+fn update_playlist_viewport(app: &mut App) {
+    let visible_rows = 10; // Approximate
+    if app.playlist.row >= app.playlist.viewport_top + visible_rows {
+        app.playlist.viewport_top = app.playlist.row - visible_rows + 1;
+    }
+    if app.playlist.row < app.playlist.viewport_top {
+        app.playlist.viewport_top = app.playlist.row;
     }
 }

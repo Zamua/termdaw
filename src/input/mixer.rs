@@ -58,3 +58,113 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         _ => {}
     }
 }
+
+// ============================================================================
+// Mouse handling
+// ============================================================================
+
+use super::mouse::MouseAction;
+
+/// Handle mouse actions for mixer
+///
+/// This mirrors the keyboard handler pattern - receives actions from MouseState
+/// and executes component-specific behavior.
+pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
+    match action {
+        MouseAction::Click { x, y, .. } => {
+            // Check for mute button click
+            if let Some(ch_idx) = app.screen_areas.mixer_mute_at(*x, *y) {
+                app.mixer.selected_channel = ch_idx;
+                app.toggle_mute();
+                return;
+            }
+
+            // Check for solo button click
+            if let Some(ch_idx) = app.screen_areas.mixer_solo_at(*x, *y) {
+                app.mixer.selected_channel = ch_idx;
+                app.toggle_solo();
+                return;
+            }
+
+            // Check for fader click - select channel and set volume
+            if let Some((ch_idx, y_pos)) = app.screen_areas.mixer_fader_at(*x, *y) {
+                app.mixer.selected_channel = ch_idx;
+
+                // Calculate volume from y position (inverted - top = 1.0, bottom = 0.0)
+                if let Some(fader_rect) = app.screen_areas.mixer_faders.get(&ch_idx) {
+                    let volume = 1.0 - (y_pos as f32 / fader_rect.height.max(1) as f32);
+                    if let Some(channel) = app.channels.get_mut(ch_idx) {
+                        channel.volume = volume.clamp(0.0, 1.0);
+                        if channel.is_plugin() {
+                            app.audio.plugin_set_volume(ch_idx, channel.volume);
+                        }
+                        app.mark_dirty();
+                    }
+                }
+            }
+        }
+
+        MouseAction::DoubleClick { x, y } => {
+            // Double-click on fader to reset to 100%
+            if let Some((ch_idx, _)) = app.screen_areas.mixer_fader_at(*x, *y) {
+                if let Some(channel) = app.channels.get_mut(ch_idx) {
+                    channel.volume = 1.0;
+                    if channel.is_plugin() {
+                        app.audio.plugin_set_volume(ch_idx, channel.volume);
+                    }
+                    app.mark_dirty();
+                }
+            }
+        }
+
+        MouseAction::DragStart { x, y, .. } => {
+            // Start fader drag
+            if let Some((ch_idx, _)) = app.screen_areas.mixer_fader_at(*x, *y) {
+                app.mixer.selected_channel = ch_idx;
+            }
+        }
+
+        MouseAction::DragMove { y, .. } => {
+            // Adjust fader while dragging
+            let ch_idx = app.mixer.selected_channel;
+            if let Some(fader_rect) = app.screen_areas.mixer_faders.get(&ch_idx) {
+                // Calculate volume from absolute y position relative to fader
+                let relative_y = (*y).saturating_sub(fader_rect.y);
+                let volume = 1.0 - (relative_y as f32 / fader_rect.height.max(1) as f32);
+                if let Some(channel) = app.channels.get_mut(ch_idx) {
+                    channel.volume = volume.clamp(0.0, 1.0);
+                    if channel.is_plugin() {
+                        app.audio.plugin_set_volume(ch_idx, channel.volume);
+                    }
+                    app.mark_dirty();
+                }
+            }
+        }
+
+        MouseAction::DragEnd { .. } => {
+            // Fader drag complete
+        }
+
+        MouseAction::Scroll { x, y, delta } => {
+            // Scroll on fader to adjust volume
+            if let Some((ch_idx, _)) = app.screen_areas.mixer_fader_at(*x, *y) {
+                app.mixer.selected_channel = ch_idx;
+                // Scroll up = increase volume, scroll down = decrease
+                let adjustment = if *delta < 0 { 0.02 } else { -0.02 };
+                app.adjust_mixer_volume(adjustment);
+            }
+        }
+
+        MouseAction::RightClick { x, y } => {
+            // Show context menu for mixer
+            if let Some((ch_idx, _)) = app.screen_areas.mixer_fader_at(*x, *y) {
+                use crate::ui::context_menu::{mixer_menu, MenuContext};
+
+                app.mixer.selected_channel = ch_idx;
+                let items = mixer_menu();
+                let context = MenuContext::Mixer { channel: ch_idx };
+                app.context_menu.show(*x, *y, items, context);
+            }
+        }
+    }
+}

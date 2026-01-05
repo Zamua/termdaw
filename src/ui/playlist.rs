@@ -31,9 +31,10 @@ const HEADER_ROWS: u16 = 2;
 const NUM_BARS: usize = 16;
 
 /// Render the playlist
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.mode.current_panel() == Panel::Playlist;
-    let inner = render_panel_frame(frame, area, "Playlist", Panel::Playlist, app);
+    // No title needed (tab already says "Playlist")
+    let inner = render_panel_frame(frame, area, "", Panel::Playlist, app);
 
     if inner.height < HEADER_ROWS + 1 || inner.width < PATTERN_NAME_WIDTH + MUTE_WIDTH + BAR_WIDTH {
         return; // Not enough space

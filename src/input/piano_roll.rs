@@ -155,6 +155,18 @@ fn execute_piano_roll_vim_action(action: VimAction, app: &mut App) {
                 app.piano_roll.pitch = app.piano_roll.viewport_top.saturating_sub(visible_rows);
             }
         }
+
+        VimAction::NextTab => {
+            // Switch to Playlist view and focus it
+            app.view_mode = crate::mode::ViewMode::Playlist;
+            app.mode.switch_panel(crate::app::Panel::Playlist);
+        }
+
+        VimAction::PrevTab => {
+            // Switch to Playlist view (only 2 tabs, so same as next)
+            app.view_mode = crate::mode::ViewMode::Playlist;
+            app.mode.switch_panel(crate::app::Panel::Playlist);
+        }
     }
 }
 
@@ -395,6 +407,146 @@ fn paste_piano_roll_data(app: &mut App) {
 
                 let note = Note::new(new_pitch, new_step, yanked.duration);
                 pattern.add_note(channel, note);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Mouse handling
+// ============================================================================
+
+use super::mouse::MouseAction;
+
+/// Handle mouse actions for piano roll
+///
+/// This mirrors the keyboard handler pattern - receives actions from MouseState
+/// and executes component-specific behavior.
+pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
+    match action {
+        MouseAction::Click { x, y, .. } => {
+            // Look up which cell was clicked
+            if let Some((vim_row, step)) = app.screen_areas.piano_roll_cell_at(*x, *y) {
+                // Exit visual mode if active
+                if app.vim_piano_roll.is_visual() {
+                    let cursor_row = pitch_to_row(app.piano_roll.pitch);
+                    let cursor = vim::Position::new(cursor_row, app.piano_roll.step);
+                    let actions = app.vim_piano_roll.process_key('\x1b', false, cursor);
+                    for action in actions {
+                        execute_piano_roll_vim_action(action, app);
+                    }
+                }
+
+                // Convert vim row to pitch and move cursor
+                let pitch = row_to_pitch(vim_row).clamp(PIANO_MIN_PITCH, PIANO_MAX_PITCH);
+                app.piano_roll.pitch = pitch;
+                app.piano_roll.step = step.min(PIANO_NUM_STEPS - 1);
+                update_piano_viewport(app);
+
+                // Toggle note placement (like pressing x/Enter)
+                handle_piano_roll_toggle(app);
+            }
+        }
+
+        MouseAction::DoubleClick { x, y } => {
+            // Double-click to delete note at position
+            if let Some((vim_row, step)) = app.screen_areas.piano_roll_cell_at(*x, *y) {
+                let pitch = row_to_pitch(vim_row).clamp(PIANO_MIN_PITCH, PIANO_MAX_PITCH);
+                let channel = app.channel_rack.channel;
+
+                // Find and delete note at this position
+                let note_id = app
+                    .get_current_pattern()
+                    .and_then(|p| p.get_note_at(channel, pitch, step))
+                    .map(|n| n.id.clone());
+
+                if let Some(id) = note_id {
+                    if let Some(pattern) = app.get_current_pattern_mut() {
+                        pattern.remove_note(channel, &id);
+                        app.mark_dirty();
+                    }
+                }
+            }
+        }
+
+        MouseAction::DragStart { x, y, .. } => {
+            // Start note placement or selection
+            if let Some((vim_row, step)) = app.screen_areas.piano_roll_cell_at(*x, *y) {
+                let pitch = row_to_pitch(vim_row).clamp(PIANO_MIN_PITCH, PIANO_MAX_PITCH);
+                app.piano_roll.pitch = pitch;
+                app.piano_roll.step = step.min(PIANO_NUM_STEPS - 1);
+                update_piano_viewport(app);
+
+                // Start note placement
+                app.piano_roll.placing_note = Some(step);
+            }
+        }
+
+        MouseAction::DragMove { x, y, .. } => {
+            // Update end position for note being placed
+            if app.piano_roll.placing_note.is_some() {
+                if let Some((_vim_row, step)) = app.screen_areas.piano_roll_cell_at(*x, *y) {
+                    // Update step for note end (pitch stays at start)
+                    app.piano_roll.step = step.min(PIANO_NUM_STEPS - 1);
+                }
+            }
+        }
+
+        MouseAction::DragEnd { x, y, .. } => {
+            // Finish note placement
+            if let Some(start_step) = app.piano_roll.placing_note {
+                if let Some((_vim_row, end_step)) = app.screen_areas.piano_roll_cell_at(*x, *y) {
+                    let end_step = end_step.min(PIANO_NUM_STEPS - 1);
+                    let min_step = start_step.min(end_step);
+                    let max_step = start_step.max(end_step);
+                    let duration = max_step - min_step + 1;
+
+                    // Copy values before mutable borrow
+                    let pitch = app.piano_roll.pitch;
+                    let channel = app.channel_rack.channel;
+                    let note = crate::sequencer::Note::new(pitch, min_step, duration);
+                    if let Some(pattern) = app.get_current_pattern_mut() {
+                        pattern.add_note(channel, note);
+                    }
+                    app.mark_dirty();
+                }
+                app.piano_roll.placing_note = None;
+            }
+        }
+
+        MouseAction::Scroll { delta, .. } => {
+            // Scroll pitch viewport
+            if *delta < 0 {
+                // Scroll up (higher pitches)
+                app.piano_roll.viewport_top =
+                    (app.piano_roll.viewport_top + 3).min(PIANO_MAX_PITCH);
+            } else {
+                // Scroll down (lower pitches)
+                app.piano_roll.viewport_top = app
+                    .piano_roll
+                    .viewport_top
+                    .saturating_sub(3)
+                    .max(PIANO_MIN_PITCH + 20);
+            }
+        }
+
+        MouseAction::RightClick { x, y } => {
+            // Show context menu for piano roll
+            if let Some((vim_row, step)) = app.screen_areas.piano_roll_cell_at(*x, *y) {
+                use crate::ui::context_menu::{piano_roll_menu, MenuContext};
+
+                let pitch = row_to_pitch(vim_row).clamp(PIANO_MIN_PITCH, PIANO_MAX_PITCH);
+                let channel = app.channel_rack.channel;
+
+                // Check if there's a note at this position
+                let has_note = app
+                    .get_current_pattern()
+                    .and_then(|p| p.get_note_at(channel, pitch, step))
+                    .is_some();
+
+                let items = piano_roll_menu(has_note);
+                let context = MenuContext::PianoRoll { pitch, step };
+                app.context_menu.show(*x, *y, items, context);
             }
         }
     }

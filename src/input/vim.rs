@@ -264,6 +264,12 @@ pub enum VimAction {
     /// Scroll viewport by N lines (positive = down, negative = up)
     /// Used by Ctrl+e (scroll down) and Ctrl+y (scroll up)
     ScrollViewport(i32),
+
+    /// Switch to next tab (gt)
+    NextTab,
+
+    /// Switch to previous tab (gT)
+    PrevTab,
 }
 
 // ============================================================================
@@ -485,6 +491,9 @@ pub struct VimState<T: Clone = Vec<Vec<bool>>> {
 
     /// Last repeatable action for dot command
     last_action: Option<RepeatableAction>,
+
+    /// Whether 'g' prefix key has been pressed (for gg, gt, gT)
+    pub g_prefix: bool,
 }
 
 #[allow(dead_code)]
@@ -500,6 +509,7 @@ impl<T: Clone> VimState<T> {
             grid_semantics: None,
             jumplist: Jumplist::new(),
             last_action: None,
+            g_prefix: false,
         }
     }
 
@@ -515,6 +525,7 @@ impl<T: Clone> VimState<T> {
             grid_semantics: Some(semantics),
             jumplist: Jumplist::new(),
             last_action: None,
+            g_prefix: false,
         }
     }
 
@@ -599,7 +610,7 @@ impl<T: Clone> VimState<T> {
     pub fn process_key(&mut self, key: char, ctrl: bool, cursor: Position) -> Vec<VimAction> {
         let mut actions = Vec::new();
 
-        // Handle Escape - always returns to normal
+        // Handle Escape - always returns to normal and clears g_prefix
         if key == '\x1b' {
             // ESC
             let prev_mode = self.mode;
@@ -610,6 +621,39 @@ impl<T: Clone> VimState<T> {
             }
             actions.push(VimAction::Escape);
             return actions;
+        }
+
+        // Handle g-prefix mode (waiting for second key after 'g')
+        if self.g_prefix {
+            self.g_prefix = false; // Always clear the prefix
+            match key {
+                'g' => {
+                    // gg - go to top
+                    let new_pos = Position::new(0, cursor.col);
+                    if self.mode.is_visual() {
+                        // In visual mode, extend selection
+                        actions.push(VimAction::MoveCursor(new_pos));
+                        actions.push(VimAction::SelectionChanged(self.get_selection(new_pos)));
+                    } else {
+                        self.jumplist.push(cursor);
+                        actions.push(VimAction::MoveCursor(new_pos));
+                    }
+                    return actions;
+                }
+                't' => {
+                    // gt - next tab
+                    actions.push(VimAction::NextTab);
+                    return actions;
+                }
+                'T' => {
+                    // gT - previous tab
+                    actions.push(VimAction::PrevTab);
+                    return actions;
+                }
+                _ => {
+                    // Unknown g-command, fall through to normal key processing
+                }
+            }
         }
 
         // Handle based on current mode
@@ -759,12 +803,12 @@ impl<T: Clone> VimState<T> {
                 actions.push(VimAction::MoveCursor(Position::new(cursor.row, target_col)));
             }
 
-            // Top/bottom (jump movements - add to jumplist)
+            // g-prefix commands (gg, gt, gT)
             'g' => {
-                // gg - go to top (simplified, real vim waits for second g)
-                self.jumplist.push(cursor); // Save current position before jumping
-                actions.push(VimAction::MoveCursor(Position::new(0, cursor.col)));
+                // Enter g-prefix mode, waiting for second key
+                self.g_prefix = true;
             }
+            // G - go to bottom (jump movement)
             'G' => {
                 self.jumplist.push(cursor); // Save current position before jumping
                 let last_row = self.dimensions.rows.saturating_sub(1);
@@ -924,9 +968,8 @@ impl<T: Clone> VimState<T> {
                 actions.push(VimAction::SelectionChanged(self.get_selection(new_pos)));
             }
             'g' => {
-                let new_pos = Position::new(0, cursor.col);
-                actions.push(VimAction::MoveCursor(new_pos));
-                actions.push(VimAction::SelectionChanged(self.get_selection(new_pos)));
+                // Enter g-prefix mode (gg will be handled specially in visual)
+                self.g_prefix = true;
             }
             'G' => {
                 let last_row = self.dimensions.rows.saturating_sub(1);
@@ -1256,6 +1299,7 @@ impl<T: Clone> VimState<T> {
         self.operator = None;
         self.visual_anchor = None;
         self.count = None;
+        self.g_prefix = false;
     }
 }
 

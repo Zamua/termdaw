@@ -8,11 +8,12 @@ use ratatui::{
     Frame,
 };
 
+use super::areas::AreaId;
 use crate::app::App;
 use crate::command_picker::CommandPicker;
 
 /// Render the command picker overlay (or input mode)
-pub fn render(frame: &mut Frame, app: &App) {
+pub fn render(frame: &mut Frame, app: &mut App) {
     // Render input mode if active
     if app.command_picker.input.active {
         render_input_mode(frame, app);
@@ -32,6 +33,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let popup_area = centered_rect(popup_width, popup_height, area);
 
+    // Register command picker area
+    app.screen_areas.register(AreaId::CommandPicker, popup_area);
+
     // Clear the area behind the popup
     frame.render_widget(Clear, popup_area);
 
@@ -45,13 +49,20 @@ pub fn render(frame: &mut Frame, app: &App) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    // Render command groups
-    render_commands(frame, inner, &app.command_picker);
+    // Render command groups and register command items
+    render_commands(frame, inner, &app.command_picker, &mut app.screen_areas);
 }
 
 /// Render the command groups
-fn render_commands(frame: &mut Frame, area: Rect, picker: &CommandPicker) {
+fn render_commands(
+    frame: &mut Frame,
+    area: Rect,
+    picker: &CommandPicker,
+    screen_areas: &mut super::areas::ScreenAreas,
+) {
     let mut lines: Vec<Line> = Vec::new();
+    let mut y_offset = 0u16;
+    let mut cmd_idx = 0usize;
 
     for group in &picker.groups {
         // Group header
@@ -61,9 +72,15 @@ fn render_commands(frame: &mut Frame, area: Rect, picker: &CommandPicker) {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )));
+        y_offset += 1;
 
         // Commands in single column
         for cmd in &group.commands {
+            // Register command item area
+            let item_rect = Rect::new(area.x, area.y + y_offset, area.width, 1);
+            screen_areas.command_picker_items.push(item_rect);
+            cmd_idx += 1;
+
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
@@ -75,11 +92,15 @@ fn render_commands(frame: &mut Frame, area: Rect, picker: &CommandPicker) {
                 Span::raw("  "),
                 Span::styled(cmd.label(), Style::default().fg(Color::White)),
             ]));
+            y_offset += 1;
         }
 
         // Blank line between groups
         lines.push(Line::from(""));
+        y_offset += 1;
     }
+
+    let _ = cmd_idx; // Suppress unused warning
 
     // Footer
     lines.push(Line::from(vec![
@@ -92,7 +113,7 @@ fn render_commands(frame: &mut Frame, area: Rect, picker: &CommandPicker) {
 }
 
 /// Render the input mode overlay (tempo entry, etc.)
-fn render_input_mode(frame: &mut Frame, app: &App) {
+fn render_input_mode(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     // Small centered popup
