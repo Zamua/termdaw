@@ -125,16 +125,20 @@ fn render_row(
     let is_cursor_row = focused && app.piano_roll.pitch == pitch;
     let is_black = is_black_key(pitch);
 
-    // Map this row to a channel index (for displaying channel list alongside pitches)
+    // Map this row to a generator index (for displaying generator list alongside pitches)
     let channel_idx = viewport_top + row_idx;
-    let channel = app.channels.get(channel_idx);
+    let generator = app.generators.get(channel_idx);
     let is_selected_channel = channel_idx == selected_channel;
 
+    // Get mute/solo state from the mixer track this generator routes to
+    let track_id = app.mixer.get_generator_track(channel_idx);
+    let mixer_track = app.mixer.track(track_id);
+
     // === MUTE ZONE ===
-    let (mute_char, mute_color) = if let Some(ch) = channel {
-        if ch.solo {
+    let (mute_char, mute_color) = if generator.is_some() {
+        if mixer_track.solo {
             ("S", Color::Yellow)
-        } else if ch.muted {
+        } else if mixer_track.muted {
             ("M", Color::Red)
         } else {
             ("○", Color::Green)
@@ -153,16 +157,20 @@ fn render_row(
     ));
 
     // === CHANNEL NAME ZONE ===
-    // Show all channels, highlight selected one
-    let channel_display = if let Some(ch) = channel {
-        if ch.is_plugin() || ch.sample_path.is_some() {
+    // Show all generators, highlight selected one
+    let channel_display = if let Some(gen) = generator {
+        if gen.is_plugin() || gen.sample_path.is_some() {
             format!(
                 "{:<width$}",
-                &ch.name[..ch.name.len().min(SAMPLE_WIDTH as usize - 1)],
+                &gen.name[..gen.name.len().min(SAMPLE_WIDTH as usize - 1)],
                 width = SAMPLE_WIDTH as usize - 1
             )
         } else {
-            format!("{:<width$}", "(empty)", width = SAMPLE_WIDTH as usize - 1)
+            format!(
+                "{:<width$}",
+                format!("Slot {}", channel_idx + 1),
+                width = SAMPLE_WIDTH as usize - 1
+            )
         }
     } else {
         format!(

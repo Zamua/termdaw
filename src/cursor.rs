@@ -70,10 +70,3 @@ impl Default for PlaylistCursor {
         }
     }
 }
-
-/// Mixer cursor state
-#[derive(Debug, Clone, Default)]
-pub struct MixerCursor {
-    /// Currently selected channel in mixer
-    pub selected_channel: usize,
-}

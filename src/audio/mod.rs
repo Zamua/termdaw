@@ -5,6 +5,7 @@
 //! - Real-time mixing in audio callback
 //! - Plugin hosting via CLAP
 //! - Master and per-channel volume control
+//! - Per-track mixing with routing (FL Studio-style mixer)
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -18,6 +19,8 @@ use cpal::{SampleFormat, Stream, StreamConfig};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use rodio::{Decoder, Source};
 
+use crate::effects::{create_effect, Effect, EffectParamId, EffectSlot, EffectType, EFFECT_SLOTS};
+use crate::mixer::{StereoLevels, NUM_TRACKS};
 use crate::plugin_host::{ActivePluginProcessor, ParamChange};
 
 /// Maximum number of simultaneous sample playbacks
@@ -26,17 +29,70 @@ const MAX_VOICES: usize = 32;
 /// Number of samples to keep for waveform visualization
 const WAVEFORM_BUFFER_SIZE: usize = 512;
 
+/// Maximum buffer size for per-track mixing (stereo samples)
+const MAX_TRACK_BUFFER_SIZE: usize = 4096;
+
+/// Number of generator slots (for generator→track routing)
+const MAX_GENERATORS: usize = 99;
+
 /// Shared waveform buffer for visualization
 pub type WaveformBuffer = Arc<Mutex<Vec<f32>>>;
+
+/// Shared peak levels buffer (updated by audio thread, read by UI)
+pub type PeakLevelsBuffer = Arc<Mutex<[StereoLevels; NUM_TRACKS]>>;
+
+/// Minimal mixer state for audio thread (no strings, no UI state)
+/// Sent atomically from main thread when mixer config changes
+#[derive(Debug, Clone)]
+pub struct AudioMixerState {
+    /// Volume per track (0.0-1.0)
+    pub track_volumes: [f32; NUM_TRACKS],
+    /// Pan per track (-1.0 to 1.0)
+    pub track_pans: [f32; NUM_TRACKS],
+    /// Effective mute state (includes solo logic)
+    pub track_mutes: [bool; NUM_TRACKS],
+}
+
+impl Default for AudioMixerState {
+    fn default() -> Self {
+        Self {
+            track_volumes: [0.8; NUM_TRACKS],
+            track_pans: [0.0; NUM_TRACKS],
+            track_mutes: [false; NUM_TRACKS],
+        }
+    }
+}
+
+impl AudioMixerState {
+    /// Apply pan law to get L/R gains (constant-power pan law)
+    pub fn pan_gains(&self, track: usize) -> (f32, f32) {
+        let pan = self.track_pans[track];
+        // Constant power pan law: at center both channels are at ~0.707
+        let angle = (pan + 1.0) * std::f32::consts::FRAC_PI_4; // 0 to PI/2
+        let left = angle.cos();
+        let right = angle.sin();
+        (left, right)
+    }
+}
+
+/// Per-track stereo buffer for mixing
+struct TrackBuffer {
+    left: Vec<f32>,
+    right: Vec<f32>,
+}
 
 /// Commands sent to the audio engine
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum AudioCommand {
     /// Play a sample (polyphonic - can overlap)
-    PlaySample { path: PathBuf, volume: f32 },
+    PlaySample {
+        path: PathBuf,
+        volume: f32,
+        generator_idx: usize,
+    },
     /// Preview a sample (exclusive - stops previous preview)
-    PreviewSample { path: PathBuf },
+    PreviewSample { path: PathBuf, generator_idx: usize },
     /// Stop the current preview
     StopPreview,
     /// Stop all playback
@@ -61,6 +117,31 @@ pub enum AudioCommand {
     },
     /// Set plugin channel volume
     PluginSetVolume { channel: usize, volume: f32 },
+    /// Update mixer state (volumes, pans, mutes)
+    UpdateMixerState(AudioMixerState),
+    /// Set which mixer track a generator routes to
+    SetGeneratorTrack { generator: usize, track: usize },
+    /// Add or replace an effect on a track slot
+    SetEffect {
+        track: usize,
+        slot: usize,
+        effect_type: Option<EffectType>,
+    },
+    /// Set an effect parameter value
+    SetEffectParam {
+        track: usize,
+        slot: usize,
+        param_id: EffectParamId,
+        value: f32,
+    },
+    /// Enable or bypass an effect
+    SetEffectEnabled {
+        track: usize,
+        slot: usize,
+        enabled: bool,
+    },
+    /// Update tempo for tempo-synced effects
+    UpdateTempo(f64),
 }
 
 /// A loaded sample as raw audio data
@@ -84,6 +165,8 @@ struct Voice {
     volume: f32,
     /// Whether this is a preview (exclusive)
     is_preview: bool,
+    /// Generator index (for routing to mixer track)
+    generator_idx: usize,
 }
 
 /// A MIDI note event pending for a plugin
@@ -142,6 +225,21 @@ struct AudioState {
     waveform_buffer: WaveformBuffer,
     /// Write position in waveform buffer
     waveform_write_pos: usize,
+    /// Per-track stereo buffers for mixing
+    track_buffers: Vec<TrackBuffer>,
+    /// Mixer state (volumes, pans, mutes)
+    mixer_state: AudioMixerState,
+    /// Generator-to-track routing (generator_idx -> track_idx)
+    generator_tracks: [usize; MAX_GENERATORS],
+    /// Peak levels buffer (shared with UI for meter visualization)
+    peak_levels: PeakLevelsBuffer,
+    /// Effect processors per track (16 tracks x 8 slots)
+    /// None = empty slot, Some = active effect processor
+    track_effects: Vec<[Option<Box<dyn Effect>>; EFFECT_SLOTS]>,
+    /// Effect bypass state per track/slot (true = bypassed)
+    effect_bypassed: [[bool; EFFECT_SLOTS]; NUM_TRACKS],
+    /// Current tempo in BPM (for tempo-synced effects)
+    tempo_bpm: f64,
 }
 
 /// Handle for sending commands to the audio engine
@@ -152,22 +250,27 @@ pub struct AudioHandle {
     sample_rate: u32,
     /// Shared waveform buffer for visualization
     waveform_buffer: WaveformBuffer,
+    /// Shared peak levels buffer for mixer meters
+    peak_levels: PeakLevelsBuffer,
 }
 
 #[allow(dead_code)]
 impl AudioHandle {
     /// Play a sample at the given volume (polyphonic)
-    pub fn play_sample(&self, path: &Path, volume: f32) {
+    /// generator_idx is used for routing to the correct mixer track
+    pub fn play_sample(&self, path: &Path, volume: f32, generator_idx: usize) {
         let _ = self.tx.send(AudioCommand::PlaySample {
             path: path.to_path_buf(),
             volume,
+            generator_idx,
         });
     }
 
     /// Preview a sample (exclusive - stops previous preview)
-    pub fn preview_sample(&self, path: &Path) {
+    pub fn preview_sample(&self, path: &Path, generator_idx: usize) {
         let _ = self.tx.send(AudioCommand::PreviewSample {
             path: path.to_path_buf(),
+            generator_idx,
         });
     }
 
@@ -242,6 +345,65 @@ impl AudioHandle {
     pub fn waveform_buffer(&self) -> &WaveformBuffer {
         &self.waveform_buffer
     }
+
+    /// Update the mixer state (volumes, pans, mutes)
+    pub fn update_mixer_state(&self, state: AudioMixerState) {
+        let _ = self.tx.send(AudioCommand::UpdateMixerState(state));
+    }
+
+    /// Set which mixer track a generator routes to
+    pub fn set_generator_track(&self, generator: usize, track: usize) {
+        let _ = self
+            .tx
+            .send(AudioCommand::SetGeneratorTrack { generator, track });
+    }
+
+    /// Get current peak levels for all tracks (for UI meters)
+    pub fn get_peak_levels(&self) -> [StereoLevels; NUM_TRACKS] {
+        if let Ok(levels) = self.peak_levels.lock() {
+            *levels
+        } else {
+            [StereoLevels::default(); NUM_TRACKS]
+        }
+    }
+
+    /// Get a reference to the peak levels buffer
+    pub fn peak_levels_buffer(&self) -> &PeakLevelsBuffer {
+        &self.peak_levels
+    }
+
+    /// Set or remove an effect on a mixer track slot
+    pub fn set_effect(&self, track: usize, slot: usize, effect_type: Option<EffectType>) {
+        let _ = self.tx.send(AudioCommand::SetEffect {
+            track,
+            slot,
+            effect_type,
+        });
+    }
+
+    /// Set an effect parameter value
+    pub fn set_effect_param(&self, track: usize, slot: usize, param_id: EffectParamId, value: f32) {
+        let _ = self.tx.send(AudioCommand::SetEffectParam {
+            track,
+            slot,
+            param_id,
+            value,
+        });
+    }
+
+    /// Enable or bypass an effect
+    pub fn set_effect_enabled(&self, track: usize, slot: usize, enabled: bool) {
+        let _ = self.tx.send(AudioCommand::SetEffectEnabled {
+            track,
+            slot,
+            enabled,
+        });
+    }
+
+    /// Update tempo for tempo-synced effects
+    pub fn update_tempo(&self, bpm: f64) {
+        let _ = self.tx.send(AudioCommand::UpdateTempo(bpm));
+    }
 }
 
 /// Audio engine with cpal stream
@@ -274,6 +436,26 @@ impl AudioEngine {
         // Create shared waveform buffer for visualization
         let waveform_buffer: WaveformBuffer = Arc::new(Mutex::new(vec![0.0; WAVEFORM_BUFFER_SIZE]));
 
+        // Create shared peak levels buffer for mixer meters
+        let peak_levels: PeakLevelsBuffer =
+            Arc::new(Mutex::new([StereoLevels::default(); NUM_TRACKS]));
+
+        // Create per-track stereo buffers
+        let track_buffers: Vec<TrackBuffer> = (0..NUM_TRACKS)
+            .map(|_| TrackBuffer {
+                left: vec![0.0; MAX_TRACK_BUFFER_SIZE],
+                right: vec![0.0; MAX_TRACK_BUFFER_SIZE],
+            })
+            .collect();
+
+        // Default generator routing: all to track 1 (first non-master)
+        let generator_tracks = [1usize; MAX_GENERATORS];
+
+        // Initialize empty effect slots for all tracks
+        let track_effects: Vec<[Option<Box<dyn Effect>>; EFFECT_SLOTS]> = (0..NUM_TRACKS)
+            .map(|_| std::array::from_fn(|_| None))
+            .collect();
+
         let state = Arc::new(Mutex::new(AudioState {
             voices: Vec::with_capacity(MAX_VOICES),
             master_volume: 1.0,
@@ -284,6 +466,13 @@ impl AudioEngine {
             plugin_rx,
             waveform_buffer: waveform_buffer.clone(),
             waveform_write_pos: 0,
+            track_buffers,
+            mixer_state: AudioMixerState::default(),
+            generator_tracks,
+            peak_levels: peak_levels.clone(),
+            track_effects,
+            effect_bypassed: [[false; EFFECT_SLOTS]; NUM_TRACKS],
+            tempo_bpm: 140.0,
         }));
 
         let sample_rate_atomic = Arc::new(AtomicU32::new(sample_rate));
@@ -314,6 +503,7 @@ impl AudioEngine {
             plugin_tx,
             sample_rate,
             waveform_buffer,
+            peak_levels,
         };
 
         Ok((engine, handle))
@@ -361,34 +551,51 @@ impl AudioEngine {
         // Process commands (non-blocking)
         Self::process_commands_internal(&mut state);
 
+        // Receive any new plugin processors from main thread
+        Self::receive_plugins(&mut state);
+
         let master_volume = state.master_volume;
         let output_sample_rate = state.output_sample_rate;
-
-        // Clear output buffer
-        for sample in data.iter_mut() {
-            *sample = T::EQUILIBRIUM;
-        }
-
-        // Mix all active voices
         let num_frames = data.len() / channels;
 
-        // We need to iterate in a way that allows removal
-        let mut i = 0;
-        while i < state.voices.len() {
-            let voice = &mut state.voices[i];
+        // Ensure track buffers are large enough
+        for track_buf in &mut state.track_buffers {
+            if track_buf.left.len() < num_frames {
+                track_buf.left.resize(num_frames, 0.0);
+                track_buf.right.resize(num_frames, 0.0);
+            }
+        }
+
+        // Step 1: Clear all track buffers
+        for track_buf in &mut state.track_buffers {
+            for i in 0..num_frames {
+                track_buf.left[i] = 0.0;
+                track_buf.right[i] = 0.0;
+            }
+        }
+
+        // Step 2: Route voices to their assigned track buffers
+        // We need to split borrows to satisfy the borrow checker
+        // First, collect what we need to write, then write it
+        let mut voice_outputs: Vec<(usize, Vec<(f32, f32)>, bool)> = Vec::new(); // (target_track, samples, finished)
+
+        for voice in state.voices.iter() {
             let sample_data = &voice.sample.data;
             let voice_channels = voice.sample.channels as usize;
-            let voice_volume = voice.volume * master_volume;
+            let voice_volume = voice.volume;
+            let generator_idx = voice.generator_idx;
+            let sample_rate = voice.sample.sample_rate;
 
-            // Simple resampling ratio (crude but works for now)
-            let resample_ratio = voice.sample.sample_rate as f32 / output_sample_rate as f32;
+            // Get target track for this generator (previews use the same routing)
+            let target_track = *state.generator_tracks.get(generator_idx).unwrap_or(&1);
 
+            let resample_ratio = sample_rate as f32 / output_sample_rate as f32;
+            let mut samples = Vec::with_capacity(num_frames);
             let mut finished = false;
+            let mut pos = voice.position;
 
-            for frame in 0..num_frames {
-                // Calculate source frame position with resampling
-                // voice.position counts output frames, multiply by ratio to get source frame
-                let src_frame = (voice.position as f32 * resample_ratio) as usize;
+            for _ in 0..num_frames {
+                let src_frame = (pos as f32 * resample_ratio) as usize;
 
                 if src_frame * voice_channels >= sample_data.len() {
                     finished = true;
@@ -411,58 +618,125 @@ impl AudioEngine {
                     }
                 };
 
-                // Mix into output (assuming stereo output)
-                let out_idx = frame * channels;
-                if channels >= 2 {
-                    let current_left: f32 = data[out_idx].to_sample();
-                    let current_right: f32 = data[out_idx + 1].to_sample();
-                    data[out_idx] = T::from_sample(current_left + left);
-                    data[out_idx + 1] = T::from_sample(current_right + right);
-                } else if channels == 1 {
-                    let current: f32 = data[out_idx].to_sample();
-                    data[out_idx] = T::from_sample(current + (left + right) * 0.5);
-                }
-
-                voice.position += 1;
+                samples.push((left, right));
+                pos += 1;
             }
 
+            voice_outputs.push((target_track, samples, finished));
+        }
+
+        // Now apply the samples to track buffers and update voice positions
+        let mut voices_to_remove = Vec::new();
+
+        for (voice_idx, (target_track, samples, finished)) in voice_outputs.into_iter().enumerate()
+        {
+            // Write samples to track buffer
+            if target_track < NUM_TRACKS {
+                for (frame, (left, right)) in samples.iter().enumerate() {
+                    state.track_buffers[target_track].left[frame] += left;
+                    state.track_buffers[target_track].right[frame] += right;
+                }
+            }
+
+            // Update voice position
+            state.voices[voice_idx].position += samples.len();
+
             if finished {
-                state.voices.remove(i);
-            } else {
-                i += 1;
+                voices_to_remove.push(voice_idx);
             }
         }
 
-        // Receive any new plugin processors from main thread
-        Self::receive_plugins(&mut state);
+        // Remove finished voices (in reverse order to maintain indices)
+        for idx in voices_to_remove.into_iter().rev() {
+            state.voices.remove(idx);
+        }
 
-        // Process plugins and mix their output
-        Self::process_plugins(&mut state, data, channels, master_volume);
+        // Step 3: Process plugins and route to their assigned track buffers
+        Self::process_plugins_to_tracks(&mut state, num_frames);
 
-        // Soft clip to prevent harsh distortion
-        for sample in data.iter_mut() {
-            let s: f32 = sample.to_sample();
-            *sample = T::from_sample(s.clamp(-1.0, 1.0));
+        // Step 3.5: Process insert effects on each track buffer
+        Self::process_track_effects(&mut state, num_frames);
+
+        // Step 4: Apply mixer state and sum all tracks to master
+        // Process tracks 1-15 first, then apply their output to master (track 0)
+        for track_idx in 1..NUM_TRACKS {
+            let volume = state.mixer_state.track_volumes[track_idx];
+            let muted = state.mixer_state.track_mutes[track_idx];
+            let (pan_left, pan_right) = state.mixer_state.pan_gains(track_idx);
+
+            if muted {
+                // If muted, don't route to master
+                continue;
+            }
+
+            for frame in 0..num_frames {
+                let left = state.track_buffers[track_idx].left[frame] * volume * pan_left;
+                let right = state.track_buffers[track_idx].right[frame] * volume * pan_right;
+
+                // Route to master (track 0)
+                state.track_buffers[0].left[frame] += left;
+                state.track_buffers[0].right[frame] += right;
+            }
+        }
+
+        // Apply master volume and pan
+        let master_pan_left;
+        let master_pan_right;
+        {
+            let master_vol = state.mixer_state.track_volumes[0];
+            (master_pan_left, master_pan_right) = state.mixer_state.pan_gains(0);
+            for frame in 0..num_frames {
+                state.track_buffers[0].left[frame] *= master_vol * master_pan_left * master_volume;
+                state.track_buffers[0].right[frame] *=
+                    master_vol * master_pan_right * master_volume;
+            }
+        }
+
+        // Step 5: Calculate peak levels for all tracks (before soft clip)
+        let mut peak_levels = [StereoLevels::default(); NUM_TRACKS];
+        for (track_idx, track_buf) in state.track_buffers.iter().enumerate().take(NUM_TRACKS) {
+            let mut peak_left = 0.0f32;
+            let mut peak_right = 0.0f32;
+            for frame in 0..num_frames {
+                peak_left = peak_left.max(track_buf.left[frame].abs());
+                peak_right = peak_right.max(track_buf.right[frame].abs());
+            }
+            peak_levels[track_idx] = StereoLevels {
+                left: peak_left.min(1.0),
+                right: peak_right.min(1.0),
+            };
+        }
+
+        // Update shared peak levels buffer
+        if let Ok(mut shared_peaks) = state.peak_levels.try_lock() {
+            *shared_peaks = peak_levels;
+        }
+
+        // Step 6: Output master track to DAC
+        for frame in 0..num_frames {
+            let left = state.track_buffers[0].left[frame].clamp(-1.0, 1.0);
+            let right = state.track_buffers[0].right[frame].clamp(-1.0, 1.0);
+
+            let out_idx = frame * channels;
+            if channels >= 2 {
+                data[out_idx] = T::from_sample(left);
+                data[out_idx + 1] = T::from_sample(right);
+            } else if channels == 1 {
+                data[out_idx] = T::from_sample((left + right) * 0.5);
+            }
         }
 
         // Write samples to waveform buffer for visualization
-        // We only need mono for the waveform, so take left channel (or mix to mono)
         let waveform_buffer = state.waveform_buffer.clone();
         let mut write_pos = state.waveform_write_pos;
 
         if let Ok(mut waveform) = waveform_buffer.try_lock() {
             for frame in 0..num_frames {
-                let out_idx = frame * channels;
-                let sample: f32 = if channels >= 2 {
-                    // Mix stereo to mono
-                    let left: f32 = data[out_idx].to_sample();
-                    let right: f32 = data[out_idx + 1].to_sample();
-                    (left + right) * 0.5
-                } else {
-                    data[out_idx].to_sample()
-                };
-
-                waveform[write_pos] = sample;
+                // Use master track output for waveform
+                let sample = (state.track_buffers[0].left[frame]
+                    + state.track_buffers[0].right[frame])
+                    * 0.5;
+                waveform[write_pos] = sample.clamp(-1.0, 1.0);
                 write_pos = (write_pos + 1) % WAVEFORM_BUFFER_SIZE;
             }
         }
@@ -497,27 +771,30 @@ impl AudioEngine {
         }
     }
 
-    fn process_plugins<T: cpal::SizedSample + cpal::FromSample<f32> + cpal::Sample>(
-        state: &mut AudioState,
-        data: &mut [T],
-        channels: usize,
-        master_volume: f32,
-    ) where
-        f32: cpal::FromSample<T>,
-    {
+    /// Process plugins and route their output to assigned mixer track buffers
+    fn process_plugins_to_tracks(state: &mut AudioState, num_frames: usize) {
         use crate::plugin_host::MidiNote;
 
-        let num_frames = data.len() / channels;
         if num_frames == 0 {
             return;
         }
 
-        // Process each active plugin
-        for plugin_ch in state.plugin_channels.iter_mut().flatten() {
+        // Process each active plugin (channel index matches generator index)
+        for (channel_idx, plugin_opt) in state.plugin_channels.iter_mut().enumerate() {
+            let Some(plugin_ch) = plugin_opt else {
+                continue;
+            };
+
             // Ensure output buffers are large enough
             if plugin_ch.output_left.len() < num_frames {
                 plugin_ch.output_left.resize(num_frames, 0.0);
                 plugin_ch.output_right.resize(num_frames, 0.0);
+            }
+
+            // Clear plugin output buffers
+            for i in 0..num_frames {
+                plugin_ch.output_left[i] = 0.0;
+                plugin_ch.output_right[i] = 0.0;
             }
 
             // Convert pending notes to MidiNote format
@@ -549,21 +826,50 @@ impl AudioEngine {
                 &mut plugin_ch.output_right[..num_frames],
             );
 
-            // Mix plugin output into the main output with per-channel volume
-            let channel_volume = plugin_ch.volume;
-            for frame in 0..num_frames {
-                let out_idx = frame * channels;
-                let left = plugin_ch.output_left[frame] * channel_volume * master_volume;
-                let right = plugin_ch.output_right[frame] * channel_volume * master_volume;
+            // Get target track for this plugin's generator
+            let target_track = state
+                .generator_tracks
+                .get(channel_idx)
+                .copied()
+                .unwrap_or(1);
 
-                if channels >= 2 {
-                    let current_left: f32 = data[out_idx].to_sample();
-                    let current_right: f32 = data[out_idx + 1].to_sample();
-                    data[out_idx] = T::from_sample(current_left + left);
-                    data[out_idx + 1] = T::from_sample(current_right + right);
-                } else if channels == 1 {
-                    let current: f32 = data[out_idx].to_sample();
-                    data[out_idx] = T::from_sample(current + (left + right) * 0.5);
+            // Route plugin output to target track buffer with per-channel volume
+            let channel_volume = plugin_ch.volume;
+            if target_track < NUM_TRACKS {
+                for frame in 0..num_frames {
+                    let left = plugin_ch.output_left[frame] * channel_volume;
+                    let right = plugin_ch.output_right[frame] * channel_volume;
+                    state.track_buffers[target_track].left[frame] += left;
+                    state.track_buffers[target_track].right[frame] += right;
+                }
+            }
+        }
+    }
+
+    /// Process insert effects on each track buffer
+    fn process_track_effects(state: &mut AudioState, num_frames: usize) {
+        if num_frames == 0 {
+            return;
+        }
+
+        // We need to process effects for each track, but we can't borrow
+        // track_effects and track_buffers at the same time through state.
+        // Solution: process one track at a time using indices.
+        for track_idx in 0..NUM_TRACKS {
+            // Process each effect slot in order (serial chain)
+            for slot_idx in 0..EFFECT_SLOTS {
+                // Skip if bypassed
+                if state.effect_bypassed[track_idx][slot_idx] {
+                    continue;
+                }
+
+                // Take the effect temporarily to avoid borrow issues
+                if let Some(mut effect) = state.track_effects[track_idx][slot_idx].take() {
+                    // Process the track buffer in-place
+                    let buf = &mut state.track_buffers[track_idx];
+                    effect.process(&mut buf.left[..num_frames], &mut buf.right[..num_frames]);
+                    // Put the effect back
+                    state.track_effects[track_idx][slot_idx] = Some(effect);
                 }
             }
         }
@@ -572,13 +878,20 @@ impl AudioEngine {
     fn process_commands_internal(state: &mut AudioState) {
         while let Ok(cmd) = state.rx.try_recv() {
             match cmd {
-                AudioCommand::PlaySample { path, volume } => {
-                    Self::play_sample_internal(state, &path, volume, false);
+                AudioCommand::PlaySample {
+                    path,
+                    volume,
+                    generator_idx,
+                } => {
+                    Self::play_sample_internal(state, &path, volume, false, generator_idx);
                 }
-                AudioCommand::PreviewSample { path } => {
+                AudioCommand::PreviewSample {
+                    path,
+                    generator_idx,
+                } => {
                     // Stop existing preview
                     state.voices.retain(|v| !v.is_preview);
-                    Self::play_sample_internal(state, &path, 1.0, true);
+                    Self::play_sample_internal(state, &path, 1.0, true, generator_idx);
                 }
                 AudioCommand::StopPreview => {
                     state.voices.retain(|v| !v.is_preview);
@@ -634,11 +947,73 @@ impl AudioEngine {
                         plugin_ch.volume = volume.clamp(0.0, 1.0);
                     }
                 }
+                AudioCommand::UpdateMixerState(mixer_state) => {
+                    state.mixer_state = mixer_state;
+                }
+                AudioCommand::SetGeneratorTrack { generator, track } => {
+                    if generator < MAX_GENERATORS && track < NUM_TRACKS {
+                        state.generator_tracks[generator] = track;
+                    }
+                }
+                AudioCommand::SetEffect {
+                    track,
+                    slot,
+                    effect_type,
+                } => {
+                    if track < NUM_TRACKS && slot < EFFECT_SLOTS {
+                        let sample_rate = state.output_sample_rate as f32;
+                        let bpm = state.tempo_bpm;
+                        state.track_effects[track][slot] = effect_type.map(|et| {
+                            // Create a temporary slot with default params
+                            let slot_data = EffectSlot::new(et);
+                            create_effect(&slot_data, sample_rate, bpm)
+                        });
+                        state.effect_bypassed[track][slot] = false;
+                    }
+                }
+                AudioCommand::SetEffectParam {
+                    track,
+                    slot,
+                    param_id,
+                    value,
+                } => {
+                    if track < NUM_TRACKS && slot < EFFECT_SLOTS {
+                        if let Some(effect) = &mut state.track_effects[track][slot] {
+                            effect.set_param(param_id, value);
+                        }
+                    }
+                }
+                AudioCommand::SetEffectEnabled {
+                    track,
+                    slot,
+                    enabled,
+                } => {
+                    if track < NUM_TRACKS && slot < EFFECT_SLOTS {
+                        state.effect_bypassed[track][slot] = !enabled;
+                    }
+                }
+                AudioCommand::UpdateTempo(bpm) => {
+                    state.tempo_bpm = bpm;
+                    // Update all tempo-synced effects
+                    for track in &mut state.track_effects {
+                        for slot in track.iter_mut() {
+                            if let Some(effect) = slot {
+                                effect.set_tempo(bpm);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
-    fn play_sample_internal(state: &mut AudioState, path: &Path, volume: f32, is_preview: bool) {
+    fn play_sample_internal(
+        state: &mut AudioState,
+        path: &Path,
+        volume: f32,
+        is_preview: bool,
+        generator_idx: usize,
+    ) {
         // Load sample if not cached
         if !state.sample_cache.contains_key(path) {
             Self::load_sample(state, path);
@@ -659,6 +1034,7 @@ impl AudioEngine {
                 position: 0,
                 volume,
                 is_preview,
+                generator_idx,
             });
         }
     }

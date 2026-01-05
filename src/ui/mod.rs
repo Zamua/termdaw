@@ -6,6 +6,7 @@ mod channel_rack;
 pub mod colors;
 mod command_picker;
 pub mod context_menu;
+mod effect_editor;
 mod envelope;
 mod mixer;
 mod playlist;
@@ -99,6 +100,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Context menu (rendered on top of everything else)
     context_menu::render(frame, &app.context_menu, &mut app.screen_areas);
+
+    // Effect picker/editor modal
+    effect_editor::render(frame, app);
 }
 
 /// Render the main content area (browser + main view)

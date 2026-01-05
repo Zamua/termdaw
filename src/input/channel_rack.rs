@@ -12,19 +12,37 @@ use crate::plugin_host::params::build_editor_params;
 use super::common::key_to_vim_char;
 use super::vim::{Position, Range, RangeType, VimAction};
 
+/// Cycle mute state on the mixer track for a generator: normal -> muted -> solo -> normal
+fn cycle_generator_mute_state(app: &mut App, gen_idx: usize) {
+    let track_id = app.mixer.get_generator_track(gen_idx);
+    let track = app.mixer.track_mut(track_id);
+
+    if track.solo {
+        track.solo = false;
+        track.muted = false;
+    } else if track.muted {
+        track.muted = false;
+        track.solo = true;
+    } else {
+        track.muted = true;
+    }
+}
+
 /// Handle keyboard input for channel rack
 pub fn handle_key(key: KeyEvent, app: &mut App) {
     // Special keys not handled by vim
     match key.code {
         // 'm' to cycle mute state: normal -> muted -> solo -> normal
         KeyCode::Char('m') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(channel) = app.channels.get_mut(app.channel_rack.channel) {
-                channel.cycle_mute_state();
+            let gen_idx = app.channel_rack.channel;
+            if gen_idx < app.generators.len() {
+                cycle_generator_mute_state(app, gen_idx);
+                app.sync_mixer_to_audio();
                 app.mark_dirty();
             }
             return;
         }
-        // 's' to preview current channel's sample/plugin (hold for plugins)
+        // 's' to preview current generator's sample/plugin (hold for plugins)
         KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Start preview (release is handled at top level of handle_key)
             if !app.is_previewing {
@@ -32,28 +50,31 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             }
             return;
         }
-        // 'S' (shift+s) to toggle solo on current channel
+        // 'S' (shift+s) to toggle solo on current generator's mixer track
         KeyCode::Char('S') => {
-            if let Some(channel) = app.channels.get_mut(app.channel_rack.channel) {
-                channel.solo = !channel.solo;
+            let gen_idx = app.channel_rack.channel;
+            if gen_idx < app.generators.len() {
+                let track_id = app.mixer.get_generator_track(gen_idx);
+                app.mixer.toggle_solo(track_id);
+                app.sync_mixer_to_audio();
                 app.mark_dirty();
             }
             return;
         }
-        // 'i' to open piano roll for current channel
+        // 'i' to open piano roll for current generator
         KeyCode::Char('i') => {
             app.set_view_mode(ViewMode::PianoRoll);
             return;
         }
-        // 'p' to open plugin editor for plugin channels
+        // 'p' to open plugin editor for plugin generators
         KeyCode::Char('p') => {
-            use crate::sequencer::ChannelType;
-            if let Some(channel) = app.channels.get(app.channel_rack.channel) {
-                if let ChannelType::Plugin { .. } = &channel.channel_type {
+            use crate::sequencer::GeneratorType;
+            if let Some(generator) = app.generators.get(app.channel_rack.channel) {
+                if let GeneratorType::Plugin { .. } = &generator.generator_type {
                     // Build params list using stored values or defaults from registry
-                    let params = build_editor_params(&channel.plugin_params);
+                    let params = build_editor_params(&generator.plugin_params);
                     app.plugin_editor
-                        .open(app.channel_rack.channel, &channel.name, params);
+                        .open(app.channel_rack.channel, &generator.name, params);
                 }
             }
             return;
@@ -73,19 +94,19 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             } else {
                 // Create a new pattern
                 let new_id = app.patterns.len();
-                let num_channels = app.channels.len();
+                let num_generators = app.generators.len();
                 app.patterns
-                    .push(crate::sequencer::Pattern::new(new_id, num_channels, 16));
+                    .push(crate::sequencer::Pattern::new(new_id, num_generators, 16));
                 app.current_pattern = new_id;
             }
             app.mark_dirty();
             return;
         }
-        // 'd' in sample zone to delete channel
+        // 'd' in sample zone to delete generator
         KeyCode::Char('d') if app.cursor_zone() == "sample" => {
-            if app.channel_rack.channel < app.channels.len() {
-                // Remove the channel
-                app.channels.remove(app.channel_rack.channel);
+            if app.channel_rack.channel < app.generators.len() {
+                // Remove the generator
+                app.generators.remove(app.channel_rack.channel);
 
                 // Remove corresponding steps/notes from all patterns
                 for pattern in &mut app.patterns {
@@ -98,8 +119,9 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
                 }
 
                 // Adjust cursor if it's now out of bounds
-                if app.channel_rack.channel >= app.channels.len() && app.channel_rack.channel > 0 {
-                    app.channel_rack.channel = app.channels.len().saturating_sub(1);
+                if app.channel_rack.channel >= app.generators.len() && app.channel_rack.channel > 0
+                {
+                    app.channel_rack.channel = app.generators.len().saturating_sub(1);
                 }
 
                 app.mark_dirty();
@@ -110,9 +132,28 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         // In steps zone, let vim handle 'x' (for visual mode delete, counts, etc.)
         KeyCode::Char('x') | KeyCode::Enter if !app.channel_rack.col.is_step_zone() => {
             if app.channel_rack.col.is_mute_zone() {
-                // Cycle mute state: normal -> muted -> solo -> normal
-                if let Some(channel) = app.channels.get_mut(app.channel_rack.channel) {
-                    channel.cycle_mute_state();
+                // Cycle mute state on the mixer track
+                let gen_idx = app.channel_rack.channel;
+                if gen_idx < app.generators.len() {
+                    cycle_generator_mute_state(app, gen_idx);
+                    app.sync_mixer_to_audio();
+                    app.mark_dirty();
+                }
+            } else if app.channel_rack.col.is_track_zone() {
+                // Cycle to next mixer track (1-15, wrap around)
+                let gen_idx = app.channel_rack.channel;
+                if gen_idx < app.generators.len() {
+                    let current = app.mixer.get_generator_track(gen_idx);
+                    // Cycle through tracks 1-15 (skip master)
+                    let next = if current.index() >= 15 {
+                        1
+                    } else {
+                        current.index() + 1
+                    };
+                    app.mixer
+                        .generator_routing
+                        .set(gen_idx, crate::mixer::TrackId(next));
+                    app.audio.set_generator_track(gen_idx, next);
                     app.mark_dirty();
                 }
             } else if app.channel_rack.col.is_sample_zone() {
@@ -120,6 +161,42 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
                 app.browser.start_selection(app.channel_rack.channel);
                 app.mode.switch_panel(Panel::Browser);
                 app.show_browser = true;
+            }
+            return;
+        }
+        // '+' or '=' to increment track assignment (when in track zone)
+        KeyCode::Char('+') | KeyCode::Char('=') if app.channel_rack.col.is_track_zone() => {
+            let gen_idx = app.channel_rack.channel;
+            if gen_idx < app.generators.len() {
+                let current = app.mixer.get_generator_track(gen_idx);
+                let next = if current.index() >= 15 {
+                    1
+                } else {
+                    current.index() + 1
+                };
+                app.mixer
+                    .generator_routing
+                    .set(gen_idx, crate::mixer::TrackId(next));
+                app.audio.set_generator_track(gen_idx, next);
+                app.mark_dirty();
+            }
+            return;
+        }
+        // '-' to decrement track assignment (when in track zone)
+        KeyCode::Char('-') if app.channel_rack.col.is_track_zone() => {
+            let gen_idx = app.channel_rack.channel;
+            if gen_idx < app.generators.len() {
+                let current = app.mixer.get_generator_track(gen_idx);
+                let prev = if current.index() <= 1 {
+                    15
+                } else {
+                    current.index() - 1
+                };
+                app.mixer
+                    .generator_routing
+                    .set(gen_idx, crate::mixer::TrackId(prev));
+                app.audio.set_generator_track(gen_idx, prev);
+                app.mark_dirty();
             }
             return;
         }
@@ -189,9 +266,9 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
             // Only toggle step if in steps zone
             if app.channel_rack.col.is_step_zone() {
                 // For plugin channels, open piano roll instead of toggling step
-                if let Some(channel) = app.channels.get(app.channel_rack.channel) {
-                    use crate::sequencer::ChannelType;
-                    if matches!(&channel.channel_type, ChannelType::Plugin { .. }) {
+                if let Some(channel) = app.generators.get(app.channel_rack.channel) {
+                    use crate::sequencer::GeneratorType;
+                    if matches!(&channel.generator_type, GeneratorType::Plugin { .. }) {
                         app.set_view_mode(ViewMode::PianoRoll);
                         return;
                     }
@@ -438,20 +515,21 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                 // Handle zone-specific click behavior
                 let col = AppCol::from(VimCol(vim_col));
                 if col.is_mute_zone() {
-                    // Click on mute column - cycle mute state
-                    if let Some(channel) = app.channels.get_mut(row) {
-                        channel.cycle_mute_state();
+                    // Click on mute column - cycle mute state via mixer track
+                    if row < app.generators.len() {
+                        cycle_generator_mute_state(app, row);
+                        app.sync_mixer_to_audio();
                         app.mark_dirty();
                     }
                 } else if col.is_step_zone() {
-                    // Click on step - toggle it (if sampler channel)
-                    if let Some(channel) = app.channels.get(row) {
-                        use crate::sequencer::ChannelType;
-                        if matches!(&channel.channel_type, ChannelType::Plugin { .. }) {
-                            // Plugin channels open piano roll on click
+                    // Click on step - toggle it (if sampler generator)
+                    if let Some(generator) = app.generators.get(row) {
+                        use crate::sequencer::GeneratorType;
+                        if matches!(&generator.generator_type, GeneratorType::Plugin { .. }) {
+                            // Plugin generators open piano roll on click
                             app.set_view_mode(ViewMode::PianoRoll);
                         } else {
-                            // Toggle step for sampler channels
+                            // Toggle step for sampler generators
                             app.toggle_step();
                         }
                     } else {
@@ -530,16 +608,16 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
         MouseAction::RightClick { x, y } => {
             // Show context menu for channel rack
             if let Some((row, _vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
-                use crate::sequencer::ChannelType;
+                use crate::sequencer::GeneratorType;
                 use crate::ui::context_menu::{channel_rack_menu, MenuContext};
 
-                // Determine channel properties for menu
+                // Determine generator properties for menu
                 let (has_sample, is_plugin) = app
-                    .channels
+                    .generators
                     .get(row)
-                    .map(|ch| {
-                        let has_sample = ch.sample_path.is_some();
-                        let is_plugin = matches!(&ch.channel_type, ChannelType::Plugin { .. });
+                    .map(|gen| {
+                        let has_sample = gen.sample_path.is_some();
+                        let is_plugin = matches!(&gen.generator_type, GeneratorType::Plugin { .. });
                         (has_sample, is_plugin)
                     })
                     .unwrap_or((false, false));

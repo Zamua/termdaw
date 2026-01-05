@@ -106,6 +106,21 @@ pub enum AppMode {
         target: InputTarget,
         return_to: Panel,
     },
+
+    /// Effect type picker (choosing which effect to add to a slot)
+    EffectPicker {
+        track_idx: usize,
+        slot_idx: usize,
+        return_to: Panel,
+    },
+
+    /// Effect editor for a specific slot
+    EffectEditor {
+        track_idx: usize,
+        slot_idx: usize,
+        selected_param: usize,
+        return_to: Panel,
+    },
 }
 
 impl Default for AppMode {
@@ -125,6 +140,8 @@ impl AppMode {
             Self::PluginEditor { return_to, .. } => *return_to,
             Self::BrowserSelection { .. } => Panel::Browser,
             Self::TextInput { return_to, .. } => *return_to,
+            Self::EffectPicker { return_to, .. } => *return_to,
+            Self::EffectEditor { return_to, .. } => *return_to,
         }
     }
 
@@ -199,6 +216,37 @@ impl AppMode {
         *self = Self::TextInput { target, return_to };
     }
 
+    /// Open effect type picker for a slot
+    pub fn open_effect_picker(&mut self, track_idx: usize, slot_idx: usize) {
+        let return_to = self.current_panel();
+        *self = Self::EffectPicker {
+            track_idx,
+            slot_idx,
+            return_to,
+        };
+    }
+
+    /// Open effect editor for a slot
+    pub fn open_effect_editor(&mut self, track_idx: usize, slot_idx: usize) {
+        let return_to = self.current_panel();
+        *self = Self::EffectEditor {
+            track_idx,
+            slot_idx,
+            selected_param: 0,
+            return_to,
+        };
+    }
+
+    /// Check if effect picker is open
+    pub fn is_effect_picker(&self) -> bool {
+        matches!(self, Self::EffectPicker { .. })
+    }
+
+    /// Check if effect editor is open
+    pub fn is_effect_editor(&self) -> bool {
+        matches!(self, Self::EffectEditor { .. })
+    }
+
     /// Close current modal and return to previous mode
     pub fn close_modal(&mut self) {
         *self = match self {
@@ -206,6 +254,8 @@ impl AppMode {
             Self::PluginEditor { return_to, .. } => Self::Normal { panel: *return_to },
             Self::BrowserSelection { return_to, .. } => Self::Normal { panel: *return_to },
             Self::TextInput { return_to, .. } => Self::Normal { panel: *return_to },
+            Self::EffectPicker { return_to, .. } => Self::Normal { panel: *return_to },
+            Self::EffectEditor { return_to, .. } => Self::Normal { panel: *return_to },
             Self::Normal { panel } => Self::Normal { panel: *panel },
         };
     }

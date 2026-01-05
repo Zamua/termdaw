@@ -86,7 +86,11 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
                             .strip_prefix(app.browser.root_path())
                             .unwrap_or(&entry.path),
                     );
-                    app.audio.preview_sample(&full_path);
+                    let gen_idx = app
+                        .browser
+                        .target_channel
+                        .unwrap_or(app.channel_rack.channel);
+                    app.audio.preview_sample(&full_path, gen_idx);
                 }
             }
             return; // Don't trigger auto-preview
@@ -107,7 +111,11 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
                         .strip_prefix(app.browser.root_path())
                         .unwrap_or(&entry.path),
                 );
-                app.audio.preview_sample(&full_path);
+                let gen_idx = app
+                    .browser
+                    .target_channel
+                    .unwrap_or(app.channel_rack.channel);
+                app.audio.preview_sample(&full_path, gen_idx);
             }
         }
     }
@@ -142,7 +150,7 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                                     .strip_prefix(app.browser.root_path())
                                     .unwrap_or(&entry.path),
                             );
-                            app.audio.preview_sample(&full_path);
+                            app.audio.preview_sample(&full_path, app.channel_rack.channel);
                         }
                     }
                 }
@@ -181,7 +189,7 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                                 .strip_prefix(app.browser.root_path())
                                 .unwrap_or(&entry.path),
                         );
-                        app.audio.preview_sample(&full_path);
+                        app.audio.preview_sample(&full_path, app.channel_rack.channel);
                     }
                 }
             }

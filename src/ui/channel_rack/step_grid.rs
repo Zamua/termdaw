@@ -24,8 +24,8 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
     // Render header rows
     render_header(frame, inner, app, false);
 
-    // Get channels from app state
-    let channels = &app.channels;
+    // Get generators from app state
+    let generators = &app.generators;
 
     // Calculate visible rows
     let visible_rows = (inner.height - HEADER_ROWS) as usize;
@@ -46,9 +46,13 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
         let y = inner.y + HEADER_ROWS + row_idx as u16;
         let mut x = inner.x;
 
-        // Check if this slot has an allocated channel
-        let channel = channels.get(channel_idx);
-        let is_allocated = channel.is_some();
+        // Check if this slot has an allocated generator
+        let generator = generators.get(channel_idx);
+        let is_allocated = generator.is_some();
+
+        // Get mute/solo state from the mixer track this generator routes to
+        let track_id = app.mixer.get_generator_track(channel_idx);
+        let mixer_track = app.mixer.track(track_id);
 
         // === MUTE ZONE (col -2) - now comes first ===
         let mute_rect = Rect::new(x, y, MUTE_WIDTH, 1);
@@ -58,10 +62,10 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
 
         let is_mute_cursor =
             channel_idx == app.channel_rack.channel && app.channel_rack.col.is_mute_zone() && focused;
-        let (mute_char, mute_color) = if let Some(ch) = channel {
-            if ch.solo {
+        let (mute_char, mute_color) = if generator.is_some() {
+            if mixer_track.solo {
                 ("S", Color::Yellow)
-            } else if ch.muted {
+            } else if mixer_track.muted {
                 ("M", Color::Red)
             } else {
                 ("○", Color::Green)
@@ -110,16 +114,20 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
             Style::default().fg(Color::White)
         };
 
-        // Display channel name or empty slot indicator
-        let name_display = if let Some(ch) = channel {
-            if ch.is_plugin() || ch.sample_path.is_some() {
+        // Display generator name or slot indicator
+        let name_display = if let Some(gen) = generator {
+            if gen.is_plugin() || gen.sample_path.is_some() {
                 format!(
                     "{:<width$}",
-                    &ch.name[..ch.name.len().min(SAMPLE_WIDTH as usize - 1)],
+                    &gen.name[..gen.name.len().min(SAMPLE_WIDTH as usize - 1)],
                     width = SAMPLE_WIDTH as usize - 1
                 )
             } else {
-                format!("{:<width$}", "(empty)", width = SAMPLE_WIDTH as usize - 1)
+                format!(
+                    "{:<width$}",
+                    format!("Slot {}", channel_idx + 1),
+                    width = SAMPLE_WIDTH as usize - 1
+                )
             }
         } else {
             format!(

@@ -85,6 +85,16 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
         return handle_plugin_editor_key(key, app);
     }
 
+    // Handle effect picker modal
+    if app.mode.is_effect_picker() {
+        return handle_effect_picker_key(key, app);
+    }
+
+    // Handle effect editor modal
+    if app.mode.is_effect_editor() {
+        return handle_effect_editor_key(key, app);
+    }
+
     // Global keybindings (always active)
     match key.code {
         // Tab to cycle focus
@@ -265,6 +275,148 @@ fn handle_context_menu_key(key: KeyEvent, app: &mut App) -> bool {
     }
 }
 
+/// Handle effect picker modal keys
+fn handle_effect_picker_key(key: KeyEvent, app: &mut App) -> bool {
+    use crate::effects::EffectType;
+
+    match key.code {
+        // Escape closes picker
+        KeyCode::Esc => {
+            app.mode.close_modal();
+            false
+        }
+        // Navigate up/down
+        KeyCode::Char('j') | KeyCode::Down => {
+            let effect_count = EffectType::all().len();
+            if app.effect_picker_selection < effect_count - 1 {
+                app.effect_picker_selection += 1;
+            }
+            false
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if app.effect_picker_selection > 0 {
+                app.effect_picker_selection -= 1;
+            }
+            false
+        }
+        // Enter to add the selected effect
+        KeyCode::Enter => {
+            let effect_types = EffectType::all();
+            if app.effect_picker_selection < effect_types.len() {
+                let effect_type = effect_types[app.effect_picker_selection];
+                app.add_effect(effect_type);
+            }
+            app.effect_picker_selection = 0;
+            app.mode.close_modal();
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Handle effect editor modal keys
+fn handle_effect_editor_key(key: KeyEvent, app: &mut App) -> bool {
+    use crate::effects::get_param_defs;
+    use crate::mode::AppMode;
+
+    // Get current track/slot/param from mode
+    let (track_idx, slot_idx, selected_param) = match &app.mode {
+        AppMode::EffectEditor {
+            track_idx,
+            slot_idx,
+            selected_param,
+            ..
+        } => (*track_idx, *slot_idx, *selected_param),
+        _ => return false,
+    };
+
+    // Get the effect slot
+    let effect_slot = match &app.mixer.tracks[track_idx].effects[slot_idx] {
+        Some(slot) => slot.clone(),
+        None => {
+            app.mode.close_modal();
+            return false;
+        }
+    };
+
+    let param_defs = get_param_defs(effect_slot.effect_type);
+
+    match key.code {
+        // Escape closes editor
+        KeyCode::Esc => {
+            app.mode.close_modal();
+            false
+        }
+        // Navigate up/down
+        KeyCode::Char('j') | KeyCode::Down => {
+            if selected_param < param_defs.len() - 1 {
+                if let AppMode::EffectEditor {
+                    selected_param: ref mut p,
+                    ..
+                } = app.mode
+                {
+                    *p += 1;
+                }
+            }
+            false
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if selected_param > 0 {
+                if let AppMode::EffectEditor {
+                    selected_param: ref mut p,
+                    ..
+                } = app.mode
+                {
+                    *p -= 1;
+                }
+            }
+            false
+        }
+        // Adjust value: h/l = coarse, H/L = fine
+        KeyCode::Char('h') | KeyCode::Left => {
+            if selected_param < param_defs.len() {
+                let def = &param_defs[selected_param];
+                let current = effect_slot.get_param(def.id);
+                let step = (def.max - def.min) * 0.05; // 5% coarse step
+                let new_value = (current - step).max(def.min);
+                app.set_effect_param(def.id, new_value);
+            }
+            false
+        }
+        KeyCode::Char('l') | KeyCode::Right => {
+            if selected_param < param_defs.len() {
+                let def = &param_defs[selected_param];
+                let current = effect_slot.get_param(def.id);
+                let step = (def.max - def.min) * 0.05; // 5% coarse step
+                let new_value = (current + step).min(def.max);
+                app.set_effect_param(def.id, new_value);
+            }
+            false
+        }
+        KeyCode::Char('H') => {
+            if selected_param < param_defs.len() {
+                let def = &param_defs[selected_param];
+                let current = effect_slot.get_param(def.id);
+                let step = (def.max - def.min) * 0.01; // 1% fine step
+                let new_value = (current - step).max(def.min);
+                app.set_effect_param(def.id, new_value);
+            }
+            false
+        }
+        KeyCode::Char('L') => {
+            if selected_param < param_defs.len() {
+                let def = &param_defs[selected_param];
+                let current = effect_slot.get_param(def.id);
+                let step = (def.max - def.min) * 0.01; // 1% fine step
+                let new_value = (current + step).min(def.max);
+                app.set_effect_param(def.id, new_value);
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 /// Handle a mouse event
 ///
 /// This follows the same pattern as handle_key:
@@ -352,7 +504,7 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
                     } else {
                         // Create a new pattern
                         let new_id = app.patterns.len();
-                        let num_channels = app.channels.len();
+                        let num_channels = app.generators.len();
                         app.patterns
                             .push(crate::sequencer::Pattern::new(new_id, num_channels, 16));
                         app.current_pattern = new_id;
@@ -442,7 +594,7 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
                 }
             }
             Some(AreaId::Mixer) | Some(AreaId::MixerChannelStrip) => {
-                mixer::handle_mouse_action(&action, app);
+                // TODO: Mixer mouse handling needs to be reimplemented for track-based architecture
             }
 
             // Main view (fallback for general area clicks)
@@ -643,30 +795,34 @@ fn execute_context_menu_action(
         // Channel Rack actions
         ContextMenuAction::DeleteChannel => {
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                if let Some(ch) = app.channels.get_mut(channel) {
-                    // Reset channel to empty state
-                    ch.name = format!("Channel {}", channel + 1);
-                    ch.channel_type = crate::sequencer::ChannelType::Sampler;
-                    ch.sample_path = None;
-                    ch.plugin_params.clear();
+                if let Some(gen) = app.generators.get_mut(channel) {
+                    // Reset generator to empty state
+                    gen.name = format!("Channel {}", channel + 1);
+                    gen.generator_type = crate::sequencer::GeneratorType::Sampler;
+                    gen.sample_path = None;
+                    gen.plugin_params.clear();
                     app.mark_dirty();
                 }
             }
         }
         ContextMenuAction::MuteChannel => {
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                if let Some(ch) = app.channels.get_mut(channel) {
-                    ch.muted = !ch.muted;
-                    app.mark_dirty();
-                }
+                // Toggle mute on the mixer track this generator routes to
+                let track_id = app.mixer.get_generator_track(channel);
+                let track = app.mixer.track_mut(track_id);
+                track.muted = !track.muted;
+                app.sync_mixer_to_audio();
+                app.mark_dirty();
             }
         }
         ContextMenuAction::SoloChannel => {
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                if let Some(ch) = app.channels.get_mut(channel) {
-                    ch.solo = !ch.solo;
-                    app.mark_dirty();
-                }
+                // Toggle solo on the mixer track this generator routes to
+                let track_id = app.mixer.get_generator_track(channel);
+                let track = app.mixer.track_mut(track_id);
+                track.solo = !track.solo;
+                app.sync_mixer_to_audio();
+                app.mark_dirty();
             }
         }
         ContextMenuAction::PreviewChannel => {
@@ -676,18 +832,18 @@ fn execute_context_menu_action(
         }
         ContextMenuAction::DuplicateChannel => {
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                if let Some(ch) = app.channels.get(channel) {
-                    let new_channel = ch.clone();
+                if let Some(gen) = app.generators.get(channel) {
+                    let new_generator = gen.clone();
                     // Find first free slot (empty sampler with no sample)
-                    let free_slot = app.channels.iter().position(|c| {
-                        c.sample_path.is_none()
-                            && matches!(c.channel_type, crate::sequencer::ChannelType::Sampler)
+                    let free_slot = app.generators.iter().position(|g| {
+                        g.sample_path.is_none()
+                            && matches!(g.generator_type, crate::sequencer::GeneratorType::Sampler)
                     });
                     if let Some(slot) = free_slot {
-                        app.channels[slot] = new_channel;
+                        app.generators[slot] = new_generator;
                     } else {
                         // No free slot, append to end
-                        app.channels.push(new_channel);
+                        app.generators.push(new_generator);
                     }
                     app.mark_dirty();
                 }
@@ -766,32 +922,32 @@ fn execute_context_menu_action(
             }
         }
 
-        // Mixer actions
+        // Mixer actions - now operate on mixer tracks, not generators
         ContextMenuAction::ResetVolume => {
             if let Some(MenuContext::Mixer { channel }) = context {
-                if let Some(ch) = app.channels.get_mut(channel) {
-                    ch.volume = 0.8;
-                    if ch.is_plugin() {
-                        app.audio.plugin_set_volume(channel, ch.volume);
-                    }
-                    app.mark_dirty();
-                }
+                // channel here is a track index
+                let track_id = crate::mixer::TrackId(channel);
+                app.mixer.set_volume(track_id, 0.8);
+                app.sync_mixer_to_audio();
+                app.mark_dirty();
             }
         }
         ContextMenuAction::MuteTrack => {
             if let Some(MenuContext::Mixer { channel }) = context {
-                if let Some(ch) = app.channels.get_mut(channel) {
-                    ch.muted = !ch.muted;
-                    app.mark_dirty();
-                }
+                let track_id = crate::mixer::TrackId(channel);
+                let track = app.mixer.track_mut(track_id);
+                track.muted = !track.muted;
+                app.sync_mixer_to_audio();
+                app.mark_dirty();
             }
         }
         ContextMenuAction::SoloTrack => {
             if let Some(MenuContext::Mixer { channel }) = context {
-                if let Some(ch) = app.channels.get_mut(channel) {
-                    ch.solo = !ch.solo;
-                    app.mark_dirty();
-                }
+                let track_id = crate::mixer::TrackId(channel);
+                let track = app.mixer.track_mut(track_id);
+                track.solo = !track.solo;
+                app.sync_mixer_to_audio();
+                app.mark_dirty();
             }
         }
 
@@ -806,7 +962,7 @@ fn execute_context_menu_action(
                                 .strip_prefix(app.browser.root_path())
                                 .unwrap_or(&entry.path),
                         );
-                        app.audio.preview_sample(&full_path);
+                        app.audio.preview_sample(&full_path, app.channel_rack.channel);
                     }
                 }
             }

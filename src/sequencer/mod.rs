@@ -1,4 +1,8 @@
 //! Sequencer data structures and timing
+//!
+//! Generators are sound sources (samplers, plugins).
+//! They produce audio that gets routed to mixer tracks.
+//! Volume/mute/solo now live in the Mixer module.
 
 use std::collections::HashMap;
 
@@ -51,95 +55,84 @@ impl Note {
     }
 }
 
-/// Type of channel - determines how playback works
+/// Type of generator - determines how playback works
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub enum ChannelType {
-    /// Sample-based channel (plays audio files via step sequencer)
+#[serde(rename_all = "snake_case")]
+pub enum GeneratorType {
+    /// Sample-based generator (plays audio files via step sequencer)
     #[default]
     Sampler,
-    /// Plugin-based channel (plays MIDI notes through a CLAP plugin)
+    /// Plugin-based generator (plays MIDI notes through a CLAP plugin)
     Plugin { path: String },
 }
 
-/// A channel in the sequencer (e.g., Kick, Snare, etc.)
+/// A generator (sound source) in the sequencer
+///
+/// Generators produce audio that gets routed to mixer tracks.
+/// The routing is managed by the Mixer module, not stored here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Channel {
+pub struct Generator {
     pub name: String,
-    /// Channel type (sampler or plugin)
-    #[serde(default)]
-    pub channel_type: ChannelType,
-    /// Sample path (only used when channel_type is Sampler)
+    /// Generator type (sampler or plugin)
+    #[serde(default, alias = "channel_type")]
+    pub generator_type: GeneratorType,
+    /// Sample path (only used when generator_type is Sampler)
     pub sample_path: Option<String>,
-    pub volume: f32,
-    pub muted: bool,
-    pub solo: bool,
     /// Plugin parameter values (param_id -> value)
     #[serde(default)]
     pub plugin_params: HashMap<PluginParamId, f32>,
+    // NOTE: volume, muted, solo are now in MixerTrack
 }
 
 #[allow(dead_code)]
-impl Channel {
-    /// Create a new sampler channel
+impl Generator {
+    /// Create a new sampler generator
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            channel_type: ChannelType::Sampler,
+            generator_type: GeneratorType::Sampler,
             sample_path: None,
-            volume: 1.0,
-            muted: false,
-            solo: false,
             plugin_params: HashMap::new(),
         }
     }
 
-    /// Create a new plugin channel
+    /// Create a new plugin generator
     pub fn with_plugin(name: &str, plugin_path: &str) -> Self {
         Self {
             name: name.to_string(),
-            channel_type: ChannelType::Plugin {
+            generator_type: GeneratorType::Plugin {
                 path: plugin_path.to_string(),
             },
             sample_path: None,
-            volume: 1.0,
-            muted: false,
-            solo: false,
             plugin_params: HashMap::new(),
         }
     }
 
-    /// Check if this is a plugin channel
+    /// Check if this is a plugin generator
     pub fn is_plugin(&self) -> bool {
-        matches!(self.channel_type, ChannelType::Plugin { .. })
+        matches!(self.generator_type, GeneratorType::Plugin { .. })
     }
 
-    /// Get the plugin path if this is a plugin channel
+    /// Get the plugin path if this is a plugin generator
     pub fn plugin_path(&self) -> Option<&str> {
-        match &self.channel_type {
-            ChannelType::Plugin { path } => Some(path),
-            ChannelType::Sampler => None,
-        }
-    }
-
-    /// Cycle through mute states: unmuted -> muted -> solo -> unmuted
-    pub fn cycle_mute_state(&mut self) {
-        if self.solo {
-            self.solo = false;
-            self.muted = false;
-        } else if self.muted {
-            self.muted = false;
-            self.solo = true;
-        } else {
-            self.muted = true;
+        match &self.generator_type {
+            GeneratorType::Plugin { path } => Some(path),
+            GeneratorType::Sampler => None,
         }
     }
 }
 
-impl Default for Channel {
+impl Default for Generator {
     fn default() -> Self {
-        Self::new("New Channel")
+        Self::new("New Generator")
     }
 }
+
+// Type aliases for backward compatibility during migration
+#[allow(dead_code)]
+pub type Channel = Generator;
+#[allow(dead_code)]
+pub type ChannelType = GeneratorType;
 
 /// A pattern containing step data for all channels
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,18 +233,17 @@ impl Default for Pattern {
     }
 }
 
-/// Default channel configuration
-pub fn default_channels() -> Vec<Channel> {
-    vec![
-        Channel::new("Kick"),
-        Channel::new("Snare"),
-        Channel::new("HiHat"),
-        Channel::new("OpenHat"),
-        Channel::new("Crash"),
-        Channel::new("Tom Hi"),
-        Channel::new("Synth 1"),
-        Channel::new("Synth 2"),
-    ]
+/// Default generator configuration
+pub fn default_generators() -> Vec<Generator> {
+    (1..=8)
+        .map(|i| Generator::new(&format!("Slot {}", i)))
+        .collect()
+}
+
+// Alias for backward compatibility
+#[allow(dead_code)]
+pub fn default_channels() -> Vec<Generator> {
+    default_generators()
 }
 
 // ============================================================================

@@ -6,17 +6,22 @@
 // Allow dead code - these types define a complete API for future use
 #![allow(dead_code)]
 
-/// Channel rack column in app space: -2 (mute), -1 (sample), 0-15 (steps)
+/// Channel rack column in app space: -3 (mute), -2 (track), -1 (sample), 0-15 (steps)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct AppCol(pub i32);
 
 impl AppCol {
-    pub const MUTE_ZONE: Self = Self(-2);
+    pub const MUTE_ZONE: Self = Self(-3);
+    pub const TRACK_ZONE: Self = Self(-2);
     pub const SAMPLE_ZONE: Self = Self(-1);
     pub const FIRST_STEP: Self = Self(0);
     pub const LAST_STEP: Self = Self(15);
 
     pub fn is_mute_zone(self) -> bool {
+        self.0 == -3
+    }
+
+    pub fn is_track_zone(self) -> bool {
         self.0 == -2
     }
 
@@ -31,7 +36,8 @@ impl AppCol {
     /// Get the zone name for this column
     pub fn zone_name(self) -> &'static str {
         match self.0 {
-            -2 => "mute",
+            -3 => "mute",
+            -2 => "track",
             -1 => "sample",
             _ => "steps",
         }
@@ -55,24 +61,25 @@ impl AppCol {
     }
 
     pub fn clamp(self) -> Self {
-        Self(self.0.clamp(-2, 15))
+        Self(self.0.clamp(-3, 15))
     }
 }
 
-/// Channel rack column in vim space: 0-17 (0=mute, 1=sample, 2-17=steps)
+/// Channel rack column in vim space: 0-18 (0=mute, 1=track, 2=sample, 3-18=steps)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct VimCol(pub usize);
 
 impl VimCol {
     pub const MUTE_ZONE: Self = Self(0);
-    pub const SAMPLE_ZONE: Self = Self(1);
-    pub const FIRST_STEP: Self = Self(2);
-    pub const LAST_STEP: Self = Self(17);
+    pub const TRACK_ZONE: Self = Self(1);
+    pub const SAMPLE_ZONE: Self = Self(2);
+    pub const FIRST_STEP: Self = Self(3);
+    pub const LAST_STEP: Self = Self(18);
 
     /// Convert to step index if in step zone
     pub fn to_step(self) -> Option<usize> {
-        if self.0 >= 2 {
-            Some(self.0 - 2)
+        if self.0 >= 3 {
+            Some(self.0 - 3)
         } else {
             None
         }
@@ -82,14 +89,14 @@ impl VimCol {
 /// Conversion: VimCol -> AppCol
 impl From<VimCol> for AppCol {
     fn from(col: VimCol) -> Self {
-        AppCol(col.0 as i32 - 2)
+        AppCol(col.0 as i32 - 3)
     }
 }
 
 /// Conversion: AppCol -> VimCol
 impl From<AppCol> for VimCol {
     fn from(col: AppCol) -> Self {
-        VimCol((col.0 + 2).max(0) as usize)
+        VimCol((col.0 + 3).max(0) as usize)
     }
 }
 
@@ -185,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_app_vim_col_roundtrip() {
-        for i in -2..=15 {
+        for i in -3..=15 {
             let app = AppCol(i);
             let vim: VimCol = app.into();
             let back: AppCol = vim.into();
@@ -195,7 +202,8 @@ mod tests {
 
     #[test]
     fn test_app_col_zones() {
-        assert!(AppCol(-2).is_mute_zone());
+        assert!(AppCol(-3).is_mute_zone());
+        assert!(AppCol(-2).is_track_zone());
         assert!(AppCol(-1).is_sample_zone());
         assert!(AppCol(0).is_step_zone());
         assert!(AppCol(15).is_step_zone());
@@ -214,9 +222,10 @@ mod tests {
 
     #[test]
     fn test_vim_col_to_step() {
-        assert_eq!(VimCol(0).to_step(), None);
-        assert_eq!(VimCol(1).to_step(), None);
-        assert_eq!(VimCol(2).to_step(), Some(0));
-        assert_eq!(VimCol(17).to_step(), Some(15));
+        assert_eq!(VimCol(0).to_step(), None); // mute zone
+        assert_eq!(VimCol(1).to_step(), None); // track zone
+        assert_eq!(VimCol(2).to_step(), None); // sample zone
+        assert_eq!(VimCol(3).to_step(), Some(0)); // first step
+        assert_eq!(VimCol(18).to_step(), Some(15)); // last step
     }
 }

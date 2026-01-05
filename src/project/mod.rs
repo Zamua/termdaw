@@ -12,8 +12,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::arrangement::Arrangement;
+use crate::mixer::Mixer;
 use crate::plugin_host::PluginParamId;
-use crate::sequencer::{Channel, ChannelType, Note, Pattern};
+use crate::sequencer::{Generator, GeneratorType, Note, Pattern};
 
 /// Current project file version
 pub const PROJECT_VERSION: u32 = 1;
@@ -34,21 +35,36 @@ pub struct ProjectFile {
     pub patterns: Vec<PatternData>,
     #[serde(default)]
     pub arrangement: Arrangement,
+    /// Mixer state (tracks, routing, generator assignments)
+    /// Optional for backward compatibility with old project files
+    #[serde(default)]
+    pub mixer: Option<Mixer>,
 }
 
-/// Serializable channel data
+/// Serializable channel/generator data
+/// Keeps volume/muted/solo for backward compatibility with old project files
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelData {
     pub name: String,
-    #[serde(default)]
-    pub channel_type: ChannelType,
+    #[serde(default, alias = "channel_type")]
+    pub generator_type: GeneratorType,
     pub sample_path: Option<String>,
+    /// Legacy field - volume now lives in mixer. Kept for backward compat.
+    #[serde(default = "default_volume")]
     pub volume: f32,
+    /// Legacy field - muted now lives in mixer. Kept for backward compat.
+    #[serde(default)]
     pub muted: bool,
+    /// Legacy field - solo now lives in mixer. Kept for backward compat.
+    #[serde(default)]
     pub solo: bool,
     /// Plugin parameter values (param_name -> value)
     #[serde(default)]
     pub plugin_params: HashMap<String, f32>,
+}
+
+fn default_volume() -> f32 {
+    0.8
 }
 
 /// Serializable pattern data
@@ -91,6 +107,7 @@ impl ProjectFile {
             channels: Vec::new(),
             patterns: Vec::new(),
             arrangement: Arrangement::default(),
+            mixer: None,
         }
     }
 
@@ -99,9 +116,10 @@ impl ProjectFile {
         name: &str,
         bpm: f64,
         current_pattern: usize,
-        channels: &[Channel],
+        generators: &[Generator],
         patterns: &[Pattern],
         arrangement: &Arrangement,
+        mixer: &Mixer,
         created_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
@@ -111,24 +129,26 @@ impl ProjectFile {
             modified_at: Utc::now(),
             bpm,
             current_pattern,
-            channels: channels.iter().map(ChannelData::from).collect(),
+            channels: generators.iter().map(ChannelData::from).collect(),
             patterns: patterns.iter().map(PatternData::from).collect(),
             arrangement: arrangement.clone(),
+            mixer: Some(mixer.clone()),
         }
     }
 }
 
-impl From<&Channel> for ChannelData {
-    fn from(channel: &Channel) -> Self {
+impl From<&Generator> for ChannelData {
+    fn from(generator: &Generator) -> Self {
         Self {
-            name: channel.name.clone(),
-            channel_type: channel.channel_type.clone(),
-            sample_path: channel.sample_path.clone(),
-            volume: channel.volume,
-            muted: channel.muted,
-            solo: channel.solo,
+            name: generator.name.clone(),
+            generator_type: generator.generator_type.clone(),
+            sample_path: generator.sample_path.clone(),
+            // Legacy fields - write defaults since Generator no longer has these
+            volume: default_volume(),
+            muted: false,
+            solo: false,
             // Convert PluginParamId -> String for serialization
-            plugin_params: channel
+            plugin_params: generator
                 .plugin_params
                 .iter()
                 .map(|(k, v)| (k.as_str().to_string(), *v))
@@ -176,15 +196,14 @@ impl From<&NoteData> for Note {
     }
 }
 
-impl From<&ChannelData> for Channel {
+impl From<&ChannelData> for Generator {
     fn from(data: &ChannelData) -> Self {
         Self {
             name: data.name.clone(),
-            channel_type: data.channel_type.clone(),
+            generator_type: data.generator_type.clone(),
             sample_path: data.sample_path.clone(),
-            volume: data.volume,
-            muted: data.muted,
-            solo: data.solo,
+            // NOTE: volume, muted, solo from ChannelData are ignored
+            // They will be loaded from mixer state separately (TODO)
             // Convert String -> PluginParamId for deserialization
             plugin_params: data
                 .plugin_params

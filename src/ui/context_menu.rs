@@ -42,9 +42,12 @@ pub enum ContextMenuAction {
     DuplicatePlacement,
     MutePattern,
 
-    // Mixer actions
+    // Mixer actions (TODO: reimplement mouse handling for track-based mixer)
+    #[allow(dead_code)]
     ResetVolume,
+    #[allow(dead_code)]
     MuteTrack,
+    #[allow(dead_code)]
     SoloTrack,
 
     // Browser actions
@@ -138,6 +141,7 @@ pub enum MenuContext {
     ChannelRack { channel: usize },
     PianoRoll { pitch: u8, step: usize },
     Playlist { row: usize, bar: usize },
+    #[allow(dead_code)]
     Mixer { channel: usize },
     Browser { item_idx: usize },
     #[allow(dead_code)]
@@ -322,6 +326,7 @@ pub fn playlist_menu(has_placement: bool) -> Vec<ContextMenuItem> {
 }
 
 /// Build context menu items for mixer
+#[allow(dead_code)]
 pub fn mixer_menu() -> Vec<ContextMenuItem> {
     vec![
         ContextMenuItem::new(ContextMenuAction::ResetVolume),
