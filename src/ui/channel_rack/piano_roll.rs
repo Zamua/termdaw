@@ -14,7 +14,7 @@ use ratatui::{
 use crate::app::App;
 use crate::input::vim::Position;
 
-use super::{render_header, HEADER_ROWS, MUTE_WIDTH, NOTE_WIDTH, SAMPLE_WIDTH};
+use super::{render_header, HEADER_ROWS, MUTE_WIDTH, NOTE_WIDTH, SAMPLE_WIDTH, TRACK_WIDTH};
 
 // ============================================================================
 // Constants
@@ -155,6 +155,20 @@ fn render_row(
         format!("{:<width$}", mute_char, width = MUTE_WIDTH as usize),
         mute_style,
     ));
+
+    // === TRACK ZONE ===
+    let track_num = track_id.index();
+    let track_text = if generator.is_some() {
+        format!("{:<width$}", track_num, width = TRACK_WIDTH as usize)
+    } else {
+        format!("{:<width$}", "·", width = TRACK_WIDTH as usize)
+    };
+    let track_style = if is_selected_channel {
+        Style::default().fg(Color::Magenta)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    spans.push(Span::styled(track_text, track_style));
 
     // === CHANNEL NAME ZONE ===
     // Show all generators, highlight selected one

@@ -46,18 +46,13 @@ impl Default for TrackId {
 }
 
 /// Where a track routes its output
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RouteDestination {
     /// Route to master track (default)
+    #[default]
     Master,
     /// Route to another track (for buses/groups)
     Track(TrackId),
-}
-
-impl Default for RouteDestination {
-    fn default() -> Self {
-        RouteDestination::Master
-    }
 }
 
 /// A parallel send from one track to another
@@ -124,15 +119,8 @@ impl Default for RoutingGraph {
 impl RoutingGraph {
     /// Create a new routing graph with default routing (all to master)
     pub fn new() -> Self {
-        // Master routes nowhere (it's the final destination)
-        // All other tracks route to master by default
-        let routes = std::array::from_fn(|i| {
-            if i == MASTER_TRACK {
-                RouteDestination::Master // Master doesn't route anywhere
-            } else {
-                RouteDestination::Master
-            }
-        });
+        // All tracks route to master by default (master's route is ignored in processing)
+        let routes = [RouteDestination::Master; NUM_TRACKS];
 
         Self {
             routes,
@@ -260,7 +248,7 @@ impl RoutingGraph {
     ///
     /// Returns track indices in the order they should be processed.
     /// Tracks that feed into other tracks are processed first.
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::needless_range_loop)]
     pub fn processing_order(&self) -> Vec<usize> {
         // Build adjacency list (track -> tracks that depend on it)
         let mut dependents: [Vec<usize>; NUM_TRACKS] = std::array::from_fn(|_| Vec::new());

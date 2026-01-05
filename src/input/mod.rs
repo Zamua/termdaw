@@ -454,7 +454,6 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
         // 3. Hit test to find which area/component
         let area = app.screen_areas.hit_test(x, y);
 
-
         // Focus the panel if clicking a focusable area
         if matches!(&action, MouseAction::Click { .. }) {
             if let Some(ref area_id) = area {
@@ -490,10 +489,8 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
 
             // Pattern selector (transport - legacy, may be removed)
             Some(AreaId::TransportPatternPrev) | Some(AreaId::ChannelRackPatternPrev) => {
-                if matches!(action, MouseAction::Click { .. }) {
-                    if app.current_pattern > 0 {
-                        app.current_pattern -= 1;
-                    }
+                if matches!(action, MouseAction::Click { .. }) && app.current_pattern > 0 {
+                    app.current_pattern -= 1;
                 }
             }
             Some(AreaId::TransportPatternNext) | Some(AreaId::ChannelRackPatternNext) => {
@@ -654,35 +651,34 @@ fn focus_panel_for_area(area_id: &crate::ui::areas::AreaId, app: &mut App) {
 fn handle_command_picker_mouse(action: &mouse::MouseAction, app: &mut App) {
     use mouse::MouseAction;
 
-    match action {
-        MouseAction::Click { x, y, .. } => {
-            // Check if click is inside command picker
-            if let Some(picker_rect) = app.screen_areas.get(crate::ui::areas::AreaId::CommandPicker)
+    if let MouseAction::Click { x, y, .. } = action {
+        // Check if click is inside command picker
+        if let Some(picker_rect) = app
+            .screen_areas
+            .get(crate::ui::areas::AreaId::CommandPicker)
+        {
+            if *x < picker_rect.x
+                || *x >= picker_rect.x + picker_rect.width
+                || *y < picker_rect.y
+                || *y >= picker_rect.y + picker_rect.height
             {
-                if *x < picker_rect.x
-                    || *x >= picker_rect.x + picker_rect.width
-                    || *y < picker_rect.y
-                    || *y >= picker_rect.y + picker_rect.height
-                {
-                    // Click outside - dismiss
-                    app.command_picker.hide();
-                    return;
-                }
-
-                // Check if clicking on a command item
-                if let Some(idx) = app.screen_areas.command_item_at(*x, *y) {
-                    // Execute the command at this index
-                    if let Some(cmd) = app.command_picker.get_command_at(idx) {
-                        app.command_picker.hide();
-                        common::execute_command(cmd, app);
-                    }
-                }
-            } else {
-                // No picker rect registered, just dismiss
+                // Click outside - dismiss
                 app.command_picker.hide();
+                return;
             }
+
+            // Check if clicking on a command item
+            if let Some(idx) = app.screen_areas.command_item_at(*x, *y) {
+                // Execute the command at this index
+                if let Some(cmd) = app.command_picker.get_command_at(idx) {
+                    app.command_picker.hide();
+                    common::execute_command(cmd, app);
+                }
+            }
+        } else {
+            // No picker rect registered, just dismiss
+            app.command_picker.hide();
         }
-        _ => {}
     }
 }
 
@@ -693,7 +689,8 @@ fn handle_plugin_editor_mouse(action: &mouse::MouseAction, app: &mut App) {
     match action {
         MouseAction::Click { x, y, .. } => {
             // Check if click is inside plugin editor
-            if let Some(editor_rect) = app.screen_areas.get(crate::ui::areas::AreaId::PluginEditor) {
+            if let Some(editor_rect) = app.screen_areas.get(crate::ui::areas::AreaId::PluginEditor)
+            {
                 if *x < editor_rect.x
                     || *x >= editor_rect.x + editor_rect.width
                     || *y < editor_rect.y
@@ -962,7 +959,8 @@ fn execute_context_menu_action(
                                 .strip_prefix(app.browser.root_path())
                                 .unwrap_or(&entry.path),
                         );
-                        app.audio.preview_sample(&full_path, app.channel_rack.channel);
+                        app.audio
+                            .preview_sample(&full_path, app.channel_rack.channel);
                     }
                 }
             }

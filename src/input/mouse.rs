@@ -32,11 +32,7 @@ pub struct ClickInfo {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MouseAction {
     /// Single click at screen position
-    Click {
-        x: u16,
-        y: u16,
-        button: MouseButton,
-    },
+    Click { x: u16, y: u16, button: MouseButton },
 
     /// Double click at screen position (left button only)
     DoubleClick { x: u16, y: u16 },
@@ -45,11 +41,7 @@ pub enum MouseAction {
     RightClick { x: u16, y: u16 },
 
     /// Drag started (button down with intent to drag)
-    DragStart {
-        x: u16,
-        y: u16,
-        button: MouseButton,
-    },
+    DragStart { x: u16, y: u16, button: MouseButton },
 
     /// Drag moved (includes start position for context)
     DragMove {
@@ -324,13 +316,22 @@ mod tests {
         let mut mouse = MouseState::new();
 
         // Mouse down
-        let actions = mouse.process_event(make_event(MouseEventKind::Down(MouseButton::Left), 10, 20));
+        let actions =
+            mouse.process_event(make_event(MouseEventKind::Down(MouseButton::Left), 10, 20));
         assert!(actions.is_empty()); // Down doesn't emit action yet
 
         // Mouse up without moving = click
-        let actions = mouse.process_event(make_event(MouseEventKind::Up(MouseButton::Left), 10, 20));
+        let actions =
+            mouse.process_event(make_event(MouseEventKind::Up(MouseButton::Left), 10, 20));
         assert_eq!(actions.len(), 1);
-        assert!(matches!(actions[0], MouseAction::Click { x: 10, y: 20, button: MouseButton::Left }));
+        assert!(matches!(
+            actions[0],
+            MouseAction::Click {
+                x: 10,
+                y: 20,
+                button: MouseButton::Left
+            }
+        ));
     }
 
     #[test]
@@ -338,33 +339,63 @@ mod tests {
         let mut mouse = MouseState::new();
 
         // Mouse down
-        let actions = mouse.process_event(make_event(MouseEventKind::Down(MouseButton::Left), 10, 20));
+        let actions =
+            mouse.process_event(make_event(MouseEventKind::Down(MouseButton::Left), 10, 20));
         assert!(actions.is_empty());
 
         // Drag (move while button held)
-        let actions = mouse.process_event(make_event(MouseEventKind::Drag(MouseButton::Left), 15, 25));
+        let actions =
+            mouse.process_event(make_event(MouseEventKind::Drag(MouseButton::Left), 15, 25));
         assert_eq!(actions.len(), 2); // DragStart + DragMove
-        assert!(matches!(actions[0], MouseAction::DragStart { x: 10, y: 20, .. }));
-        assert!(matches!(actions[1], MouseAction::DragMove { start_x: 10, start_y: 20, x: 15, y: 25 }));
+        assert!(matches!(
+            actions[0],
+            MouseAction::DragStart { x: 10, y: 20, .. }
+        ));
+        assert!(matches!(
+            actions[1],
+            MouseAction::DragMove {
+                start_x: 10,
+                start_y: 20,
+                x: 15,
+                y: 25
+            }
+        ));
 
         // Continue drag
-        let actions = mouse.process_event(make_event(MouseEventKind::Drag(MouseButton::Left), 20, 30));
+        let actions =
+            mouse.process_event(make_event(MouseEventKind::Drag(MouseButton::Left), 20, 30));
         assert_eq!(actions.len(), 1);
-        assert!(matches!(actions[0], MouseAction::DragMove { x: 20, y: 30, .. }));
+        assert!(matches!(
+            actions[0],
+            MouseAction::DragMove { x: 20, y: 30, .. }
+        ));
 
         // Release
-        let actions = mouse.process_event(make_event(MouseEventKind::Up(MouseButton::Left), 20, 30));
+        let actions =
+            mouse.process_event(make_event(MouseEventKind::Up(MouseButton::Left), 20, 30));
         assert_eq!(actions.len(), 1);
-        assert!(matches!(actions[0], MouseAction::DragEnd { start_x: 10, start_y: 20, x: 20, y: 30 }));
+        assert!(matches!(
+            actions[0],
+            MouseAction::DragEnd {
+                start_x: 10,
+                start_y: 20,
+                x: 20,
+                y: 30
+            }
+        ));
     }
 
     #[test]
     fn test_right_click() {
         let mut mouse = MouseState::new();
 
-        let actions = mouse.process_event(make_event(MouseEventKind::Down(MouseButton::Right), 10, 20));
+        let actions =
+            mouse.process_event(make_event(MouseEventKind::Down(MouseButton::Right), 10, 20));
         assert_eq!(actions.len(), 1);
-        assert!(matches!(actions[0], MouseAction::RightClick { x: 10, y: 20 }));
+        assert!(matches!(
+            actions[0],
+            MouseAction::RightClick { x: 10, y: 20 }
+        ));
     }
 
     #[test]
@@ -373,10 +404,24 @@ mod tests {
 
         let actions = mouse.process_event(make_event(MouseEventKind::ScrollUp, 10, 20));
         assert_eq!(actions.len(), 1);
-        assert!(matches!(actions[0], MouseAction::Scroll { x: 10, y: 20, delta: -3 }));
+        assert!(matches!(
+            actions[0],
+            MouseAction::Scroll {
+                x: 10,
+                y: 20,
+                delta: -3
+            }
+        ));
 
         let actions = mouse.process_event(make_event(MouseEventKind::ScrollDown, 10, 20));
         assert_eq!(actions.len(), 1);
-        assert!(matches!(actions[0], MouseAction::Scroll { x: 10, y: 20, delta: 3 }));
+        assert!(matches!(
+            actions[0],
+            MouseAction::Scroll {
+                x: 10,
+                y: 20,
+                delta: 3
+            }
+        ));
     }
 }

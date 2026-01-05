@@ -70,7 +70,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(content_block, chunks[1]);
 
     // Register content area
-    app.screen_areas.register(AreaId::BrowserContent, content_area);
+    app.screen_areas
+        .register(AreaId::BrowserContent, content_area);
 
     // Check if we have entries
     if app.browser.visible_entries.is_empty() {

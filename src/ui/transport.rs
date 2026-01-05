@@ -37,7 +37,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .split(inner);
 
     // Register waveform area
-    app.screen_areas.register(AreaId::TransportWaveform, chunks[0]);
+    app.screen_areas
+        .register(AreaId::TransportWaveform, chunks[0]);
 
     // Render waveform using Kitty graphics (direct to stdout)
     if chunks[0].width > 0 && chunks[0].height > 0 {

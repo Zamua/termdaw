@@ -47,9 +47,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let close_rect = Rect::new(close_x, area.y, 3, 1);
     app.screen_areas.register(AreaId::MixerClose, close_rect);
 
-    let close_style = Style::default()
-        .fg(Color::Red)
-        .add_modifier(Modifier::BOLD);
+    let close_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
     let close_btn = Paragraph::new(Line::from(Span::styled(" × ", close_style)));
     frame.render_widget(close_btn, close_rect);
 
@@ -449,12 +447,10 @@ fn render_effects_panel(frame: &mut Frame, x: u16, y: u16, width: u16, height: u
             } else {
                 ("●", Color::Green)
             }
+        } else if bypass_col_selected {
+            ("·", Color::Cyan)
         } else {
-            if bypass_col_selected {
-                ("·", Color::Cyan)
-            } else {
-                ("·", Color::DarkGray)
-            }
+            ("·", Color::DarkGray)
         };
 
         let line = Line::from(vec![
@@ -482,7 +478,7 @@ fn render_effects_panel(frame: &mut Frame, x: u16, y: u16, width: u16, height: u
     // Separator before pan/volume (with scroll-down indicator if needed)
     let sep_y = y + height - 3;
     let sep_text = if can_scroll_down {
-        format!("─▼ more──────────────")
+        "─▼ more──────────────".to_string()
     } else {
         "─".repeat(content_width as usize)
     };

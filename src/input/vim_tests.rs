@@ -1681,7 +1681,10 @@ fn test_g_enters_g_prefix_mode() {
     // g alone should enter GPrefix mode and not produce movement yet
     assert!(vim.g_prefix);
     // Should not have moved cursor yet (waiting for second key)
-    assert!(!has_action(&actions, |a| matches!(a, VimAction::MoveCursor(_))));
+    assert!(!has_action(&actions, |a| matches!(
+        a,
+        VimAction::MoveCursor(_)
+    )));
 }
 
 #[test]

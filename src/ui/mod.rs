@@ -133,10 +133,7 @@ fn render_content_area(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut
 /// Render the main view with tabs and content (no outer border)
 fn render_main_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut App) {
     use areas::AreaId;
-    use ratatui::{
-        style::Modifier,
-        widgets::Tabs,
-    };
+    use ratatui::{style::Modifier, widgets::Tabs};
 
     // Use a block with no borders (hidden)
     let block = Block::default().borders(Borders::NONE);
@@ -194,9 +191,7 @@ fn render_main_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut Ap
     // Render content based on view mode
     // Note: Piano roll is embedded in channel rack view (not a separate view)
     match app.view_mode {
-        ViewMode::ChannelRack | ViewMode::PianoRoll => {
-            channel_rack::render(frame, content, app)
-        }
+        ViewMode::ChannelRack | ViewMode::PianoRoll => channel_rack::render(frame, content, app),
         ViewMode::Playlist => playlist::render(frame, content, app),
     }
 }

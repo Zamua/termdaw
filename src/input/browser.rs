@@ -137,7 +137,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                 // visible_idx corresponds directly to visible_entries index
                 // Move cursor to clicked item
                 let prev_cursor = app.browser.cursor;
-                app.browser.cursor = visible_idx.min(app.browser.visible_entries.len().saturating_sub(1));
+                app.browser.cursor =
+                    visible_idx.min(app.browser.visible_entries.len().saturating_sub(1));
 
                 // Auto-preview on click (only for audio files in samples mode)
                 if app.browser.cursor != prev_cursor {
@@ -150,7 +151,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                                     .strip_prefix(app.browser.root_path())
                                     .unwrap_or(&entry.path),
                             );
-                            app.audio.preview_sample(&full_path, app.channel_rack.channel);
+                            app.audio
+                                .preview_sample(&full_path, app.channel_rack.channel);
                         }
                     }
                 }
@@ -160,7 +162,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
         MouseAction::DoubleClick { x, y } => {
             // Double-click to expand folder or select file
             if let Some(visible_idx) = app.screen_areas.browser_item_at(*x, *y) {
-                app.browser.cursor = visible_idx.min(app.browser.visible_entries.len().saturating_sub(1));
+                app.browser.cursor =
+                    visible_idx.min(app.browser.visible_entries.len().saturating_sub(1));
 
                 if let Some(entry) = app.browser.current_entry().cloned() {
                     if entry.is_dir {
@@ -189,7 +192,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                                 .strip_prefix(app.browser.root_path())
                                 .unwrap_or(&entry.path),
                         );
-                        app.audio.preview_sample(&full_path, app.channel_rack.channel);
+                        app.audio
+                            .preview_sample(&full_path, app.channel_rack.channel);
                     }
                 }
             }
@@ -223,7 +227,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
             if let Some(visible_idx) = app.screen_areas.browser_item_at(*x, *y) {
                 use crate::ui::context_menu::{browser_menu, MenuContext};
 
-                app.browser.cursor = visible_idx.min(app.browser.visible_entries.len().saturating_sub(1));
+                app.browser.cursor =
+                    visible_idx.min(app.browser.visible_entries.len().saturating_sub(1));
 
                 // Check if this is a file (not directory)
                 let is_file = app
@@ -234,7 +239,9 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
 
                 let items = browser_menu(is_file);
                 if !items.is_empty() {
-                    let context = MenuContext::Browser { item_idx: visible_idx };
+                    let context = MenuContext::Browser {
+                        item_idx: visible_idx,
+                    };
                     app.context_menu.show(*x, *y, items, context);
                 }
             }

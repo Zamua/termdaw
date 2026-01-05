@@ -546,13 +546,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
             if let Some((row, vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
                 let col = AppCol::from(VimCol(vim_col));
                 if col.is_sample_zone() {
-                    // Preview the channel
+                    // Preview the channel on double-click
                     app.start_preview(row);
-                } else if col.is_sample_zone() {
-                    // Double-click sample zone to open browser
-                    app.browser.start_selection(row);
-                    app.mode.switch_panel(Panel::Browser);
-                    app.show_browser = true;
                 }
             }
         }

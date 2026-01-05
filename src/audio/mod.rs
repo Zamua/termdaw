@@ -533,6 +533,7 @@ impl AudioEngine {
         Ok(stream)
     }
 
+    #[allow(clippy::type_complexity)]
     fn audio_callback<T: cpal::SizedSample + cpal::FromSample<f32> + cpal::Sample>(
         data: &mut [T],
         channels: usize,
@@ -996,10 +997,8 @@ impl AudioEngine {
                     state.tempo_bpm = bpm;
                     // Update all tempo-synced effects
                     for track in &mut state.track_effects {
-                        for slot in track.iter_mut() {
-                            if let Some(effect) = slot {
-                                effect.set_tempo(bpm);
-                            }
+                        for effect in track.iter_mut().flatten() {
+                            effect.set_tempo(bpm);
                         }
                     }
                 }

@@ -198,7 +198,11 @@ impl ScreenAreas {
     pub fn hit_test(&self, x: u16, y: u16) -> Option<AreaId> {
         // Check modals first (they're on top)
         // Order matters: context menu > plugin editor > command picker
-        for id in [AreaId::ContextMenu, AreaId::PluginEditor, AreaId::CommandPicker] {
+        for id in [
+            AreaId::ContextMenu,
+            AreaId::PluginEditor,
+            AreaId::CommandPicker,
+        ] {
             if let Some(rect) = self.areas.get(&id) {
                 if Self::point_in_rect(x, y, *rect) {
                     return Some(id);

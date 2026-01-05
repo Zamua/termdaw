@@ -7,6 +7,7 @@ use crate::effects::{Effect, EffectParamId, EffectType};
 
 /// Filter mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // LowPass/HighPass/BandPass are standard filter terminology
 pub enum FilterMode {
     LowPass = 0,
     HighPass = 1,

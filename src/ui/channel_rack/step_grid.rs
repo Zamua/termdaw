@@ -14,7 +14,7 @@ use crate::app::App;
 use crate::input::vim::Position;
 use crate::ui::colors::{self, ColGroup};
 
-use super::{render_header, HEADER_ROWS, MUTE_WIDTH, SAMPLE_WIDTH, STEP_WIDTH};
+use super::{render_header, HEADER_ROWS, MUTE_WIDTH, SAMPLE_WIDTH, STEP_WIDTH, TRACK_WIDTH};
 
 /// Total number of channel slots
 const TOTAL_CHANNEL_SLOTS: usize = 99;
@@ -60,8 +60,9 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
             .channel_rack_cells
             .insert((channel_idx, 0), mute_rect);
 
-        let is_mute_cursor =
-            channel_idx == app.channel_rack.channel && app.channel_rack.col.is_mute_zone() && focused;
+        let is_mute_cursor = channel_idx == app.channel_rack.channel
+            && app.channel_rack.col.is_mute_zone()
+            && focused;
         let (mute_char, mute_color) = if generator.is_some() {
             if mixer_track.solo {
                 ("S", Color::Yellow)
@@ -90,11 +91,40 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
         frame.render_widget(mute_widget, mute_rect);
         x += MUTE_WIDTH;
 
-        // === SAMPLE ZONE (col -1) ===
+        // === TRACK ZONE (col -2, VimCol 1) ===
+        let track_rect = Rect::new(x, y, TRACK_WIDTH, 1);
+        app.screen_areas
+            .channel_rack_cells
+            .insert((channel_idx, 1), track_rect);
+
+        let is_track_cursor = channel_idx == app.channel_rack.channel
+            && app.channel_rack.col.is_track_zone()
+            && focused;
+        let track_num = track_id.index();
+        let track_text = if generator.is_some() {
+            format!("{:<width$}", track_num, width = TRACK_WIDTH as usize)
+        } else {
+            format!("{:<width$}", "·", width = TRACK_WIDTH as usize)
+        };
+        let track_style = if is_track_cursor {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else if generator.is_some() {
+            Style::default().fg(Color::Magenta)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let track_widget = Paragraph::new(track_text).style(track_style);
+        frame.render_widget(track_widget, track_rect);
+        x += TRACK_WIDTH;
+
+        // === SAMPLE ZONE (col -1, VimCol 2) ===
         let sample_rect = Rect::new(x, y, SAMPLE_WIDTH, 1);
         app.screen_areas
             .channel_rack_cells
-            .insert((channel_idx, 1), sample_rect);
+            .insert((channel_idx, 2), sample_rect);
 
         let is_sample_cursor = channel_idx == app.channel_rack.channel
             && app.channel_rack.col.is_sample_zone()
@@ -157,7 +187,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
             }
 
             let step_idx = step as usize;
-            let vim_col_for_step = step_idx + 2;
+            let vim_col_for_step = step_idx + 3; // VimCol 3-18 for steps 0-15
             let pos = Position::new(channel_idx, vim_col_for_step);
 
             let step_rect = Rect::new(x, y, STEP_WIDTH, 1);
@@ -178,12 +208,8 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
             let col_group = ColGroup::from_step(step_idx);
 
             // Determine cell state and get style from colors module
-            let cell_state = colors::determine_cell_state(
-                is_cursor,
-                is_selected,
-                is_playhead,
-                is_active,
-            );
+            let cell_state =
+                colors::determine_cell_state(is_cursor, is_selected, is_playhead, is_active);
 
             let cell_style = colors::cell_style(cell_state, col_group);
             let cell = if is_active {

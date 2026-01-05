@@ -112,7 +112,7 @@ fn render_effect_editor(
     frame.render_widget(Clear, modal_area);
 
     // Modal border with effect name
-    let title = format!("{}", effect_slot.effect_type.name());
+    let title = effect_slot.effect_type.name().to_string();
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)

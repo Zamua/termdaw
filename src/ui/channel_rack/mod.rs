@@ -1,8 +1,9 @@
 //! Channel rack panel - step sequencer grid with zones
 //!
 //! Zones:
-//! - Sample zone (col -2): Channel name, press x to assign sample
-//! - Mute zone (col -1): M/S/○ indicator, press x to cycle mute state
+//! - Mute zone (col -3): M/S/○ indicator, press x to cycle mute state
+//! - Track zone (col -2): Mixer track assignment (T1-T15), press x/+/- to change
+//! - Sample zone (col -1): Channel name, press x to assign sample
 //! - Steps zone (col 0-15): Step grid, press x to toggle
 //!
 //! When in Piano Roll mode, the step grid is replaced by the piano roll
@@ -32,6 +33,8 @@ use crate::ui::render_panel_frame;
 pub const SAMPLE_WIDTH: u16 = 10;
 /// Width of the mute indicator column
 pub const MUTE_WIDTH: u16 = 3;
+/// Width of the track assignment column (e.g., "T1 ")
+pub const TRACK_WIDTH: u16 = 3;
 /// Width of the note/pitch column (in piano roll mode)
 pub const NOTE_WIDTH: u16 = 5;
 /// Width of each step cell (separator + cell + space)
@@ -115,8 +118,8 @@ pub fn render_header(frame: &mut Frame, inner: Rect, app: &mut App, piano_roll_m
         // Show pattern selector: < P01 >
         // Register click areas for prev/next - make them larger for easier clicking
         // Text: "< " (0-1) + "P01" (2-4) + " >" (5-6)
-        let prev_rect = Rect::new(inner.x, inner.y, 3, 1);  // Covers "< " and "P"
-        let next_rect = Rect::new(inner.x + 4, inner.y, 3, 1);  // Covers "1 >"
+        let prev_rect = Rect::new(inner.x, inner.y, 3, 1); // Covers "< " and "P"
+        let next_rect = Rect::new(inner.x + 4, inner.y, 3, 1); // Covers "1 >"
         app.screen_areas
             .register(AreaId::ChannelRackPatternPrev, prev_rect);
         app.screen_areas
@@ -138,6 +141,12 @@ pub fn render_header(frame: &mut Frame, inner: Rect, app: &mut App, piano_roll_m
     // Mute column header (matches MUTE_WIDTH) - now comes first
     spans.push(Span::styled(
         format!("{:<width$}", "M", width = MUTE_WIDTH as usize),
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    // Track column header (mixer track assignment)
+    spans.push(Span::styled(
+        format!("{:<width$}", "T", width = TRACK_WIDTH as usize),
         Style::default().fg(Color::DarkGray),
     ));
 
@@ -202,6 +211,12 @@ pub fn render_header(frame: &mut Frame, inner: Rect, app: &mut App, piano_roll_m
 
     sep_spans.push(Span::styled(
         "─".repeat(MUTE_WIDTH as usize),
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    // Track column separator
+    sep_spans.push(Span::styled(
+        "─".repeat(TRACK_WIDTH as usize),
         Style::default().fg(Color::DarkGray),
     ));
 

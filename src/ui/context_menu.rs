@@ -138,18 +138,32 @@ impl ContextMenuItem {
 /// Context for where the menu was opened
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuContext {
-    ChannelRack { channel: usize },
-    PianoRoll { pitch: u8, step: usize },
-    Playlist { row: usize, bar: usize },
+    ChannelRack {
+        channel: usize,
+    },
+    PianoRoll {
+        pitch: u8,
+        step: usize,
+    },
+    Playlist {
+        row: usize,
+        bar: usize,
+    },
     #[allow(dead_code)]
-    Mixer { channel: usize },
-    Browser { item_idx: usize },
+    Mixer {
+        channel: usize,
+    },
+    Browser {
+        item_idx: usize,
+    },
     #[allow(dead_code)]
-    PluginEditor { param_idx: usize },
+    PluginEditor {
+        param_idx: usize,
+    },
 }
 
 /// State for the context menu overlay
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ContextMenu {
     /// Whether the menu is visible
     pub visible: bool,
@@ -162,19 +176,6 @@ pub struct ContextMenu {
     pub selected: usize,
     /// Context where menu was opened (for action execution)
     pub context: Option<MenuContext>,
-}
-
-impl Default for ContextMenu {
-    fn default() -> Self {
-        Self {
-            visible: false,
-            x: 0,
-            y: 0,
-            items: Vec::new(),
-            selected: 0,
-            context: None,
-        }
-    }
 }
 
 impl ContextMenu {
@@ -414,10 +415,7 @@ pub fn render(frame: &mut Frame, menu: &ContextMenu, screen_areas: &mut ScreenAr
                 Style::default().fg(Color::White)
             };
 
-            let mut spans = vec![Span::styled(
-                format!(" {:<14}", label),
-                style,
-            )];
+            let mut spans = vec![Span::styled(format!(" {:<14}", label), style)];
 
             if let Some(key) = shortcut {
                 spans.push(Span::styled(

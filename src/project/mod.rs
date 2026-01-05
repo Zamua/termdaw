@@ -112,6 +112,7 @@ impl ProjectFile {
     }
 
     /// Create from app state
+    #[allow(clippy::too_many_arguments)]
     pub fn from_state(
         name: &str,
         bpm: f64,
