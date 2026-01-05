@@ -12,6 +12,7 @@ use ratatui::{
 
 use crate::app::App;
 use crate::input::vim::Position;
+use crate::mixer::TrackId;
 use crate::ui::colors::{self, ColGroup};
 
 use super::{render_header, HEADER_ROWS, MUTE_WIDTH, SAMPLE_WIDTH, STEP_WIDTH, TRACK_WIDTH};
@@ -23,9 +24,6 @@ const TOTAL_CHANNEL_SLOTS: usize = 99;
 pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
     // Render header rows
     render_header(frame, inner, app, false);
-
-    // Get generators from app state
-    let generators = &app.generators;
 
     // Calculate visible rows
     let visible_rows = (inner.height - HEADER_ROWS) as usize;
@@ -46,12 +44,14 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
         let y = inner.y + HEADER_ROWS + row_idx as u16;
         let mut x = inner.x;
 
-        // Check if this slot has an allocated generator
-        let generator = generators.get(channel_idx);
-        let is_allocated = generator.is_some();
+        // Check if this slot has an allocated channel
+        let channel = app.channels.get(channel_idx);
+        let is_allocated = channel.is_some();
 
-        // Get mute/solo state from the mixer track this generator routes to
-        let track_id = app.mixer.get_generator_track(channel_idx);
+        // Get mute/solo state from the mixer track this channel routes to
+        let track_id = channel
+            .map(|c| TrackId(c.mixer_track))
+            .unwrap_or(TrackId(1));
         let mixer_track = app.mixer.track(track_id);
 
         // === MUTE ZONE (col -2) - now comes first ===
@@ -63,7 +63,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
         let is_mute_cursor = channel_idx == app.channel_rack.channel
             && app.channel_rack.col.is_mute_zone()
             && focused;
-        let (mute_char, mute_color) = if generator.is_some() {
+        let (mute_char, mute_color) = if channel.is_some() {
             if mixer_track.solo {
                 ("S", Color::Yellow)
             } else if mixer_track.muted {
@@ -101,7 +101,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
             && app.channel_rack.col.is_track_zone()
             && focused;
         let track_num = track_id.index();
-        let track_text = if generator.is_some() {
+        let track_text = if channel.is_some() {
             format!("{:<width$}", track_num, width = TRACK_WIDTH as usize)
         } else {
             format!("{:<width$}", "·", width = TRACK_WIDTH as usize)
@@ -111,7 +111,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
                 .fg(Color::Black)
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
-        } else if generator.is_some() {
+        } else if channel.is_some() {
             Style::default().fg(Color::Magenta)
         } else {
             Style::default().fg(Color::DarkGray)
@@ -144,12 +144,12 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
             Style::default().fg(Color::White)
         };
 
-        // Display generator name or slot indicator
-        let name_display = if let Some(gen) = generator {
-            if gen.is_plugin() || gen.sample_path.is_some() {
+        // Display channel name or slot indicator
+        let name_display = if let Some(ch) = channel {
+            if ch.is_plugin() || ch.sample_path().is_some() {
                 format!(
                     "{:<width$}",
-                    &gen.name[..gen.name.len().min(SAMPLE_WIDTH as usize - 1)],
+                    &ch.name[..ch.name.len().min(SAMPLE_WIDTH as usize - 1)],
                     width = SAMPLE_WIDTH as usize - 1
                 )
             } else {
@@ -171,10 +171,12 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
         x += SAMPLE_WIDTH;
 
         // === STEPS ZONE (col 0-15) ===
+        let pattern_id = app.current_pattern;
         let steps_data: Vec<bool> = app
-            .get_current_pattern()
-            .and_then(|p| p.steps.get(channel_idx))
-            .map(|s| s.to_vec())
+            .channels
+            .get(channel_idx)
+            .and_then(|c| c.get_pattern(pattern_id))
+            .map(|s| s.steps.clone())
             .unwrap_or_else(|| vec![false; 16]);
         let is_playing = app.is_playing();
         let playhead = app.playhead_step();

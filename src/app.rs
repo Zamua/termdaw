@@ -19,7 +19,7 @@ use crate::plugin_host::params::build_init_params;
 use crate::plugin_host::PluginHost;
 use crate::project::{self, ProjectFile};
 use crate::sequencer::{
-    default_generators, Generator, GeneratorType, Pattern, YankedNote, YankedPlacement,
+    default_channels, Channel, ChannelSource, Pattern, YankedNote, YankedPlacement,
 };
 use crate::ui::areas::ScreenAreas;
 use crate::ui::context_menu::ContextMenu;
@@ -83,8 +83,8 @@ pub struct App {
     /// Mixer (FL Studio-style with routing)
     pub mixer: Mixer,
 
-    /// Generators (sound sources - samplers, plugins)
-    pub generators: Vec<Generator>,
+    /// Channels (sound sources - samplers, plugins)
+    pub channels: Vec<Channel>,
 
     /// Patterns
     pub patterns: Vec<Pattern>,
@@ -151,20 +151,18 @@ impl App {
         }
 
         // Load project (either existing or newly created from template)
-        let (generators, patterns, bpm, current_pattern, arrangement, created_at, mixer) =
+        let (channels, patterns, bpm, current_pattern, arrangement, created_at, mixer) =
             if project::is_valid_project(&project_path) {
                 match project::load_project(&project_path) {
                     Ok(project) => {
-                        let generators: Vec<Generator> =
-                            project.channels.iter().map(Generator::from).collect();
-                        let patterns: Vec<Pattern> =
-                            project.patterns.iter().map(Pattern::from).collect();
-                        // Load mixer from project file, or create default for old projects
+                        let channels = project.channels;
+                        let patterns = project.patterns;
+                        // Load mixer from project file, or create default
                         let mixer = project
                             .mixer
-                            .unwrap_or_else(|| Self::create_default_mixer(&generators));
+                            .unwrap_or_else(|| Self::create_default_mixer(&channels));
                         (
-                            generators,
+                            channels,
                             patterns,
                             project.bpm,
                             project.current_pattern,
@@ -179,7 +177,7 @@ impl App {
                 Self::default_state()
             };
 
-        let num_generators = generators.len();
+        let num_channels = channels.len();
 
         // Channel rack zones in vim coordinate space:
         // - Mute zone (col 0): mute/solo indicator
@@ -212,14 +210,14 @@ impl App {
             playlist: PlaylistCursor::default(),
             arrangement,
             mixer,
-            generators,
+            channels,
             patterns,
             current_pattern,
             // Separate vim instances per panel type
-            // 99 generator slots, 19 columns (3 metadata + 16 steps)
+            // 99 channel slots, 19 columns (3 metadata + 16 steps)
             vim_channel_rack: VimState::with_grid_semantics(99, 19, channel_rack_zones),
             vim_piano_roll: VimState::new(49, 16), // 49 pitches (C2-C6), 16 steps
-            vim_playlist: VimState::new(num_generators, 17), // rows = patterns, 16 bars + mute col
+            vim_playlist: VimState::new(num_channels, 17), // rows = patterns, 16 bars + mute col
             audio,
             browser: BrowserState::new(samples_path),
             command_picker: CommandPicker::new(),
@@ -235,27 +233,27 @@ impl App {
             preview_note: None,
         };
 
-        // Load plugins for plugin generators
+        // Load plugins for plugin channels
         app.load_plugins();
 
-        // Sync initial mixer and generator routing state to audio thread
+        // Sync initial mixer and channel routing state to audio thread
         app.sync_mixer_to_audio();
-        app.sync_generator_routing();
+        app.sync_channel_routing();
 
         app
     }
 
-    /// Create a default mixer with auto-assigned generator routing
-    fn create_default_mixer(generators: &[Generator]) -> Mixer {
+    /// Create a default mixer with auto-assigned channel routing
+    fn create_default_mixer(channels: &[Channel]) -> Mixer {
         let mut mixer = Mixer::new();
-        // Auto-assign each generator to a track
-        for (idx, _gen) in generators.iter().enumerate() {
+        // Auto-assign each channel to a track
+        for (idx, _channel) in channels.iter().enumerate() {
             mixer.auto_assign_generator(idx);
         }
         mixer
     }
 
-    /// Load all plugins for plugin generators
+    /// Load all plugins for plugin channels
     fn load_plugins(&self) {
         // Get the actual sample rate from the audio system
         let sample_rate = self.audio.sample_rate() as f64;
@@ -264,52 +262,55 @@ impl App {
         // Get the plugins directory path
         let plugins_path = self.project_path.join("plugins");
 
-        for (gen_idx, generator) in self.generators.iter().enumerate() {
-            if let GeneratorType::Plugin { path } = &generator.generator_type {
+        for (channel_idx, channel) in self.channels.iter().enumerate() {
+            if let ChannelSource::Plugin { path, .. } = &channel.source {
                 let plugin_path = plugins_path.join(path);
 
                 // Try to load and activate the plugin
                 match PluginHost::load(&plugin_path, sample_rate, buffer_size) {
                     Ok(mut host) => match host.activate() {
                         Ok(processor) => {
-                            // Build initial state with volume from mixer and params from generator
-                            let init_state = self.build_plugin_init_state(gen_idx, generator);
+                            // Build initial state with volume from mixer and params from channel
+                            let init_state = self.build_plugin_init_state(channel_idx, channel);
                             // Send the activated processor with initial state
-                            self.audio.send_plugin(gen_idx, processor, init_state);
+                            self.audio.send_plugin(channel_idx, processor, init_state);
                         }
                         Err(e) => {
-                            eprintln!("Failed to activate plugin for generator {}: {}", gen_idx, e);
+                            eprintln!(
+                                "Failed to activate plugin for channel {}: {}",
+                                channel_idx, e
+                            );
                         }
                     },
                     Err(e) => {
-                        eprintln!("Failed to load plugin for generator {}: {}", gen_idx, e);
+                        eprintln!("Failed to load plugin for channel {}: {}", channel_idx, e);
                     }
                 }
             }
         }
     }
 
-    /// Build initial plugin state from generator settings and mixer
+    /// Build initial plugin state from channel settings and mixer
     fn build_plugin_init_state(
         &self,
-        gen_idx: usize,
-        generator: &Generator,
+        channel_idx: usize,
+        channel: &Channel,
     ) -> crate::audio::PluginInitState {
         use crate::audio::PluginInitState;
 
-        // Get volume from the mixer track this generator routes to
-        let track_id = self.mixer.get_generator_track(gen_idx);
+        // Get volume from the mixer track this channel routes to
+        let track_id = self.mixer.get_generator_track(channel_idx);
         let volume = self.mixer.track(track_id).volume;
 
         PluginInitState {
             volume,
-            params: build_init_params(&generator.plugin_params),
+            params: build_init_params(channel.plugin_params()),
         }
     }
 
     #[allow(clippy::type_complexity)]
     fn default_state() -> (
-        Vec<Generator>,
+        Vec<Channel>,
         Vec<Pattern>,
         f64,
         usize,
@@ -317,12 +318,11 @@ impl App {
         Option<DateTime<Utc>>,
         Mixer,
     ) {
-        let generators = default_generators();
-        let num_generators = generators.len();
-        let patterns = vec![Pattern::new(0, num_generators, 16)];
-        let mixer = Self::create_default_mixer(&generators);
+        let channels = default_channels();
+        let patterns = vec![Pattern::new(0, 16)];
+        let mixer = Self::create_default_mixer(&channels);
         (
-            generators,
+            channels,
             patterns,
             140.0,
             0,
@@ -335,11 +335,6 @@ impl App {
     /// Get the current pattern
     pub fn get_current_pattern(&self) -> Option<&Pattern> {
         self.patterns.get(self.current_pattern)
-    }
-
-    /// Get the current pattern mutably
-    pub fn get_current_pattern_mut(&mut self) -> Option<&mut Pattern> {
-        self.patterns.get_mut(self.current_pattern)
     }
 
     /// Called when the terminal is resized
@@ -422,13 +417,15 @@ impl App {
             };
 
         for pattern in patterns_to_check {
-            for (gen_idx, generator) in self.generators.iter().enumerate() {
-                if let GeneratorType::Plugin { .. } = &generator.generator_type {
+            for (channel_idx, channel) in self.channels.iter().enumerate() {
+                if let ChannelSource::Plugin { .. } = &channel.source {
                     // Find notes that span the boundary (start + duration >= 16)
                     // This catches notes that end at or after the loop point
-                    for note in pattern.get_notes(gen_idx) {
-                        if note.start_step + note.duration >= 16 {
-                            self.audio.plugin_note_off(gen_idx, note.pitch);
+                    if let Some(slice) = channel.get_pattern(pattern.id) {
+                        for note in &slice.notes {
+                            if note.start_step + note.duration >= 16 {
+                                self.audio.plugin_note_off(channel_idx, note.pitch);
+                            }
                         }
                     }
                 }
@@ -468,25 +465,25 @@ impl App {
         step: usize,
     ) {
         for pattern in patterns {
-            for (gen_idx, generator) in self.generators.iter().enumerate() {
-                // Get the mixer track this generator routes to
-                let track_id = self.mixer.get_generator_track(gen_idx);
+            for (channel_idx, channel) in self.channels.iter().enumerate() {
+                // Get the mixer track this channel routes to
+                let track_id = TrackId(channel.mixer_track);
 
                 // Skip if track is muted or not audible (solo logic)
                 if !self.mixer.is_track_audible(track_id) {
                     continue;
                 }
 
-                self.play_generator_step(gen_idx, generator, track_id, pattern, step);
+                self.play_channel_step(channel_idx, channel, track_id, pattern, step);
             }
         }
     }
 
-    /// Play a single generator's step from a pattern
-    fn play_generator_step(
+    /// Play a single channel's step from a pattern
+    fn play_channel_step(
         &self,
-        gen_idx: usize,
-        generator: &Generator,
+        channel_idx: usize,
+        channel: &Channel,
         track_id: TrackId,
         pattern: &Pattern,
         step: usize,
@@ -494,26 +491,31 @@ impl App {
         // Get volume from the mixer track
         let volume = self.mixer.track(track_id).volume;
 
-        match &generator.generator_type {
-            GeneratorType::Sampler => {
-                // Sampler generators use step sequencer grid
-                if pattern.get_step(gen_idx, step) {
-                    if let Some(ref sample_path) = generator.sample_path {
+        // Get pattern data for this channel
+        let slice = channel.get_pattern(pattern.id);
+
+        match &channel.source {
+            ChannelSource::Sampler { path } => {
+                // Sampler channels use step sequencer grid
+                if slice.map(|s| s.get_step(step)).unwrap_or(false) {
+                    if let Some(ref sample_path) = path {
                         let full_path = self.project_path.join("samples").join(sample_path);
-                        self.audio.play_sample(&full_path, volume, gen_idx);
+                        self.audio.play_sample(&full_path, volume, channel_idx);
                     }
                 }
             }
-            GeneratorType::Plugin { path: _ } => {
-                // Plugin generators use piano roll notes
-                for note in pattern.get_notes(gen_idx) {
-                    if note.start_step == step {
-                        self.audio
-                            .plugin_note_on(gen_idx, note.pitch, note.velocity);
-                    }
-                    // Check for note-off events (notes that end at this step)
-                    if note.start_step + note.duration == step {
-                        self.audio.plugin_note_off(gen_idx, note.pitch);
+            ChannelSource::Plugin { .. } => {
+                // Plugin channels use piano roll notes
+                if let Some(slice) = slice {
+                    for note in &slice.notes {
+                        if note.start_step == step {
+                            self.audio
+                                .plugin_note_on(channel_idx, note.pitch, note.velocity);
+                        }
+                        // Check for note-off events (notes that end at this step)
+                        if note.start_step + note.duration == step {
+                            self.audio.plugin_note_off(channel_idx, note.pitch);
+                        }
                     }
                 }
             }
@@ -562,14 +564,14 @@ impl App {
         self.playback.is_playing_arrangement()
     }
 
-    /// Stop all notes on plugin generators (all notes off)
+    /// Stop all notes on plugin channels (all notes off)
     fn stop_all_plugin_notes(&self) {
-        for (gen_idx, generator) in self.generators.iter().enumerate() {
-            if let GeneratorType::Plugin { .. } = &generator.generator_type {
+        for (channel_idx, channel) in self.channels.iter().enumerate() {
+            if let ChannelSource::Plugin { .. } = &channel.source {
                 // Send note_off for all possible MIDI notes (0-127)
                 // This is a brute-force approach but ensures all notes stop
                 for note in 0..=127u8 {
-                    self.audio.plugin_note_off(gen_idx, note);
+                    self.audio.plugin_note_off(channel_idx, note);
                 }
             }
         }
@@ -638,18 +640,26 @@ impl App {
         if !self.channel_rack.col.is_step_zone() {
             return; // Not in steps zone
         }
-        let channel = self.channel_rack.channel;
+        let channel_idx = self.channel_rack.channel;
         let step = self.channel_rack.col.to_step_or_zero();
-        if let Some(pattern) = self.get_current_pattern_mut() {
-            pattern.toggle_step(channel, step);
+        let pattern_id = self.current_pattern;
+        let pattern_length = self
+            .patterns
+            .get(pattern_id)
+            .map(|p| p.length)
+            .unwrap_or(16);
+
+        if let Some(channel) = self.channels.get_mut(channel_idx) {
+            let slice = channel.get_or_create_pattern(pattern_id, pattern_length);
+            slice.toggle_step(step);
             self.mark_dirty();
         }
     }
 
-    /// Generator count
+    /// Channel count
     #[allow(dead_code)]
-    pub fn generator_count(&self) -> usize {
-        self.generators.len()
+    pub fn channel_count(&self) -> usize {
+        self.channels.len()
     }
 
     /// Adjust mixer track volume
@@ -677,44 +687,45 @@ impl App {
         self.mark_dirty();
     }
 
-    /// Set a generator's sample path
-    /// If the generator doesn't exist, creates new generators up to and including gen_idx
-    pub fn set_channel_sample(&mut self, gen_idx: usize, sample_path: String) {
-        self.ensure_generator_exists(gen_idx);
+    /// Set a channel's sample path
+    /// If the channel doesn't exist, creates new channels up to and including channel_idx
+    pub fn set_channel_sample(&mut self, channel_idx: usize, sample_path: String) {
+        self.ensure_channel_exists(channel_idx);
 
-        if let Some(generator) = self.generators.get_mut(gen_idx) {
-            // Extract filename without extension for generator name
+        if let Some(channel) = self.channels.get_mut(channel_idx) {
+            // Extract filename without extension for channel name
             let name = std::path::Path::new(&sample_path)
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("Sample")
                 .to_string();
 
-            generator.name = name;
-            generator.generator_type = GeneratorType::Sampler;
-            generator.sample_path = Some(sample_path);
+            channel.name = name;
+            channel.source = ChannelSource::Sampler {
+                path: Some(sample_path),
+            };
             self.mark_dirty();
         }
     }
 
-    /// Set a generator as a plugin generator and load the plugin
-    /// If the generator doesn't exist, creates new generators up to and including gen_idx
-    pub fn set_channel_plugin(&mut self, gen_idx: usize, plugin_path: String) {
-        self.ensure_generator_exists(gen_idx);
+    /// Set a channel as a plugin channel and load the plugin
+    /// If the channel doesn't exist, creates new channels up to and including channel_idx
+    pub fn set_channel_plugin(&mut self, channel_idx: usize, plugin_path: String) {
+        self.ensure_channel_exists(channel_idx);
 
-        if let Some(generator) = self.generators.get_mut(gen_idx) {
-            // Extract plugin name without extension for generator name
+        if let Some(channel) = self.channels.get_mut(channel_idx) {
+            // Extract plugin name without extension for channel name
             let name = std::path::Path::new(&plugin_path)
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("Plugin")
                 .to_string();
 
-            generator.name = name;
-            generator.generator_type = GeneratorType::Plugin {
+            channel.name = name;
+            channel.source = ChannelSource::Plugin {
                 path: plugin_path.clone(),
+                params: std::collections::HashMap::new(),
             };
-            generator.sample_path = None;
         }
 
         self.mark_dirty();
@@ -728,73 +739,67 @@ impl App {
             Ok(mut host) => match host.activate() {
                 Ok(processor) => {
                     // For newly assigned plugin, use default params
-                    let generator = &self.generators[gen_idx];
-                    let init_state = self.build_plugin_init_state(gen_idx, generator);
-                    self.audio.send_plugin(gen_idx, processor, init_state);
+                    let channel = &self.channels[channel_idx];
+                    let init_state = self.build_plugin_init_state(channel_idx, channel);
+                    self.audio.send_plugin(channel_idx, processor, init_state);
                 }
                 Err(e) => {
-                    eprintln!("Failed to activate plugin for generator {}: {}", gen_idx, e);
+                    eprintln!(
+                        "Failed to activate plugin for channel {}: {}",
+                        channel_idx, e
+                    );
                 }
             },
             Err(e) => {
-                eprintln!("Failed to load plugin for generator {}: {}", gen_idx, e);
+                eprintln!("Failed to load plugin for channel {}: {}", channel_idx, e);
             }
         }
     }
 
-    /// Ensure a generator exists at the given index, creating empty generators if needed
-    fn ensure_generator_exists(&mut self, gen_idx: usize) {
-        // Create generators up to the requested index if they don't exist
-        while self.generators.len() <= gen_idx {
-            let new_idx = self.generators.len();
-            self.generators
-                .push(Generator::new(&format!("Generator {}", new_idx + 1)));
-            // Auto-assign the new generator to a mixer track
+    /// Ensure a channel exists at the given index, creating empty channels if needed
+    fn ensure_channel_exists(&mut self, channel_idx: usize) {
+        // Create channels up to the requested index if they don't exist
+        while self.channels.len() <= channel_idx {
+            let new_idx = self.channels.len();
+            self.channels
+                .push(Channel::new(&format!("Channel {}", new_idx + 1)));
+            // Auto-assign the new channel to a mixer track
             self.mixer.auto_assign_generator(new_idx);
         }
-
-        // Also expand pattern steps if needed
-        for pattern in &mut self.patterns {
-            while pattern.steps.len() <= gen_idx {
-                pattern.steps.push(vec![false; pattern.length]);
-            }
-            while pattern.notes.len() <= gen_idx {
-                pattern.notes.push(Vec::new());
-            }
-        }
+        // Pattern data is now stored in Channel, so no need to expand patterns
     }
 
-    /// Start previewing a generator (called on key press)
-    pub fn start_preview(&mut self, gen_idx: usize) {
-        if let Some(generator) = self.generators.get(gen_idx) {
-            match &generator.generator_type {
-                GeneratorType::Sampler => {
-                    if let Some(ref sample_path) = generator.sample_path {
+    /// Start previewing a channel (called on key press)
+    pub fn start_preview(&mut self, channel_idx: usize) {
+        if let Some(channel) = self.channels.get(channel_idx) {
+            match &channel.source {
+                ChannelSource::Sampler { path } => {
+                    if let Some(ref sample_path) = path {
                         let full_path = self.project_path.join("samples").join(sample_path);
-                        self.audio.preview_sample(&full_path, gen_idx);
+                        self.audio.preview_sample(&full_path, channel_idx);
                     }
                     // Set previewing to prevent key repeat from re-triggering
                     self.is_previewing = true;
-                    self.preview_channel = Some(gen_idx);
+                    self.preview_channel = Some(channel_idx);
                 }
-                GeneratorType::Plugin { .. } => {
+                ChannelSource::Plugin { .. } => {
                     // Play a test note (middle C) for plugin preview
                     let note = 60u8;
-                    self.audio.plugin_note_on(gen_idx, note, 0.8);
+                    self.audio.plugin_note_on(channel_idx, note, 0.8);
                     self.is_previewing = true;
-                    self.preview_channel = Some(gen_idx);
+                    self.preview_channel = Some(channel_idx);
                     self.preview_note = Some(note);
                 }
             }
         }
     }
 
-    /// Stop previewing a generator (called on key release)
-    pub fn stop_preview(&mut self, gen_idx: usize) {
+    /// Stop previewing a channel (called on key release)
+    pub fn stop_preview(&mut self, channel_idx: usize) {
         if self.is_previewing {
             if let Some(note) = self.preview_note {
                 // Send note off to stop the preview
-                self.audio.plugin_note_off(gen_idx, note);
+                self.audio.plugin_note_off(channel_idx, note);
             }
             self.is_previewing = false;
             self.preview_channel = None;
@@ -802,15 +807,15 @@ impl App {
         }
     }
 
-    /// Preview the current note in piano roll (for plugin generators)
+    /// Preview the current note in piano roll (for plugin channels)
     pub fn preview_piano_note(&mut self) {
-        let gen_idx = self.channel_rack.channel;
-        if let Some(generator) = self.generators.get(gen_idx) {
-            if let GeneratorType::Plugin { .. } = &generator.generator_type {
+        let channel_idx = self.channel_rack.channel;
+        if let Some(channel) = self.channels.get(channel_idx) {
+            if let ChannelSource::Plugin { .. } = &channel.source {
                 let note = self.piano_roll.pitch;
-                self.audio.plugin_note_on(gen_idx, note, 0.8);
+                self.audio.plugin_note_on(channel_idx, note, 0.8);
                 self.is_previewing = true;
-                self.preview_channel = Some(gen_idx);
+                self.preview_channel = Some(channel_idx);
                 self.preview_note = Some(note);
             }
         }
@@ -836,7 +841,7 @@ impl App {
             &self.project_name,
             self.bpm,
             self.current_pattern,
-            &self.generators,
+            &self.channels,
             &self.patterns,
             &self.arrangement,
             &self.mixer,
@@ -871,12 +876,12 @@ impl App {
         self.audio.update_mixer_state(state);
     }
 
-    /// Sync generator→track routing to audio thread
-    /// Called when generator routing changes
-    pub fn sync_generator_routing(&self) {
-        for gen_idx in 0..self.generators.len() {
-            let track = self.mixer.get_generator_track(gen_idx);
-            self.audio.set_generator_track(gen_idx, track.index());
+    /// Sync channel→track routing to audio thread
+    /// Called when channel routing changes
+    pub fn sync_channel_routing(&self) {
+        for (channel_idx, channel) in self.channels.iter().enumerate() {
+            self.audio
+                .set_generator_track(channel_idx, channel.mixer_track);
         }
     }
 

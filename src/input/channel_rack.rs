@@ -6,15 +6,21 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, Panel};
 use crate::coords::{AppCol, VimCol};
+use crate::mixer::TrackId;
 use crate::mode::ViewMode;
 use crate::plugin_host::params::build_editor_params;
+use crate::sequencer::ChannelSource;
 
 use super::common::key_to_vim_char;
 use super::vim::{Position, Range, RangeType, VimAction};
 
-/// Cycle mute state on the mixer track for a generator: normal -> muted -> solo -> normal
-fn cycle_generator_mute_state(app: &mut App, gen_idx: usize) {
-    let track_id = app.mixer.get_generator_track(gen_idx);
+/// Cycle mute state on the mixer track for a channel: normal -> muted -> solo -> normal
+fn cycle_channel_mute_state(app: &mut App, channel_idx: usize) {
+    let track_id = app
+        .channels
+        .get(channel_idx)
+        .map(|c| TrackId(c.mixer_track))
+        .unwrap_or(TrackId(1));
     let track = app.mixer.track_mut(track_id);
 
     if track.solo {
@@ -34,9 +40,9 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     match key.code {
         // 'm' to cycle mute state: normal -> muted -> solo -> normal
         KeyCode::Char('m') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let gen_idx = app.channel_rack.channel;
-            if gen_idx < app.generators.len() {
-                cycle_generator_mute_state(app, gen_idx);
+            let channel_idx = app.channel_rack.channel;
+            if channel_idx < app.channels.len() {
+                cycle_channel_mute_state(app, channel_idx);
                 app.sync_mixer_to_audio();
                 app.mark_dirty();
             }
@@ -50,11 +56,11 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             }
             return;
         }
-        // 'S' (shift+s) to toggle solo on current generator's mixer track
+        // 'S' (shift+s) to toggle solo on current channel's mixer track
         KeyCode::Char('S') => {
-            let gen_idx = app.channel_rack.channel;
-            if gen_idx < app.generators.len() {
-                let track_id = app.mixer.get_generator_track(gen_idx);
+            let channel_idx = app.channel_rack.channel;
+            if let Some(channel) = app.channels.get(channel_idx) {
+                let track_id = TrackId(channel.mixer_track);
                 app.mixer.toggle_solo(track_id);
                 app.sync_mixer_to_audio();
                 app.mark_dirty();
@@ -66,15 +72,14 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             app.set_view_mode(ViewMode::PianoRoll);
             return;
         }
-        // 'p' to open plugin editor for plugin generators
+        // 'p' to open plugin editor for plugin channels
         KeyCode::Char('p') => {
-            use crate::sequencer::GeneratorType;
-            if let Some(generator) = app.generators.get(app.channel_rack.channel) {
-                if let GeneratorType::Plugin { .. } = &generator.generator_type {
+            if let Some(channel) = app.channels.get(app.channel_rack.channel) {
+                if let ChannelSource::Plugin { .. } = &channel.source {
                     // Build params list using stored values or defaults from registry
-                    let params = build_editor_params(&generator.plugin_params);
+                    let params = build_editor_params(channel.plugin_params());
                     app.plugin_editor
-                        .open(app.channel_rack.channel, &generator.name, params);
+                        .open(app.channel_rack.channel, &channel.name, params);
                 }
             }
             return;
@@ -92,36 +97,24 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             if app.current_pattern + 1 < app.patterns.len() {
                 app.current_pattern += 1;
             } else {
-                // Create a new pattern
+                // Create a new pattern (now metadata-only)
                 let new_id = app.patterns.len();
-                let num_generators = app.generators.len();
                 app.patterns
-                    .push(crate::sequencer::Pattern::new(new_id, num_generators, 16));
+                    .push(crate::sequencer::Pattern::new(new_id, 16));
                 app.current_pattern = new_id;
             }
             app.mark_dirty();
             return;
         }
-        // 'd' in sample zone to delete generator
+        // 'd' in sample zone to delete channel
         KeyCode::Char('d') if app.cursor_zone() == "sample" => {
-            if app.channel_rack.channel < app.generators.len() {
-                // Remove the generator
-                app.generators.remove(app.channel_rack.channel);
-
-                // Remove corresponding steps/notes from all patterns
-                for pattern in &mut app.patterns {
-                    if app.channel_rack.channel < pattern.steps.len() {
-                        pattern.steps.remove(app.channel_rack.channel);
-                    }
-                    if app.channel_rack.channel < pattern.notes.len() {
-                        pattern.notes.remove(app.channel_rack.channel);
-                    }
-                }
+            if app.channel_rack.channel < app.channels.len() {
+                // Remove the channel (all its data goes with it)
+                app.channels.remove(app.channel_rack.channel);
 
                 // Adjust cursor if it's now out of bounds
-                if app.channel_rack.channel >= app.generators.len() && app.channel_rack.channel > 0
-                {
-                    app.channel_rack.channel = app.generators.len().saturating_sub(1);
+                if app.channel_rack.channel >= app.channels.len() && app.channel_rack.channel > 0 {
+                    app.channel_rack.channel = app.channels.len().saturating_sub(1);
                 }
 
                 app.mark_dirty();
@@ -133,27 +126,24 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         KeyCode::Char('x') | KeyCode::Enter if !app.channel_rack.col.is_step_zone() => {
             if app.channel_rack.col.is_mute_zone() {
                 // Cycle mute state on the mixer track
-                let gen_idx = app.channel_rack.channel;
-                if gen_idx < app.generators.len() {
-                    cycle_generator_mute_state(app, gen_idx);
+                let channel_idx = app.channel_rack.channel;
+                if channel_idx < app.channels.len() {
+                    cycle_channel_mute_state(app, channel_idx);
                     app.sync_mixer_to_audio();
                     app.mark_dirty();
                 }
             } else if app.channel_rack.col.is_track_zone() {
                 // Cycle to next mixer track (1-15, wrap around)
-                let gen_idx = app.channel_rack.channel;
-                if gen_idx < app.generators.len() {
-                    let current = app.mixer.get_generator_track(gen_idx);
+                let channel_idx = app.channel_rack.channel;
+                if let Some(channel) = app.channels.get_mut(channel_idx) {
                     // Cycle through tracks 1-15 (skip master)
-                    let next = if current.index() >= 15 {
+                    let next = if channel.mixer_track >= 15 {
                         1
                     } else {
-                        current.index() + 1
+                        channel.mixer_track + 1
                     };
-                    app.mixer
-                        .generator_routing
-                        .set(gen_idx, crate::mixer::TrackId(next));
-                    app.audio.set_generator_track(gen_idx, next);
+                    channel.mixer_track = next;
+                    app.audio.set_generator_track(channel_idx, next);
                     app.mark_dirty();
                 }
             } else if app.channel_rack.col.is_sample_zone() {
@@ -166,36 +156,30 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // '+' or '=' to increment track assignment (when in track zone)
         KeyCode::Char('+') | KeyCode::Char('=') if app.channel_rack.col.is_track_zone() => {
-            let gen_idx = app.channel_rack.channel;
-            if gen_idx < app.generators.len() {
-                let current = app.mixer.get_generator_track(gen_idx);
-                let next = if current.index() >= 15 {
+            let channel_idx = app.channel_rack.channel;
+            if let Some(channel) = app.channels.get_mut(channel_idx) {
+                let next = if channel.mixer_track >= 15 {
                     1
                 } else {
-                    current.index() + 1
+                    channel.mixer_track + 1
                 };
-                app.mixer
-                    .generator_routing
-                    .set(gen_idx, crate::mixer::TrackId(next));
-                app.audio.set_generator_track(gen_idx, next);
+                channel.mixer_track = next;
+                app.audio.set_generator_track(channel_idx, next);
                 app.mark_dirty();
             }
             return;
         }
         // '-' to decrement track assignment (when in track zone)
         KeyCode::Char('-') if app.channel_rack.col.is_track_zone() => {
-            let gen_idx = app.channel_rack.channel;
-            if gen_idx < app.generators.len() {
-                let current = app.mixer.get_generator_track(gen_idx);
-                let prev = if current.index() <= 1 {
+            let channel_idx = app.channel_rack.channel;
+            if let Some(channel) = app.channels.get_mut(channel_idx) {
+                let prev = if channel.mixer_track <= 1 {
                     15
                 } else {
-                    current.index() - 1
+                    channel.mixer_track - 1
                 };
-                app.mixer
-                    .generator_routing
-                    .set(gen_idx, crate::mixer::TrackId(prev));
-                app.audio.set_generator_track(gen_idx, prev);
+                channel.mixer_track = prev;
+                app.audio.set_generator_track(channel_idx, prev);
                 app.mark_dirty();
             }
             return;
@@ -266,9 +250,8 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
             // Only toggle step if in steps zone
             if app.channel_rack.col.is_step_zone() {
                 // For plugin channels, open piano roll instead of toggling step
-                if let Some(channel) = app.generators.get(app.channel_rack.channel) {
-                    use crate::sequencer::GeneratorType;
-                    if matches!(&channel.generator_type, GeneratorType::Plugin { .. }) {
+                if let Some(channel) = app.channels.get(app.channel_rack.channel) {
+                    if matches!(&channel.source, ChannelSource::Plugin { .. }) {
                         app.set_view_mode(ViewMode::PianoRoll);
                         return;
                     }
@@ -360,40 +343,43 @@ fn get_pattern_data(app: &App, range: &Range) -> Vec<Vec<bool>> {
     let (start, end) = range.normalized();
     let mut data = Vec::new();
 
-    if let Some(pattern) = app.get_current_pattern() {
-        for row in start.row..=end.row {
-            if row >= pattern.steps.len() {
-                continue;
+    let pattern_id = app.current_pattern;
+    let pattern_length = app.get_current_pattern().map(|p| p.length).unwrap_or(16);
+
+    for row in start.row..=end.row {
+        // Get the channel's pattern slice for this pattern
+        let slice = app
+            .channels
+            .get(row)
+            .and_then(|c| c.get_pattern(pattern_id));
+
+        // Convert vim columns to step indices
+        let col_start = match range.range_type {
+            RangeType::Block => vim_col_to_step(start.col).unwrap_or(0),
+            RangeType::Line => 0,
+            RangeType::Char if row == start.row => vim_col_to_step(start.col).unwrap_or(0),
+            RangeType::Char => 0,
+        };
+        let col_end = match range.range_type {
+            RangeType::Block => {
+                vim_col_to_step(end.col).unwrap_or(pattern_length.saturating_sub(1))
             }
-
-            // Convert vim columns to step indices
-            let col_start = match range.range_type {
-                RangeType::Block => vim_col_to_step(start.col).unwrap_or(0),
-                RangeType::Line => 0,
-                RangeType::Char if row == start.row => vim_col_to_step(start.col).unwrap_or(0),
-                RangeType::Char => 0,
-            };
-            let col_end = match range.range_type {
-                RangeType::Block => {
-                    vim_col_to_step(end.col).unwrap_or(pattern.length.saturating_sub(1))
-                }
-                RangeType::Line => pattern.length.saturating_sub(1),
-                RangeType::Char if row == end.row => {
-                    vim_col_to_step(end.col).unwrap_or(pattern.length.saturating_sub(1))
-                }
-                RangeType::Char => pattern.length.saturating_sub(1),
-            };
-
-            // Clamp to valid step range
-            let col_start = col_start.min(pattern.length.saturating_sub(1));
-            let col_end = col_end.min(pattern.length.saturating_sub(1));
-
-            if col_start <= col_end {
-                let row_data: Vec<bool> = (col_start..=col_end)
-                    .map(|col| pattern.get_step(row, col))
-                    .collect();
-                data.push(row_data);
+            RangeType::Line => pattern_length.saturating_sub(1),
+            RangeType::Char if row == end.row => {
+                vim_col_to_step(end.col).unwrap_or(pattern_length.saturating_sub(1))
             }
+            RangeType::Char => pattern_length.saturating_sub(1),
+        };
+
+        // Clamp to valid step range
+        let col_start = col_start.min(pattern_length.saturating_sub(1));
+        let col_end = col_end.min(pattern_length.saturating_sub(1));
+
+        if col_start <= col_end {
+            let row_data: Vec<bool> = (col_start..=col_end)
+                .map(|col| slice.map(|s| s.get_step(col)).unwrap_or(false))
+                .collect();
+            data.push(row_data);
         }
     }
 
@@ -404,36 +390,37 @@ fn get_pattern_data(app: &App, range: &Range) -> Vec<Vec<bool>> {
 fn delete_pattern_data(app: &mut App, range: &Range) {
     let (start, end) = range.normalized();
 
-    if let Some(pattern) = app.get_current_pattern_mut() {
-        for row in start.row..=end.row {
-            if row >= pattern.steps.len() {
-                continue;
+    let pattern_id = app.current_pattern;
+    let pattern_length = app.get_current_pattern().map(|p| p.length).unwrap_or(16);
+
+    for row in start.row..=end.row {
+        // Convert vim columns to step indices
+        let col_start = match range.range_type {
+            RangeType::Block => vim_col_to_step(start.col).unwrap_or(0),
+            RangeType::Line => 0,
+            RangeType::Char if row == start.row => vim_col_to_step(start.col).unwrap_or(0),
+            RangeType::Char => 0,
+        };
+        let col_end = match range.range_type {
+            RangeType::Block => {
+                vim_col_to_step(end.col).unwrap_or(pattern_length.saturating_sub(1))
             }
+            RangeType::Line => pattern_length.saturating_sub(1),
+            RangeType::Char if row == end.row => {
+                vim_col_to_step(end.col).unwrap_or(pattern_length.saturating_sub(1))
+            }
+            RangeType::Char => pattern_length.saturating_sub(1),
+        };
 
-            // Convert vim columns to step indices
-            let col_start = match range.range_type {
-                RangeType::Block => vim_col_to_step(start.col).unwrap_or(0),
-                RangeType::Line => 0,
-                RangeType::Char if row == start.row => vim_col_to_step(start.col).unwrap_or(0),
-                RangeType::Char => 0,
-            };
-            let col_end = match range.range_type {
-                RangeType::Block => {
-                    vim_col_to_step(end.col).unwrap_or(pattern.length.saturating_sub(1))
-                }
-                RangeType::Line => pattern.length.saturating_sub(1),
-                RangeType::Char if row == end.row => {
-                    vim_col_to_step(end.col).unwrap_or(pattern.length.saturating_sub(1))
-                }
-                RangeType::Char => pattern.length.saturating_sub(1),
-            };
+        // Clamp to valid step range
+        let col_start = col_start.min(pattern_length.saturating_sub(1));
+        let col_end = col_end.min(pattern_length.saturating_sub(1));
 
-            // Clamp to valid step range
-            let col_start = col_start.min(pattern.length.saturating_sub(1));
-            let col_end = col_end.min(pattern.length.saturating_sub(1));
-
+        // Get the channel's pattern slice and clear the steps
+        if let Some(channel) = app.channels.get_mut(row) {
+            let slice = channel.get_or_create_pattern(pattern_id, pattern_length);
             for col in col_start..=col_end {
-                pattern.set_step(row, col, false);
+                slice.set_step(col, false);
             }
         }
     }
@@ -464,17 +451,23 @@ fn paste_at_cursor(app: &mut App, before: bool) {
             (cursor_row, cursor_col)
         };
 
-        if let Some(pattern) = app.get_current_pattern_mut() {
-            for (row_offset, row_data) in register.data.iter().enumerate() {
-                let target_row = paste_row + row_offset;
-                if target_row >= pattern.steps.len() {
-                    break;
-                }
+        let pattern_id = app.current_pattern;
+        let pattern_length = app.get_current_pattern().map(|p| p.length).unwrap_or(16);
+        let num_channels = app.channels.len();
 
+        for (row_offset, row_data) in register.data.iter().enumerate() {
+            let target_row = paste_row + row_offset;
+            if target_row >= num_channels {
+                break;
+            }
+
+            // Get the channel's pattern slice
+            if let Some(channel) = app.channels.get_mut(target_row) {
+                let slice = channel.get_or_create_pattern(pattern_id, pattern_length);
                 for (col_offset, &value) in row_data.iter().enumerate() {
                     let target_col = paste_col + col_offset;
-                    if target_col < pattern.length {
-                        pattern.set_step(target_row, target_col, value);
+                    if target_col < pattern_length {
+                        slice.set_step(target_col, value);
                     }
                 }
             }
@@ -516,20 +509,19 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                 let col = AppCol::from(VimCol(vim_col));
                 if col.is_mute_zone() {
                     // Click on mute column - cycle mute state via mixer track
-                    if row < app.generators.len() {
-                        cycle_generator_mute_state(app, row);
+                    if row < app.channels.len() {
+                        cycle_channel_mute_state(app, row);
                         app.sync_mixer_to_audio();
                         app.mark_dirty();
                     }
                 } else if col.is_step_zone() {
-                    // Click on step - toggle it (if sampler generator)
-                    if let Some(generator) = app.generators.get(row) {
-                        use crate::sequencer::GeneratorType;
-                        if matches!(&generator.generator_type, GeneratorType::Plugin { .. }) {
-                            // Plugin generators open piano roll on click
+                    // Click on step - toggle it (if sampler channel)
+                    if let Some(channel) = app.channels.get(row) {
+                        if matches!(&channel.source, ChannelSource::Plugin { .. }) {
+                            // Plugin channels open piano roll on click
                             app.set_view_mode(ViewMode::PianoRoll);
                         } else {
-                            // Toggle step for sampler generators
+                            // Toggle step for sampler channels
                             app.toggle_step();
                         }
                     } else {
@@ -603,16 +595,15 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
         MouseAction::RightClick { x, y } => {
             // Show context menu for channel rack
             if let Some((row, _vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
-                use crate::sequencer::GeneratorType;
                 use crate::ui::context_menu::{channel_rack_menu, MenuContext};
 
-                // Determine generator properties for menu
+                // Determine channel properties for menu
                 let (has_sample, is_plugin) = app
-                    .generators
+                    .channels
                     .get(row)
-                    .map(|gen| {
-                        let has_sample = gen.sample_path.is_some();
-                        let is_plugin = matches!(&gen.generator_type, GeneratorType::Plugin { .. });
+                    .map(|channel| {
+                        let has_sample = channel.sample_path().is_some();
+                        let is_plugin = matches!(&channel.source, ChannelSource::Plugin { .. });
                         (has_sample, is_plugin)
                     })
                     .unwrap_or((false, false));

@@ -58,14 +58,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.mode.current_panel() == Panel::ChannelRack
     };
 
-    // Title changes based on mode (empty for channel rack, generator name for piano roll)
+    // Title changes based on mode (empty for channel rack, channel name for piano roll)
     let title = if in_piano_roll_mode {
-        let generator_name = app
-            .generators
+        let channel_name = app
+            .channels
             .get(app.channel_rack.channel)
-            .map(|g| g.name.as_str())
-            .unwrap_or("Generator 1");
-        generator_name.to_string()
+            .map(|c| c.name.as_str())
+            .unwrap_or("Channel 1");
+        channel_name.to_string()
     } else {
         String::new()
     };

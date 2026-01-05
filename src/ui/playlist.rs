@@ -16,6 +16,7 @@ use ratatui::{
 
 use crate::app::{App, Panel};
 use crate::input::vim::Position;
+use crate::sequencer::Pattern;
 use crate::ui::colors::{self, ColGroup};
 use crate::ui::render_panel_frame;
 
@@ -29,6 +30,16 @@ const BAR_WIDTH: u16 = 4;
 const HEADER_ROWS: u16 = 2;
 /// Number of bars in the arrangement
 const NUM_BARS: usize = 16;
+
+/// Check if a pattern has any data (steps or notes) across all channels
+fn pattern_has_data(app: &App, pattern: &Pattern) -> bool {
+    app.channels.iter().any(|channel| {
+        channel
+            .get_pattern(pattern.id)
+            .map(|slice| slice.steps.iter().any(|&s| s) || !slice.notes.is_empty())
+            .unwrap_or(false)
+    })
+}
 
 /// Render the playlist
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -44,21 +55,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     render_header(frame, inner, app);
 
     // Get non-empty patterns (patterns that have content)
-    let patterns: Vec<_> = app
+    let non_empty: Vec<_> = app
         .patterns
         .iter()
-        .filter(|p| {
-            // A pattern is non-empty if it has steps or notes
-            p.steps.iter().any(|ch| ch.iter().any(|&s| s))
-                || p.notes.iter().any(|ch| !ch.is_empty())
-        })
+        .filter(|p| pattern_has_data(app, p))
         .collect();
 
     // If no patterns have content, show all patterns
-    let patterns: Vec<_> = if patterns.is_empty() {
+    let patterns: Vec<_> = if non_empty.is_empty() {
         app.patterns.iter().collect()
     } else {
-        patterns
+        non_empty
     };
 
     // Get current visual selection (if any)

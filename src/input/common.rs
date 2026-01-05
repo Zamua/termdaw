@@ -42,9 +42,11 @@ pub fn send_param_to_plugin(app: &mut App) {
             .copied();
 
         if let Some(param_id) = param_id {
-            // Save to generator's plugin_params for persistence
-            if let Some(generator) = app.generators.get_mut(channel_idx) {
-                generator.plugin_params.insert(param_id, param_value);
+            // Save to channel's plugin_params for persistence
+            if let Some(channel) = app.channels.get_mut(channel_idx) {
+                if let Some(params) = channel.plugin_params_mut() {
+                    params.insert(param_id, param_value);
+                }
             }
 
             // Get the CLAP param ID and normalized value from registry

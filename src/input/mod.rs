@@ -499,11 +499,10 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
                     if app.current_pattern + 1 < app.patterns.len() {
                         app.current_pattern += 1;
                     } else {
-                        // Create a new pattern
+                        // Create a new pattern (now metadata-only)
                         let new_id = app.patterns.len();
-                        let num_channels = app.generators.len();
                         app.patterns
-                            .push(crate::sequencer::Pattern::new(new_id, num_channels, 16));
+                            .push(crate::sequencer::Pattern::new(new_id, 16));
                         app.current_pattern = new_id;
                     }
                     app.mark_dirty();
@@ -792,34 +791,35 @@ fn execute_context_menu_action(
         // Channel Rack actions
         ContextMenuAction::DeleteChannel => {
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                if let Some(gen) = app.generators.get_mut(channel) {
-                    // Reset generator to empty state
-                    gen.name = format!("Channel {}", channel + 1);
-                    gen.generator_type = crate::sequencer::GeneratorType::Sampler;
-                    gen.sample_path = None;
-                    gen.plugin_params.clear();
+                if channel < app.channels.len() {
+                    // Remove the channel (all its data goes with it)
+                    app.channels.remove(channel);
                     app.mark_dirty();
                 }
             }
         }
         ContextMenuAction::MuteChannel => {
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                // Toggle mute on the mixer track this generator routes to
-                let track_id = app.mixer.get_generator_track(channel);
-                let track = app.mixer.track_mut(track_id);
-                track.muted = !track.muted;
-                app.sync_mixer_to_audio();
-                app.mark_dirty();
+                // Toggle mute on the mixer track this channel routes to
+                if let Some(ch) = app.channels.get(channel) {
+                    let track_id = crate::mixer::TrackId(ch.mixer_track);
+                    let track = app.mixer.track_mut(track_id);
+                    track.muted = !track.muted;
+                    app.sync_mixer_to_audio();
+                    app.mark_dirty();
+                }
             }
         }
         ContextMenuAction::SoloChannel => {
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                // Toggle solo on the mixer track this generator routes to
-                let track_id = app.mixer.get_generator_track(channel);
-                let track = app.mixer.track_mut(track_id);
-                track.solo = !track.solo;
-                app.sync_mixer_to_audio();
-                app.mark_dirty();
+                // Toggle solo on the mixer track this channel routes to
+                if let Some(ch) = app.channels.get(channel) {
+                    let track_id = crate::mixer::TrackId(ch.mixer_track);
+                    let track = app.mixer.track_mut(track_id);
+                    track.solo = !track.solo;
+                    app.sync_mixer_to_audio();
+                    app.mark_dirty();
+                }
             }
         }
         ContextMenuAction::PreviewChannel => {
@@ -829,18 +829,18 @@ fn execute_context_menu_action(
         }
         ContextMenuAction::DuplicateChannel => {
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                if let Some(gen) = app.generators.get(channel) {
-                    let new_generator = gen.clone();
+                if let Some(ch) = app.channels.get(channel) {
+                    let new_channel = ch.clone();
                     // Find first free slot (empty sampler with no sample)
-                    let free_slot = app.generators.iter().position(|g| {
-                        g.sample_path.is_none()
-                            && matches!(g.generator_type, crate::sequencer::GeneratorType::Sampler)
+                    let free_slot = app.channels.iter().position(|c| {
+                        c.sample_path().is_none()
+                            && matches!(c.source, crate::sequencer::ChannelSource::Sampler { .. })
                     });
                     if let Some(slot) = free_slot {
-                        app.generators[slot] = new_generator;
+                        app.channels[slot] = new_channel;
                     } else {
                         // No free slot, append to end
-                        app.generators.push(new_generator);
+                        app.channels.push(new_channel);
                     }
                     app.mark_dirty();
                 }
@@ -874,17 +874,22 @@ fn execute_context_menu_action(
         // Piano Roll actions
         ContextMenuAction::DeleteNote => {
             if let Some(MenuContext::PianoRoll { pitch, step }) = context {
-                let channel = app.channel_rack.channel;
+                let channel_idx = app.channel_rack.channel;
+                let pattern_id = app.current_pattern;
                 // Find note ID first, then delete
                 let note_id = app
-                    .get_current_pattern()
-                    .and_then(|p| p.get_note_at(channel, pitch, step))
+                    .channels
+                    .get(channel_idx)
+                    .and_then(|c| c.get_pattern(pattern_id))
+                    .and_then(|s| s.get_note_at(pitch, step))
                     .map(|n| n.id.clone());
 
                 if let Some(id) = note_id {
-                    if let Some(pattern) = app.get_current_pattern_mut() {
-                        pattern.remove_note(channel, &id);
-                        app.mark_dirty();
+                    if let Some(channel) = app.channels.get_mut(channel_idx) {
+                        if let Some(slice) = channel.get_pattern_mut(pattern_id) {
+                            slice.remove_note(&id);
+                            app.mark_dirty();
+                        }
                     }
                 }
             }

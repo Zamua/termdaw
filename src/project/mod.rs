@@ -4,7 +4,6 @@
 //! - `project.json` at project root
 //! - `samples/` directory for audio files
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,11 +12,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::arrangement::Arrangement;
 use crate::mixer::Mixer;
-use crate::plugin_host::PluginParamId;
-use crate::sequencer::{Generator, GeneratorType, Note, Pattern};
+use crate::sequencer::{Channel, Pattern};
 
 /// Current project file version
-pub const PROJECT_VERSION: u32 = 1;
+pub const PROJECT_VERSION: u32 = 2;
 
 /// Project file name
 pub const PROJECT_FILE_NAME: &str = "project.json";
@@ -31,65 +29,15 @@ pub struct ProjectFile {
     pub modified_at: DateTime<Utc>,
     pub bpm: f64,
     pub current_pattern: usize,
-    pub channels: Vec<ChannelData>,
-    pub patterns: Vec<PatternData>,
+    /// Channels with all their data (source, routing, pattern data)
+    pub channels: Vec<Channel>,
+    /// Pattern metadata (just id, name, length)
+    pub patterns: Vec<Pattern>,
     #[serde(default)]
     pub arrangement: Arrangement,
-    /// Mixer state (tracks, routing, generator assignments)
-    /// Optional for backward compatibility with old project files
+    /// Mixer state (tracks only - routing is now in channels)
     #[serde(default)]
     pub mixer: Option<Mixer>,
-}
-
-/// Serializable channel/generator data
-/// Keeps volume/muted/solo for backward compatibility with old project files
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelData {
-    pub name: String,
-    #[serde(default, alias = "channel_type")]
-    pub generator_type: GeneratorType,
-    pub sample_path: Option<String>,
-    /// Legacy field - volume now lives in mixer. Kept for backward compat.
-    #[serde(default = "default_volume")]
-    pub volume: f32,
-    /// Legacy field - muted now lives in mixer. Kept for backward compat.
-    #[serde(default)]
-    pub muted: bool,
-    /// Legacy field - solo now lives in mixer. Kept for backward compat.
-    #[serde(default)]
-    pub solo: bool,
-    /// Plugin parameter values (param_name -> value)
-    #[serde(default)]
-    pub plugin_params: HashMap<String, f32>,
-}
-
-fn default_volume() -> f32 {
-    0.8
-}
-
-/// Serializable pattern data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PatternData {
-    pub id: usize,
-    pub name: String,
-    pub steps: Vec<Vec<bool>>,
-    #[serde(default)]
-    pub notes: Vec<Vec<NoteData>>,
-}
-
-/// Serializable note data for piano roll
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NoteData {
-    pub id: String,
-    pub pitch: u8,
-    pub start_step: usize,
-    pub duration: usize,
-    #[serde(default = "default_velocity")]
-    pub velocity: f32,
-}
-
-fn default_velocity() -> f32 {
-    0.8
 }
 
 #[allow(dead_code)]
@@ -117,7 +65,7 @@ impl ProjectFile {
         name: &str,
         bpm: f64,
         current_pattern: usize,
-        generators: &[Generator],
+        channels: &[Channel],
         patterns: &[Pattern],
         arrangement: &Arrangement,
         mixer: &Mixer,
@@ -130,119 +78,21 @@ impl ProjectFile {
             modified_at: Utc::now(),
             bpm,
             current_pattern,
-            channels: generators.iter().map(ChannelData::from).collect(),
-            patterns: patterns.iter().map(PatternData::from).collect(),
+            channels: channels.to_vec(),
+            patterns: patterns.to_vec(),
             arrangement: arrangement.clone(),
             mixer: Some(mixer.clone()),
         }
     }
-}
 
-impl From<&Generator> for ChannelData {
-    fn from(generator: &Generator) -> Self {
-        Self {
-            name: generator.name.clone(),
-            generator_type: generator.generator_type.clone(),
-            sample_path: generator.sample_path.clone(),
-            // Legacy fields - write defaults since Generator no longer has these
-            volume: default_volume(),
-            muted: false,
-            solo: false,
-            // Convert PluginParamId -> String for serialization
-            plugin_params: generator
-                .plugin_params
-                .iter()
-                .map(|(k, v)| (k.as_str().to_string(), *v))
-                .collect(),
-        }
+    /// Convert to channels (for loading)
+    pub fn into_channels(self) -> Vec<Channel> {
+        self.channels
     }
-}
 
-impl From<&Pattern> for PatternData {
-    fn from(pattern: &Pattern) -> Self {
-        Self {
-            id: pattern.id,
-            name: pattern.name.clone(),
-            steps: pattern.steps.clone(),
-            notes: pattern
-                .notes
-                .iter()
-                .map(|channel_notes| channel_notes.iter().map(NoteData::from).collect())
-                .collect(),
-        }
-    }
-}
-
-impl From<&Note> for NoteData {
-    fn from(note: &Note) -> Self {
-        Self {
-            id: note.id.clone(),
-            pitch: note.pitch,
-            start_step: note.start_step,
-            duration: note.duration,
-            velocity: note.velocity,
-        }
-    }
-}
-
-impl From<&NoteData> for Note {
-    fn from(data: &NoteData) -> Self {
-        Self {
-            id: data.id.clone(),
-            pitch: data.pitch,
-            start_step: data.start_step,
-            duration: data.duration,
-            velocity: data.velocity,
-        }
-    }
-}
-
-impl From<&ChannelData> for Generator {
-    fn from(data: &ChannelData) -> Self {
-        Self {
-            name: data.name.clone(),
-            generator_type: data.generator_type.clone(),
-            sample_path: data.sample_path.clone(),
-            // NOTE: volume, muted, solo from ChannelData are ignored
-            // They will be loaded from mixer state separately (TODO)
-            // Convert String -> PluginParamId for deserialization
-            plugin_params: data
-                .plugin_params
-                .iter()
-                .filter_map(|(k, v)| {
-                    PluginParamId::ALL
-                        .iter()
-                        .find(|id| id.as_str() == k)
-                        .map(|id| (*id, *v))
-                })
-                .collect(),
-        }
-    }
-}
-
-impl From<&PatternData> for Pattern {
-    fn from(data: &PatternData) -> Self {
-        let num_channels = data.steps.len();
-
-        // Ensure notes vector has correct number of channels
-        // (may be empty if loaded from old project file)
-        let notes = if data.notes.len() == num_channels {
-            data.notes
-                .iter()
-                .map(|channel_notes| channel_notes.iter().map(Note::from).collect())
-                .collect()
-        } else {
-            // Initialize with empty vectors for each channel
-            vec![Vec::new(); num_channels]
-        };
-
-        Self {
-            id: data.id,
-            name: data.name.clone(),
-            steps: data.steps.clone(),
-            notes,
-            length: data.steps.first().map(|s| s.len()).unwrap_or(16),
-        }
+    /// Convert to patterns (for loading)
+    pub fn into_patterns(self) -> Vec<Pattern> {
+        self.patterns
     }
 }
 
@@ -256,6 +106,7 @@ pub enum ProjectError {
     #[error("Project not found: {0}")]
     NotFound(String),
     #[error("Invalid project version: {0}")]
+    #[allow(dead_code)]
     InvalidVersion(u32),
 }
 
@@ -273,11 +124,6 @@ pub fn load_project(path: &Path) -> Result<ProjectFile, ProjectError> {
 
     let json = fs::read_to_string(&project_file)?;
     let project: ProjectFile = serde_json::from_str(&json)?;
-
-    // Version check (for future migrations)
-    if project.version > PROJECT_VERSION {
-        return Err(ProjectError::InvalidVersion(project.version));
-    }
 
     Ok(project)
 }

@@ -13,6 +13,7 @@ use ratatui::{
 
 use crate::app::App;
 use crate::input::vim::Position;
+use crate::mixer::TrackId;
 
 use super::{render_header, HEADER_ROWS, MUTE_WIDTH, NOTE_WIDTH, SAMPLE_WIDTH, TRACK_WIDTH};
 
@@ -56,11 +57,14 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
     render_header(frame, inner, app, true);
 
     let selected_channel = app.channel_rack.channel;
+    let pattern_id = app.current_pattern;
 
-    // Get notes from current pattern for selected channel
+    // Get notes from channel's pattern data for selected channel
     let notes: Vec<crate::sequencer::Note> = app
-        .get_current_pattern()
-        .map(|p| p.get_notes(selected_channel).to_vec())
+        .channels
+        .get(selected_channel)
+        .and_then(|c| c.get_pattern(pattern_id))
+        .map(|s| s.notes.clone())
         .unwrap_or_default();
 
     // Get current visual selection (if any)
@@ -125,17 +129,19 @@ fn render_row(
     let is_cursor_row = focused && app.piano_roll.pitch == pitch;
     let is_black = is_black_key(pitch);
 
-    // Map this row to a generator index (for displaying generator list alongside pitches)
+    // Map this row to a channel index (for displaying channel list alongside pitches)
     let channel_idx = viewport_top + row_idx;
-    let generator = app.generators.get(channel_idx);
+    let channel = app.channels.get(channel_idx);
     let is_selected_channel = channel_idx == selected_channel;
 
-    // Get mute/solo state from the mixer track this generator routes to
-    let track_id = app.mixer.get_generator_track(channel_idx);
+    // Get mute/solo state from the mixer track this channel routes to
+    let track_id = channel
+        .map(|c| TrackId(c.mixer_track))
+        .unwrap_or(TrackId(1));
     let mixer_track = app.mixer.track(track_id);
 
     // === MUTE ZONE ===
-    let (mute_char, mute_color) = if generator.is_some() {
+    let (mute_char, mute_color) = if channel.is_some() {
         if mixer_track.solo {
             ("S", Color::Yellow)
         } else if mixer_track.muted {
@@ -158,7 +164,7 @@ fn render_row(
 
     // === TRACK ZONE ===
     let track_num = track_id.index();
-    let track_text = if generator.is_some() {
+    let track_text = if channel.is_some() {
         format!("{:<width$}", track_num, width = TRACK_WIDTH as usize)
     } else {
         format!("{:<width$}", "·", width = TRACK_WIDTH as usize)
@@ -171,12 +177,12 @@ fn render_row(
     spans.push(Span::styled(track_text, track_style));
 
     // === CHANNEL NAME ZONE ===
-    // Show all generators, highlight selected one
-    let channel_display = if let Some(gen) = generator {
-        if gen.is_plugin() || gen.sample_path.is_some() {
+    // Show all channels, highlight selected one
+    let channel_display = if let Some(ch) = channel {
+        if ch.is_plugin() || ch.sample_path().is_some() {
             format!(
                 "{:<width$}",
-                &gen.name[..gen.name.len().min(SAMPLE_WIDTH as usize - 1)],
+                &ch.name[..ch.name.len().min(SAMPLE_WIDTH as usize - 1)],
                 width = SAMPLE_WIDTH as usize - 1
             )
         } else {

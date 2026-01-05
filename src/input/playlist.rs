@@ -5,12 +5,23 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::App;
+use crate::sequencer::Pattern;
 
 use super::common::key_to_vim_char;
 use super::vim::{self, VimAction};
 
 /// Number of bars in the arrangement
 const NUM_BARS: usize = 16;
+
+/// Check if a pattern has any data (steps or notes) across all channels
+fn pattern_has_data(app: &App, pattern: &Pattern) -> bool {
+    app.channels.iter().any(|channel| {
+        channel
+            .get_pattern(pattern.id)
+            .map(|slice| slice.steps.iter().any(|&s| s) || !slice.notes.is_empty())
+            .unwrap_or(false)
+    })
+}
 
 /// Handle keyboard input for playlist
 pub fn handle_key(key: KeyEvent, app: &mut App) {
@@ -136,18 +147,15 @@ fn execute_playlist_vim_action(action: VimAction, app: &mut App) {
 
 /// Get the number of patterns to show in playlist
 fn get_playlist_pattern_count(app: &App) -> usize {
-    let patterns: Vec<_> = app
+    let non_empty_count = app
         .patterns
         .iter()
-        .filter(|p| {
-            p.steps.iter().any(|ch| ch.iter().any(|&s| s))
-                || p.notes.iter().any(|ch| !ch.is_empty())
-        })
-        .collect();
-    if patterns.is_empty() {
+        .filter(|p| pattern_has_data(app, p))
+        .count();
+    if non_empty_count == 0 {
         app.patterns.len()
     } else {
-        patterns.len()
+        non_empty_count
     }
 }
 
@@ -161,22 +169,7 @@ fn handle_playlist_toggle(app: &mut App) {
     }
 
     // Get the pattern at the current row
-    let patterns: Vec<_> = app
-        .patterns
-        .iter()
-        .filter(|p| {
-            p.steps.iter().any(|ch| ch.iter().any(|&s| s))
-                || p.notes.iter().any(|ch| !ch.is_empty())
-        })
-        .collect();
-    let patterns: Vec<_> = if patterns.is_empty() {
-        app.patterns.iter().collect()
-    } else {
-        patterns
-    };
-
-    if let Some(pattern) = patterns.get(app.playlist.row) {
-        let pattern_id = pattern.id;
+    if let Some(pattern_id) = get_pattern_id_at_row(app, app.playlist.row) {
         // Convert cursor_bar (1-16) to bar index (0-15)
         let bar = app.playlist.bar - 1;
         app.arrangement.toggle_placement(pattern_id, bar);
@@ -187,22 +180,7 @@ fn handle_playlist_toggle(app: &mut App) {
 /// Cycle mute/solo state for the pattern at the current cursor row
 /// Cycles: normal -> muted -> solo -> normal (same order as channel rack)
 fn handle_playlist_mute(app: &mut App) {
-    let patterns: Vec<_> = app
-        .patterns
-        .iter()
-        .filter(|p| {
-            p.steps.iter().any(|ch| ch.iter().any(|&s| s))
-                || p.notes.iter().any(|ch| !ch.is_empty())
-        })
-        .collect();
-    let patterns: Vec<_> = if patterns.is_empty() {
-        app.patterns.iter().collect()
-    } else {
-        patterns
-    };
-
-    if let Some(pattern) = patterns.get(app.playlist.row) {
-        let pattern_id = pattern.id;
+    if let Some(pattern_id) = get_pattern_id_at_row(app, app.playlist.row) {
         app.arrangement.cycle_pattern_state(pattern_id);
         app.mark_dirty();
     }
@@ -210,18 +188,15 @@ fn handle_playlist_mute(app: &mut App) {
 
 /// Get pattern ID from row index
 fn get_pattern_id_at_row(app: &App, row: usize) -> Option<usize> {
-    let patterns: Vec<_> = app
+    let non_empty: Vec<_> = app
         .patterns
         .iter()
-        .filter(|p| {
-            p.steps.iter().any(|ch| ch.iter().any(|&s| s))
-                || p.notes.iter().any(|ch| !ch.is_empty())
-        })
+        .filter(|p| pattern_has_data(app, p))
         .collect();
-    let patterns: Vec<_> = if patterns.is_empty() {
+    let patterns: Vec<_> = if non_empty.is_empty() {
         app.patterns.iter().collect()
     } else {
-        patterns
+        non_empty
     };
     patterns.get(row).map(|p| p.id)
 }
