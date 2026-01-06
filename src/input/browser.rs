@@ -86,11 +86,8 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
                             .strip_prefix(app.browser.root_path())
                             .unwrap_or(&entry.path),
                     );
-                    let gen_idx = app
-                        .browser
-                        .target_channel
-                        .unwrap_or(app.channel_rack.channel);
-                    app.audio.preview_sample(&full_path, gen_idx);
+                    // Browser previews go directly to master, not through mixer tracks
+                    app.audio.preview_sample_to_master(&full_path);
                 }
             }
             return; // Don't trigger auto-preview
@@ -111,11 +108,8 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
                         .strip_prefix(app.browser.root_path())
                         .unwrap_or(&entry.path),
                 );
-                let gen_idx = app
-                    .browser
-                    .target_channel
-                    .unwrap_or(app.channel_rack.channel);
-                app.audio.preview_sample(&full_path, gen_idx);
+                // Browser previews go directly to master, not through mixer tracks
+                app.audio.preview_sample_to_master(&full_path);
             }
         }
     }
@@ -151,8 +145,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                                     .strip_prefix(app.browser.root_path())
                                     .unwrap_or(&entry.path),
                             );
-                            app.audio
-                                .preview_sample(&full_path, app.channel_rack.channel);
+                            // Browser previews go directly to master
+                            app.audio.preview_sample_to_master(&full_path);
                         }
                     }
                 }
@@ -185,15 +179,14 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                             app.mode.switch_panel(Panel::ChannelRack);
                         }
                     } else {
-                        // Just preview the file
+                        // Just preview the file - browser previews go directly to master
                         let full_path = app.project_path.join("samples").join(
                             entry
                                 .path
                                 .strip_prefix(app.browser.root_path())
                                 .unwrap_or(&entry.path),
                         );
-                        app.audio
-                            .preview_sample(&full_path, app.channel_rack.channel);
+                        app.audio.preview_sample_to_master(&full_path);
                     }
                 }
             }

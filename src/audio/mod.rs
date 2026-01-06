@@ -157,7 +157,12 @@ pub enum AudioCommand {
         generator_idx: usize,
     },
     /// Preview a sample (exclusive - stops previous preview)
-    PreviewSample { path: PathBuf, generator_idx: usize },
+    /// If route_to_master is true, audio goes directly to master (for browser previews)
+    PreviewSample {
+        path: PathBuf,
+        generator_idx: usize,
+        route_to_master: bool,
+    },
     /// Stop the current preview
     StopPreview,
     /// Stop all playback
@@ -232,6 +237,8 @@ struct Voice {
     is_preview: bool,
     /// Generator index (for routing to mixer track)
     generator_idx: usize,
+    /// Whether to route directly to master (bypasses generator routing)
+    route_to_master: bool,
 }
 
 /// A MIDI note event pending for a plugin
@@ -331,11 +338,21 @@ impl AudioHandle {
         });
     }
 
-    /// Preview a sample (exclusive - stops previous preview)
+    /// Preview a sample using the generator's mixer track routing (for channel previews)
     pub fn preview_sample(&self, path: &Path, generator_idx: usize) {
         let _ = self.tx.send(AudioCommand::PreviewSample {
             path: path.to_path_buf(),
             generator_idx,
+            route_to_master: false,
+        });
+    }
+
+    /// Preview a sample directly to master track (for browser previews)
+    pub fn preview_sample_to_master(&self, path: &Path) {
+        let _ = self.tx.send(AudioCommand::PreviewSample {
+            path: path.to_path_buf(),
+            generator_idx: 0, // Unused when route_to_master is true
+            route_to_master: true,
         });
     }
 
@@ -689,8 +706,12 @@ impl AudioEngine {
             let generator_idx = voice.generator_idx;
             let sample_rate = voice.sample.sample_rate;
 
-            // Get target track for this generator (previews use the same routing)
-            let target_track = *state.generator_tracks.get(generator_idx).unwrap_or(&1);
+            // Browser previews go to master, channel sounds use their assigned routing
+            let target_track = if voice.route_to_master {
+                0 // Master track (for browser previews)
+            } else {
+                *state.generator_tracks.get(generator_idx).unwrap_or(&1)
+            };
 
             let resample_ratio = sample_rate as f32 / output_sample_rate as f32;
             let mut samples = Vec::with_capacity(num_frames);
@@ -986,15 +1007,23 @@ impl AudioEngine {
                     volume,
                     generator_idx,
                 } => {
-                    Self::play_sample_internal(state, &path, volume, false, generator_idx);
+                    Self::play_sample_internal(state, &path, volume, false, generator_idx, false);
                 }
                 AudioCommand::PreviewSample {
                     path,
                     generator_idx,
+                    route_to_master,
                 } => {
                     // Stop existing preview
                     state.voices.retain(|v| !v.is_preview);
-                    Self::play_sample_internal(state, &path, 1.0, true, generator_idx);
+                    Self::play_sample_internal(
+                        state,
+                        &path,
+                        1.0,
+                        true,
+                        generator_idx,
+                        route_to_master,
+                    );
                 }
                 AudioCommand::StopPreview => {
                     state.voices.retain(|v| !v.is_preview);
@@ -1114,6 +1143,7 @@ impl AudioEngine {
         volume: f32,
         is_preview: bool,
         generator_idx: usize,
+        route_to_master: bool,
     ) {
         // Load sample if not cached
         if !state.sample_cache.contains_key(path) {
@@ -1136,6 +1166,7 @@ impl AudioEngine {
                 volume,
                 is_preview,
                 generator_idx,
+                route_to_master,
             });
         }
     }

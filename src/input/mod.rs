@@ -1001,8 +1001,8 @@ fn execute_context_menu_action(
                                 .strip_prefix(app.browser.root_path())
                                 .unwrap_or(&entry.path),
                         );
-                        app.audio
-                            .preview_sample(&full_path, app.channel_rack.channel);
+                        // Browser previews go directly to master
+                        app.audio.preview_sample_to_master(&full_path);
                     }
                 }
             }

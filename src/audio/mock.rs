@@ -102,6 +102,15 @@ impl MockAudioHandle {
         self.push_command(AudioCommand::PreviewSample {
             path: path.to_path_buf(),
             generator_idx,
+            route_to_master: false,
+        });
+    }
+
+    pub fn preview_sample_to_master(&self, path: &Path) {
+        self.push_command(AudioCommand::PreviewSample {
+            path: path.to_path_buf(),
+            generator_idx: 0,
+            route_to_master: true,
         });
     }
 
