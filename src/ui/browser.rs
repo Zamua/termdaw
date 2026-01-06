@@ -43,7 +43,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // Register close button area
     app.screen_areas.register(AreaId::BrowserClose, tabs_row[1]);
 
-    // Render mode tabs
+    // Render mode tabs - only highlight in cyan when focused
+    let tab_highlight_color = if show_focused {
+        Color::Cyan
+    } else {
+        Color::White
+    };
     let tabs = Tabs::new(vec!["Samples", "Plugins"])
         .select(match app.browser.mode {
             BrowserMode::Samples => 0,
@@ -52,7 +57,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .style(Style::default().fg(Color::DarkGray))
         .highlight_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(tab_highlight_color)
                 .add_modifier(Modifier::BOLD),
         )
         .divider("|");

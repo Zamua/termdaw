@@ -176,13 +176,24 @@ fn render_main_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut Ap
     app.screen_areas
         .register(AreaId::MainViewTabPlaylist, pl_rect);
 
-    // Render mode tabs using Tabs widget (like browser)
+    // Check if main view is focused (channel rack, piano roll, or playlist)
+    let main_view_focused = matches!(
+        app.mode.current_panel(),
+        Panel::ChannelRack | Panel::PianoRoll | Panel::Playlist
+    );
+
+    // Render mode tabs - only highlight in cyan when focused
+    let highlight_color = if main_view_focused {
+        Color::Cyan
+    } else {
+        Color::White
+    };
     let tabs = Tabs::new(vec![cr_text, pl_text])
         .select(selected_tab)
         .style(Style::default().fg(Color::DarkGray))
         .highlight_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(highlight_color)
                 .add_modifier(Modifier::BOLD),
         )
         .divider("|");
