@@ -167,6 +167,10 @@ pub struct Channel {
     /// Display name
     pub name: String,
 
+    /// UI slot number (0-98) - allows sparse channel storage
+    #[serde(default)]
+    pub slot: usize,
+
     /// Sound source (sampler or plugin)
     #[serde(default)]
     pub source: ChannelSource,
@@ -182,12 +186,24 @@ pub struct Channel {
 
 #[allow(dead_code)]
 impl Channel {
-    /// Create a new empty sampler channel
+    /// Create a new empty sampler channel at slot 0 with default mixer track
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
+            slot: 0,
             source: ChannelSource::Sampler { path: None },
             mixer_track: 1,
+            pattern_data: HashMap::new(),
+        }
+    }
+
+    /// Create a new empty sampler channel at a specific slot with a unique mixer track
+    pub fn new_at_slot(name: &str, slot: usize, mixer_track: usize) -> Self {
+        Self {
+            name: name.to_string(),
+            slot,
+            source: ChannelSource::Sampler { path: None },
+            mixer_track,
             pattern_data: HashMap::new(),
         }
     }
@@ -196,6 +212,7 @@ impl Channel {
     pub fn with_sample(name: &str, sample_path: &str) -> Self {
         Self {
             name: name.to_string(),
+            slot: 0,
             source: ChannelSource::Sampler {
                 path: Some(sample_path.to_string()),
             },
@@ -204,15 +221,53 @@ impl Channel {
         }
     }
 
+    /// Create a new sampler channel with a sample at a specific slot
+    pub fn with_sample_at_slot(
+        name: &str,
+        sample_path: &str,
+        slot: usize,
+        mixer_track: usize,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            slot,
+            source: ChannelSource::Sampler {
+                path: Some(sample_path.to_string()),
+            },
+            mixer_track,
+            pattern_data: HashMap::new(),
+        }
+    }
+
     /// Create a new plugin channel
     pub fn with_plugin(name: &str, plugin_path: &str) -> Self {
         Self {
             name: name.to_string(),
+            slot: 0,
             source: ChannelSource::Plugin {
                 path: plugin_path.to_string(),
                 params: HashMap::new(),
             },
             mixer_track: 1,
+            pattern_data: HashMap::new(),
+        }
+    }
+
+    /// Create a new plugin channel at a specific slot
+    pub fn with_plugin_at_slot(
+        name: &str,
+        plugin_path: &str,
+        slot: usize,
+        mixer_track: usize,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            slot,
+            source: ChannelSource::Plugin {
+                path: plugin_path.to_string(),
+                params: HashMap::new(),
+            },
+            mixer_track,
             pattern_data: HashMap::new(),
         }
     }
@@ -326,11 +381,9 @@ impl Default for Pattern {
 // Helper functions
 // ============================================================================
 
-/// Default channel configuration
+/// Default channel configuration - returns empty vec for clean project start
 pub fn default_channels() -> Vec<Channel> {
-    (1..=8)
-        .map(|i| Channel::new(&format!("Slot {}", i)))
-        .collect()
+    Vec::new()
 }
 
 /// Default patterns
@@ -363,4 +416,55 @@ pub struct YankedPlacement {
     pub bar_offset: i32,
     /// The pattern ID being placed
     pub pattern_id: usize,
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bug fix: On launch, we should not prefill empty channels.
+    /// default_channels() should return an empty vec so new projects start clean.
+    #[test]
+    fn test_default_channels_returns_empty() {
+        let channels = default_channels();
+        assert!(
+            channels.is_empty(),
+            "default_channels() should return empty vec, got {} channels",
+            channels.len()
+        );
+    }
+
+    #[test]
+    fn test_channel_new_creates_empty_sampler() {
+        let channel = Channel::new("Test");
+        assert_eq!(channel.name, "Test");
+        assert!(matches!(
+            channel.source,
+            ChannelSource::Sampler { path: None }
+        ));
+        assert!(channel.pattern_data.is_empty());
+    }
+
+    #[test]
+    fn test_channel_with_sample() {
+        let channel = Channel::with_sample("Kick", "kick.wav");
+        assert_eq!(channel.name, "Kick");
+        assert_eq!(channel.sample_path(), Some("kick.wav"));
+    }
+
+    #[test]
+    fn test_pattern_slice_step_operations() {
+        let mut slice = PatternSlice::new(16);
+        assert!(!slice.get_step(0));
+
+        slice.toggle_step(0);
+        assert!(slice.get_step(0));
+
+        slice.set_step(0, false);
+        assert!(!slice.get_step(0));
+    }
 }

@@ -720,46 +720,93 @@ impl App {
         self.mark_dirty();
     }
 
+    /// Find an available mixer track (1-15) that's not currently in use by any channel.
+    /// If all tracks are in use, returns track 1 (allowing sharing).
+    pub fn find_available_mixer_track(&self) -> usize {
+        let used_tracks: std::collections::HashSet<usize> =
+            self.channels.iter().map(|c| c.mixer_track).collect();
+
+        // Find first available track from 1-15
+        for track in 1..=15 {
+            if !used_tracks.contains(&track) {
+                return track;
+            }
+        }
+
+        // All tracks in use, return 1 (will share)
+        1
+    }
+
+    /// Get a channel by its slot number (not Vec index)
+    /// Returns None if no channel exists at that slot
+    pub fn get_channel_at_slot(&self, slot: usize) -> Option<&Channel> {
+        self.channels.iter().find(|c| c.slot == slot)
+    }
+
+    /// Get a mutable channel by its slot number (not Vec index)
+    /// Returns None if no channel exists at that slot
+    pub fn get_channel_at_slot_mut(&mut self, slot: usize) -> Option<&mut Channel> {
+        self.channels.iter_mut().find(|c| c.slot == slot)
+    }
+
     /// Set a channel's sample path
-    /// If the channel doesn't exist, creates new channels up to and including channel_idx
-    pub fn set_channel_sample(&mut self, channel_idx: usize, sample_path: String) {
-        self.ensure_channel_exists(channel_idx);
+    /// Creates the channel at the specified slot if it doesn't exist (sparse)
+    pub fn set_channel_sample(&mut self, slot: usize, sample_path: String) {
+        // Extract filename without extension for channel name
+        let name = std::path::Path::new(&sample_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Sample")
+            .to_string();
 
-        if let Some(channel) = self.channels.get_mut(channel_idx) {
-            // Extract filename without extension for channel name
-            let name = std::path::Path::new(&sample_path)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Sample")
-                .to_string();
-
+        // Search for existing channel with this slot
+        if let Some(channel) = self.channels.iter_mut().find(|c| c.slot == slot) {
+            // Update existing channel
             channel.name = name;
             channel.source = ChannelSource::Sampler {
                 path: Some(sample_path),
             };
-            self.mark_dirty();
+        } else {
+            // Create new channel with unique mixer track
+            let mixer_track = self.find_available_mixer_track();
+            let channel = Channel::with_sample_at_slot(&name, &sample_path, slot, mixer_track);
+            self.channels.push(channel);
+            // Update mixer routing
+            let channel_idx = self.channels.len() - 1;
+            self.mixer.auto_assign_generator(channel_idx);
         }
+        self.mark_dirty();
     }
 
     /// Set a channel as a plugin channel and load the plugin
-    /// If the channel doesn't exist, creates new channels up to and including channel_idx
-    pub fn set_channel_plugin(&mut self, channel_idx: usize, plugin_path: String) {
-        self.ensure_channel_exists(channel_idx);
+    /// Creates the channel at the specified slot if it doesn't exist (sparse)
+    pub fn set_channel_plugin(&mut self, slot: usize, plugin_path: String) {
+        // Extract plugin name without extension for channel name
+        let name = std::path::Path::new(&plugin_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Plugin")
+            .to_string();
 
-        if let Some(channel) = self.channels.get_mut(channel_idx) {
-            // Extract plugin name without extension for channel name
-            let name = std::path::Path::new(&plugin_path)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Plugin")
-                .to_string();
-
+        // Find or create channel at this slot
+        let channel_idx = if let Some(idx) = self.channels.iter().position(|c| c.slot == slot) {
+            // Update existing channel
+            let channel = &mut self.channels[idx];
             channel.name = name;
             channel.source = ChannelSource::Plugin {
                 path: plugin_path.clone(),
                 params: std::collections::HashMap::new(),
             };
-        }
+            idx
+        } else {
+            // Create new channel with unique mixer track
+            let mixer_track = self.find_available_mixer_track();
+            let channel = Channel::with_plugin_at_slot(&name, &plugin_path, slot, mixer_track);
+            self.channels.push(channel);
+            let idx = self.channels.len() - 1;
+            self.mixer.auto_assign_generator(idx);
+            idx
+        };
 
         self.mark_dirty();
 
@@ -789,38 +836,28 @@ impl App {
         }
     }
 
-    /// Ensure a channel exists at the given index, creating empty channels if needed
-    fn ensure_channel_exists(&mut self, channel_idx: usize) {
-        // Create channels up to the requested index if they don't exist
-        while self.channels.len() <= channel_idx {
-            let new_idx = self.channels.len();
-            self.channels
-                .push(Channel::new(&format!("Channel {}", new_idx + 1)));
-            // Auto-assign the new channel to a mixer track
-            self.mixer.auto_assign_generator(new_idx);
-        }
-        // Pattern data is now stored in Channel, so no need to expand patterns
-    }
-
     /// Start previewing a channel (called on key press)
-    pub fn start_preview(&mut self, channel_idx: usize) {
-        if let Some(channel) = self.channels.get(channel_idx) {
+    /// Takes slot number, finds Vec index for audio engine
+    pub fn start_preview(&mut self, slot: usize) {
+        // Find Vec index for audio engine
+        if let Some(vec_idx) = self.channels.iter().position(|c| c.slot == slot) {
+            let channel = &self.channels[vec_idx];
             match &channel.source {
                 ChannelSource::Sampler { path } => {
                     if let Some(ref sample_path) = path {
                         let full_path = self.project_path.join("samples").join(sample_path);
-                        self.audio.preview_sample(&full_path, channel_idx);
+                        self.audio.preview_sample(&full_path, vec_idx);
                     }
                     // Set previewing to prevent key repeat from re-triggering
                     self.is_previewing = true;
-                    self.preview_channel = Some(channel_idx);
+                    self.preview_channel = Some(vec_idx);
                 }
                 ChannelSource::Plugin { .. } => {
                     // Play a test note (middle C) for plugin preview
                     let note = 60u8;
-                    self.audio.plugin_note_on(channel_idx, note, 0.8);
+                    self.audio.plugin_note_on(vec_idx, note, 0.8);
                     self.is_previewing = true;
-                    self.preview_channel = Some(channel_idx);
+                    self.preview_channel = Some(vec_idx);
                     self.preview_note = Some(note);
                 }
             }
@@ -842,13 +879,14 @@ impl App {
 
     /// Preview the current note in piano roll (for plugin channels)
     pub fn preview_piano_note(&mut self) {
-        let channel_idx = self.channel_rack.channel;
-        if let Some(channel) = self.channels.get(channel_idx) {
-            if let ChannelSource::Plugin { .. } = &channel.source {
+        let slot = self.channel_rack.channel;
+        // Find Vec index for audio engine
+        if let Some(vec_idx) = self.channels.iter().position(|c| c.slot == slot) {
+            if let ChannelSource::Plugin { .. } = &self.channels[vec_idx].source {
                 let note = self.piano_roll.pitch;
-                self.audio.plugin_note_on(channel_idx, note, 0.8);
+                self.audio.plugin_note_on(vec_idx, note, 0.8);
                 self.is_previewing = true;
-                self.preview_channel = Some(channel_idx);
+                self.preview_channel = Some(vec_idx);
                 self.preview_note = Some(note);
             }
         }
@@ -1099,9 +1137,7 @@ impl App {
                 let pitch_row = (84 - self.piano_roll.pitch) as usize;
                 JumpPosition::piano_roll(pitch_row, self.piano_roll.step)
             }
-            ViewMode::Playlist => {
-                JumpPosition::playlist(self.playlist.row, self.playlist.bar)
-            }
+            ViewMode::Playlist => JumpPosition::playlist(self.playlist.row, self.playlist.bar),
         }
     }
 
@@ -1130,8 +1166,7 @@ impl App {
                 // Scroll viewport to keep cursor visible
                 let visible_rows = 15;
                 if self.channel_rack.channel >= self.channel_rack.viewport_top + visible_rows {
-                    self.channel_rack.viewport_top =
-                        self.channel_rack.channel - visible_rows + 1;
+                    self.channel_rack.viewport_top = self.channel_rack.channel - visible_rows + 1;
                 }
                 if self.channel_rack.channel < self.channel_rack.viewport_top {
                     self.channel_rack.viewport_top = self.channel_rack.channel;
@@ -1165,7 +1200,6 @@ impl App {
             }
         }
     }
-
 }
 
 // ============================================================================
@@ -1271,5 +1305,330 @@ impl PlaylistContext for App {
             .placements
             .retain(|p| !(p.pattern_id == pattern_id && p.start_bar == bar));
         self.mark_dirty();
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::AudioHandle;
+    use crate::mixer::TrackId;
+    use tempfile::TempDir;
+
+    /// Create a test App with dummy audio in a temp directory
+    fn create_test_app() -> (App, TempDir) {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let project_path = temp_dir.path().join("test-project");
+        std::fs::create_dir_all(&project_path).expect("Failed to create project dir");
+
+        let audio = AudioHandle::dummy();
+        let app = App::new(project_path.to_str().unwrap(), audio);
+        (app, temp_dir)
+    }
+
+    // ========================================================================
+    // Bug 1: New projects should start with no channels
+    // ========================================================================
+
+    /// Bug fix: On launch with a new project, there should be no prefilled channels.
+    #[test]
+    fn test_new_project_has_no_prefilled_channels() {
+        let (app, _temp) = create_test_app();
+        assert!(
+            app.channels.is_empty(),
+            "New project should start with 0 channels, got {}",
+            app.channels.len()
+        );
+    }
+
+    // ========================================================================
+    // Bug 2: Adding to higher slot shouldn't auto-fill gaps
+    // ========================================================================
+
+    /// Bug fix: When adding a sample to channel 20, channels 0-19 should NOT
+    /// be auto-created. Only the specific channel should exist.
+    #[test]
+    fn test_set_channel_sample_sparse() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add a sample to channel index 5 (should be the only channel)
+        app.set_channel_sample(5, "kick.wav".to_string());
+
+        // Only ONE channel should exist - the one at index 5
+        // Channels 0-4 should NOT be auto-filled
+        assert_eq!(
+            app.channels.len(),
+            1,
+            "Only the assigned channel should exist, got {} channels",
+            app.channels.len()
+        );
+    }
+
+    /// Verifies that multiple sparse channels can coexist without gap-filling
+    #[test]
+    fn test_multiple_sparse_channels() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add samples at non-contiguous indices
+        app.set_channel_sample(2, "kick.wav".to_string());
+        app.set_channel_sample(7, "snare.wav".to_string());
+        app.set_channel_sample(15, "hihat.wav".to_string());
+
+        // Should have exactly 3 channels
+        assert_eq!(
+            app.channels.len(),
+            3,
+            "Should have exactly 3 channels, got {}",
+            app.channels.len()
+        );
+    }
+
+    // ========================================================================
+    // Bug 3: Mute should only affect current channel, not all channels
+    // ========================================================================
+
+    /// Bug fix: Each channel should route to a unique mixer track by default,
+    /// so muting one channel doesn't affect others.
+    #[test]
+    fn test_channels_have_unique_mixer_tracks() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add multiple channels
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.set_channel_sample(1, "snare.wav".to_string());
+        app.set_channel_sample(2, "hihat.wav".to_string());
+
+        // Each channel should have a unique mixer_track
+        let track0 = app.channels[0].mixer_track;
+        let track1 = app.channels[1].mixer_track;
+        let track2 = app.channels[2].mixer_track;
+
+        assert_ne!(
+            track0, track1,
+            "Channels 0 and 1 should have different mixer tracks"
+        );
+        assert_ne!(
+            track1, track2,
+            "Channels 1 and 2 should have different mixer tracks"
+        );
+        assert_ne!(
+            track0, track2,
+            "Channels 0 and 2 should have different mixer tracks"
+        );
+    }
+
+    /// Verifies that muting one channel's mixer track doesn't affect other channels
+    #[test]
+    fn test_mute_only_affects_single_channel() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add two channels
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.set_channel_sample(1, "snare.wav".to_string());
+
+        // Mute channel 0's mixer track
+        let track0 = TrackId(app.channels[0].mixer_track);
+        let track1 = TrackId(app.channels[1].mixer_track);
+        app.mixer.toggle_mute(track0);
+
+        // Channel 0's track should be muted
+        assert!(
+            app.mixer.track(track0).muted,
+            "Channel 0's track should be muted"
+        );
+        // Channel 1's track should NOT be muted
+        assert!(
+            !app.mixer.track(track1).muted,
+            "Channel 1's track should NOT be muted"
+        );
+    }
+
+    // ========================================================================
+    // Bug 4: Adding channel after delete should still work
+    // ========================================================================
+
+    /// Simplest reproduction: add 2 channels, delete first, add new at end
+    #[test]
+    fn test_add_channel_after_delete_simple() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add 2 channels at slots 0 and 1
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.set_channel_sample(1, "snare.wav".to_string());
+        assert_eq!(app.channels.len(), 2);
+
+        // Delete the first channel (Vec index 0, slot 0)
+        app.channels.remove(0);
+        assert_eq!(app.channels.len(), 1);
+
+        // Try to add a new channel at slot 2 (the end)
+        app.set_channel_sample(2, "hihat.wav".to_string());
+
+        // Should now have 2 channels
+        assert_eq!(
+            app.channels.len(),
+            2,
+            "Should have 2 channels after add-delete-add"
+        );
+
+        // Both channels should have unique mixer tracks
+        let track0 = app.channels[0].mixer_track;
+        let track1 = app.channels[1].mixer_track;
+        assert_ne!(
+            track0, track1,
+            "Both channels should have unique mixer tracks, got {} and {}",
+            track0, track1
+        );
+    }
+
+    /// Exact user reproduction: slot 1, slot 2, delete slot 1, add to slot 2
+    /// User reports: "nothing is added in slot 2"
+    #[test]
+    fn test_user_repro_add_delete_add_same_slot() {
+        let (mut app, _temp) = create_test_app();
+
+        // Step 1: In slot 1 add a sample
+        app.set_channel_sample(1, "sample1.wav".to_string());
+        assert_eq!(app.channels.len(), 1);
+        assert_eq!(app.channels[0].slot, 1);
+
+        // Step 2: In slot 2 add a sample
+        app.set_channel_sample(2, "sample2.wav".to_string());
+        assert_eq!(app.channels.len(), 2);
+
+        // Step 3: Delete slot 1
+        // Find the channel with slot 1 and remove it
+        let idx = app.channels.iter().position(|c| c.slot == 1).unwrap();
+        app.channels.remove(idx);
+        assert_eq!(app.channels.len(), 1);
+        // Only channel with slot 2 remains
+        assert_eq!(app.channels[0].slot, 2);
+
+        // Step 4: Attempt to add a sample in slot 2
+        // This should UPDATE the existing channel at slot 2, not create a new one
+        app.set_channel_sample(2, "new_sample.wav".to_string());
+
+        // The channel at slot 2 should now have the new sample
+        let channel = app.channels.iter().find(|c| c.slot == 2);
+        assert!(channel.is_some(), "Channel at slot 2 should exist");
+        assert_eq!(
+            channel.unwrap().sample_path(),
+            Some("new_sample.wav"),
+            "Channel at slot 2 should have the new sample"
+        );
+    }
+
+    /// After adding 15 channels, deleting one, and adding another,
+    /// the new channel should be created successfully with a unique mixer track.
+    #[test]
+    fn test_add_channel_after_delete() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add 15 channels (slots 0-14)
+        for i in 0..15 {
+            app.set_channel_sample(i, format!("sample{}.wav", i));
+        }
+        assert_eq!(app.channels.len(), 15);
+
+        // All channels should have unique mixer tracks
+        let mut tracks_before: Vec<usize> = app.channels.iter().map(|c| c.mixer_track).collect();
+        tracks_before.sort();
+        tracks_before.dedup();
+        assert_eq!(
+            tracks_before.len(),
+            15,
+            "All 15 channels should have unique mixer tracks"
+        );
+
+        // Delete channel at Vec index 1 (slot 1)
+        app.channels.remove(1);
+        assert_eq!(app.channels.len(), 14);
+
+        // Add a new channel at slot 15
+        app.set_channel_sample(15, "new_sample.wav".to_string());
+
+        // Should now have 15 channels again
+        assert_eq!(
+            app.channels.len(),
+            15,
+            "Should have 15 channels after add-delete-add"
+        );
+
+        // The new channel should exist and have a unique mixer track
+        let new_channel = app.channels.iter().find(|c| c.slot == 15);
+        assert!(new_channel.is_some(), "New channel at slot 15 should exist");
+
+        // All channels should still have unique mixer tracks
+        let mut tracks_after: Vec<usize> = app.channels.iter().map(|c| c.mixer_track).collect();
+        tracks_after.sort();
+        tracks_after.dedup();
+        assert_eq!(
+            tracks_after.len(),
+            15,
+            "All 15 channels should still have unique mixer tracks after add-delete-add"
+        );
+    }
+
+    /// Test that get_channel_at_slot works correctly after deletions
+    /// This simulates the UI behavior where rendering should find channels by slot
+    #[test]
+    fn test_get_channel_at_slot_after_deletion() {
+        let (mut app, _temp) = create_test_app();
+
+        // Simulate UI: cursor at 0 ("Slot 1"), add sample
+        app.set_channel_sample(0, "kick.wav".to_string());
+        // Simulate UI: cursor at 1 ("Slot 2"), add sample
+        app.set_channel_sample(1, "snare.wav".to_string());
+
+        assert_eq!(app.channels.len(), 2);
+        // Verify slots are correct
+        assert_eq!(app.channels[0].slot, 0);
+        assert_eq!(app.channels[1].slot, 1);
+
+        // Before deletion, get_channel_at_slot should find both
+        assert!(
+            app.get_channel_at_slot(0).is_some(),
+            "Before deletion: slot 0 should exist"
+        );
+        assert!(
+            app.get_channel_at_slot(1).is_some(),
+            "Before deletion: slot 1 should exist"
+        );
+
+        // Simulate UI: cursor at 0, press 'd' to delete
+        // The UI uses Vec index, not slot, for deletion
+        app.channels.remove(0);
+
+        assert_eq!(app.channels.len(), 1);
+        // After deletion, Vec[0] contains the channel with slot=1
+        assert_eq!(
+            app.channels[0].slot, 1,
+            "After deletion, only channel should have slot 1"
+        );
+
+        // CRITICAL TEST: get_channel_at_slot should find by slot, not Vec index
+        assert!(
+            app.get_channel_at_slot(0).is_none(),
+            "After deletion: slot 0 should NOT exist"
+        );
+        assert!(
+            app.get_channel_at_slot(1).is_some(),
+            "After deletion: slot 1 SHOULD exist"
+        );
+
+        // The bug: if rendering uses channels.get(1), it returns None
+        // because Vec only has 1 element. But slot 1 exists at Vec[0].
+        assert!(
+            app.channels.get(1).is_none(),
+            "Vec index 1 is empty (this is the bug - UI looks here)"
+        );
+        assert!(
+            app.channels.get(0).is_some(),
+            "Vec index 0 contains the slot 1 channel"
+        );
     }
 }

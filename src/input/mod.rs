@@ -827,18 +827,18 @@ fn execute_context_menu_action(
     match action {
         // Channel Rack actions
         ContextMenuAction::DeleteChannel => {
-            if let Some(MenuContext::ChannelRack { channel }) = context {
-                if channel < app.channels.len() {
-                    // Remove the channel (all its data goes with it)
-                    app.channels.remove(channel);
+            if let Some(MenuContext::ChannelRack { channel: slot }) = context {
+                // Find the channel by slot and remove it
+                if let Some(idx) = app.channels.iter().position(|c| c.slot == slot) {
+                    app.channels.remove(idx);
                     app.mark_dirty();
                 }
             }
         }
         ContextMenuAction::MuteChannel => {
-            if let Some(MenuContext::ChannelRack { channel }) = context {
+            if let Some(MenuContext::ChannelRack { channel: slot }) = context {
                 // Toggle mute on the mixer track this channel routes to
-                if let Some(ch) = app.channels.get(channel) {
+                if let Some(ch) = app.get_channel_at_slot(slot) {
                     let track_id = crate::mixer::TrackId(ch.mixer_track);
                     let track = app.mixer.track_mut(track_id);
                     track.muted = !track.muted;
@@ -848,9 +848,9 @@ fn execute_context_menu_action(
             }
         }
         ContextMenuAction::SoloChannel => {
-            if let Some(MenuContext::ChannelRack { channel }) = context {
+            if let Some(MenuContext::ChannelRack { channel: slot }) = context {
                 // Toggle solo on the mixer track this channel routes to
-                if let Some(ch) = app.channels.get(channel) {
+                if let Some(ch) = app.get_channel_at_slot(slot) {
                     let track_id = crate::mixer::TrackId(ch.mixer_track);
                     let track = app.mixer.track_mut(track_id);
                     track.solo = !track.solo;
@@ -860,25 +860,21 @@ fn execute_context_menu_action(
             }
         }
         ContextMenuAction::PreviewChannel => {
-            if let Some(MenuContext::ChannelRack { channel }) = context {
-                app.start_preview(channel);
+            if let Some(MenuContext::ChannelRack { channel: slot }) = context {
+                app.start_preview(slot);
             }
         }
         ContextMenuAction::DuplicateChannel => {
-            if let Some(MenuContext::ChannelRack { channel }) = context {
-                if let Some(ch) = app.channels.get(channel) {
-                    let new_channel = ch.clone();
-                    // Find first free slot (empty sampler with no sample)
-                    let free_slot = app.channels.iter().position(|c| {
-                        c.sample_path().is_none()
-                            && matches!(c.source, crate::sequencer::ChannelSource::Sampler { .. })
-                    });
-                    if let Some(slot) = free_slot {
-                        app.channels[slot] = new_channel;
-                    } else {
-                        // No free slot, append to end
-                        app.channels.push(new_channel);
-                    }
+            if let Some(MenuContext::ChannelRack { channel: slot }) = context {
+                if let Some(ch) = app.get_channel_at_slot(slot) {
+                    let mut new_channel = ch.clone();
+                    // Find first unused slot number
+                    let used_slots: std::collections::HashSet<usize> =
+                        app.channels.iter().map(|c| c.slot).collect();
+                    let new_slot = (0..99).find(|s| !used_slots.contains(s)).unwrap_or(98);
+                    new_channel.slot = new_slot;
+                    new_channel.mixer_track = app.find_available_mixer_track();
+                    app.channels.push(new_channel);
                     app.mark_dirty();
                 }
             }

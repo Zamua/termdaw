@@ -44,13 +44,22 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
         let y = inner.y + HEADER_ROWS + row_idx as u16;
         let mut x = inner.x;
 
-        // Check if this slot has an allocated channel
-        let channel = app.channels.get(channel_idx);
-        let is_allocated = channel.is_some();
+        // Check if this slot has an allocated channel (lookup by slot, not Vec index)
+        // Extract all needed data upfront to avoid borrow conflicts
+        let channel_data = app.get_channel_at_slot(channel_idx).map(|c| {
+            (
+                c.mixer_track,
+                c.name.clone(),
+                c.is_plugin(),
+                c.sample_path().map(|s| s.to_string()),
+            )
+        });
+        let is_allocated = channel_data.is_some();
 
         // Get mute/solo state from the mixer track this channel routes to
-        let track_id = channel
-            .map(|c| TrackId(c.mixer_track))
+        let track_id = channel_data
+            .as_ref()
+            .map(|(mt, _, _, _)| TrackId(*mt))
             .unwrap_or(TrackId(1));
         let mixer_track = app.mixer.track(track_id);
 
@@ -63,7 +72,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
         let is_mute_cursor = channel_idx == app.channel_rack.channel
             && app.channel_rack.col.is_mute_zone()
             && focused;
-        let (mute_char, mute_color) = if channel.is_some() {
+        let (mute_char, mute_color) = if is_allocated {
             if mixer_track.solo {
                 ("S", Color::Yellow)
             } else if mixer_track.muted {
@@ -101,7 +110,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
             && app.channel_rack.col.is_track_zone()
             && focused;
         let track_num = track_id.index();
-        let track_text = if channel.is_some() {
+        let track_text = if is_allocated {
             format!("{:<width$}", track_num, width = TRACK_WIDTH as usize)
         } else {
             format!("{:<width$}", "·", width = TRACK_WIDTH as usize)
@@ -111,7 +120,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
                 .fg(Color::Black)
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
-        } else if channel.is_some() {
+        } else if is_allocated {
             Style::default().fg(Color::Magenta)
         } else {
             Style::default().fg(Color::DarkGray)
@@ -145,11 +154,12 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
         };
 
         // Display channel name or slot indicator
-        let name_display = if let Some(ch) = channel {
-            if ch.is_plugin() || ch.sample_path().is_some() {
+        // channel_data is (mixer_track, name, is_plugin, sample_path)
+        let name_display = if let Some((_, ref name, is_plugin, ref sample_path)) = channel_data {
+            if is_plugin || sample_path.is_some() {
                 format!(
                     "{:<width$}",
-                    &ch.name[..ch.name.len().min(SAMPLE_WIDTH as usize - 1)],
+                    &name[..name.len().min(SAMPLE_WIDTH as usize - 1)],
                     width = SAMPLE_WIDTH as usize - 1
                 )
             } else {
@@ -173,8 +183,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
         // === STEPS ZONE (col 0-15) ===
         let pattern_id = app.current_pattern;
         let steps_data: Vec<bool> = app
-            .channels
-            .get(channel_idx)
+            .get_channel_at_slot(channel_idx)
             .and_then(|c| c.get_pattern(pattern_id))
             .map(|s| s.steps.clone())
             .unwrap_or_else(|| vec![false; 16]);

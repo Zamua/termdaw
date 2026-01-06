@@ -129,10 +129,10 @@ fn render_row(
     let is_cursor_row = focused && app.piano_roll.pitch == pitch;
     let is_black = is_black_key(pitch);
 
-    // Map this row to a channel index (for displaying channel list alongside pitches)
-    let channel_idx = viewport_top + row_idx;
-    let channel = app.channels.get(channel_idx);
-    let is_selected_channel = channel_idx == selected_channel;
+    // Map this row to a slot (for displaying channel list alongside pitches)
+    let slot = viewport_top + row_idx;
+    let channel = app.get_channel_at_slot(slot);
+    let is_selected_channel = slot == selected_channel;
 
     // Get mute/solo state from the mixer track this channel routes to
     let track_id = channel
@@ -188,14 +188,14 @@ fn render_row(
         } else {
             format!(
                 "{:<width$}",
-                format!("Slot {}", channel_idx + 1),
+                format!("Slot {}", slot + 1),
                 width = SAMPLE_WIDTH as usize - 1
             )
         }
     } else {
         format!(
             "{:<width$}",
-            format!("Slot {}", channel_idx + 1),
+            format!("Slot {}", slot + 1),
             width = SAMPLE_WIDTH as usize - 1
         )
     };

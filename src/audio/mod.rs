@@ -469,6 +469,25 @@ impl AudioHandle {
     pub fn update_tempo(&self, bpm: f64) {
         let _ = self.tx.send(AudioCommand::UpdateTempo(bpm));
     }
+
+    /// Create a dummy AudioHandle for testing (no actual audio processing)
+    ///
+    /// Commands sent to this handle are simply dropped. This is useful for
+    /// unit testing App logic without requiring real audio hardware.
+    #[cfg(test)]
+    pub fn dummy() -> Self {
+        // Create channels that will just drop messages (no receiver)
+        let (tx, _rx) = unbounded();
+        let (plugin_tx, _plugin_rx) = unbounded();
+
+        Self {
+            tx,
+            plugin_tx,
+            sample_rate: 44100,
+            waveform_buffer: Arc::new(Mutex::new(vec![0.0; WAVEFORM_BUFFER_SIZE])),
+            peak_levels: Arc::new(Mutex::new([StereoLevels::default(); NUM_TRACKS])),
+        }
+    }
 }
 
 /// Audio engine with cpal stream

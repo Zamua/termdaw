@@ -15,10 +15,9 @@ use super::common::key_to_vim_char;
 use super::vim::{Position, Range, RangeType, VimAction};
 
 /// Cycle mute state on the mixer track for a channel: normal -> muted -> solo -> normal
-fn cycle_channel_mute_state(app: &mut App, channel_idx: usize) {
+fn cycle_channel_mute_state(app: &mut App, slot: usize) {
     let track_id = app
-        .channels
-        .get(channel_idx)
+        .get_channel_at_slot(slot)
         .map(|c| TrackId(c.mixer_track))
         .unwrap_or(TrackId(1));
     let track = app.mixer.track_mut(track_id);
@@ -40,9 +39,9 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     match key.code {
         // 'm' to cycle mute state: normal -> muted -> solo -> normal
         KeyCode::Char('m') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let channel_idx = app.channel_rack.channel;
-            if channel_idx < app.channels.len() {
-                cycle_channel_mute_state(app, channel_idx);
+            let slot = app.channel_rack.channel;
+            if app.get_channel_at_slot(slot).is_some() {
+                cycle_channel_mute_state(app, slot);
                 app.sync_mixer_to_audio();
                 app.mark_dirty();
             }
@@ -58,8 +57,8 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // 'S' (shift+s) to toggle solo on current channel's mixer track
         KeyCode::Char('S') => {
-            let channel_idx = app.channel_rack.channel;
-            if let Some(channel) = app.channels.get(channel_idx) {
+            let slot = app.channel_rack.channel;
+            if let Some(channel) = app.get_channel_at_slot(slot) {
                 let track_id = TrackId(channel.mixer_track);
                 app.mixer.toggle_solo(track_id);
                 app.sync_mixer_to_audio();
@@ -74,13 +73,18 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // 'p' to open plugin editor for plugin channels
         KeyCode::Char('p') => {
-            if let Some(channel) = app.channels.get(app.channel_rack.channel) {
+            let slot = app.channel_rack.channel;
+            // Extract data before mutable borrow
+            let plugin_info = app.get_channel_at_slot(slot).and_then(|channel| {
                 if let ChannelSource::Plugin { .. } = &channel.source {
-                    // Build params list using stored values or defaults from registry
                     let params = build_editor_params(channel.plugin_params());
-                    app.plugin_editor
-                        .open(app.channel_rack.channel, &channel.name, params);
+                    Some((channel.name.clone(), params))
+                } else {
+                    None
                 }
+            });
+            if let Some((name, params)) = plugin_info {
+                app.plugin_editor.open(slot, &name, params);
             }
             return;
         }
@@ -108,15 +112,11 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // 'd' in sample zone to delete channel
         KeyCode::Char('d') if app.cursor_zone() == "sample" => {
-            if app.channel_rack.channel < app.channels.len() {
-                // Remove the channel (all its data goes with it)
-                app.channels.remove(app.channel_rack.channel);
-
-                // Adjust cursor if it's now out of bounds
-                if app.channel_rack.channel >= app.channels.len() && app.channel_rack.channel > 0 {
-                    app.channel_rack.channel = app.channels.len().saturating_sub(1);
-                }
-
+            let slot = app.channel_rack.channel;
+            // Find the channel by slot and remove it
+            if let Some(idx) = app.channels.iter().position(|c| c.slot == slot) {
+                app.channels.remove(idx);
+                // Cursor stays at the same slot position (sparse model)
                 app.mark_dirty();
             }
             return;
@@ -124,18 +124,19 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         // 'x' or Enter in non-steps zones - zone-aware action
         // In steps zone, let vim handle 'x' (for visual mode delete, counts, etc.)
         KeyCode::Char('x') | KeyCode::Enter if !app.channel_rack.col.is_step_zone() => {
+            let slot = app.channel_rack.channel;
             if app.channel_rack.col.is_mute_zone() {
                 // Cycle mute state on the mixer track
-                let channel_idx = app.channel_rack.channel;
-                if channel_idx < app.channels.len() {
-                    cycle_channel_mute_state(app, channel_idx);
+                if app.get_channel_at_slot(slot).is_some() {
+                    cycle_channel_mute_state(app, slot);
                     app.sync_mixer_to_audio();
                     app.mark_dirty();
                 }
             } else if app.channel_rack.col.is_track_zone() {
                 // Cycle to next mixer track (1-15, wrap around)
-                let channel_idx = app.channel_rack.channel;
-                if let Some(channel) = app.channels.get_mut(channel_idx) {
+                // Find Vec index for audio engine
+                if let Some(vec_idx) = app.channels.iter().position(|c| c.slot == slot) {
+                    let channel = &mut app.channels[vec_idx];
                     // Cycle through tracks 1-15 (skip master)
                     let next = if channel.mixer_track >= 15 {
                         1
@@ -143,7 +144,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
                         channel.mixer_track + 1
                     };
                     channel.mixer_track = next;
-                    app.audio.set_generator_track(channel_idx, next);
+                    app.audio.set_generator_track(vec_idx, next);
                     app.mark_dirty();
                 }
             } else if app.channel_rack.col.is_sample_zone() {
@@ -158,30 +159,32 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // '+' or '=' to increment track assignment (when in track zone)
         KeyCode::Char('+') | KeyCode::Char('=') if app.channel_rack.col.is_track_zone() => {
-            let channel_idx = app.channel_rack.channel;
-            if let Some(channel) = app.channels.get_mut(channel_idx) {
+            let slot = app.channel_rack.channel;
+            if let Some(vec_idx) = app.channels.iter().position(|c| c.slot == slot) {
+                let channel = &mut app.channels[vec_idx];
                 let next = if channel.mixer_track >= 15 {
                     1
                 } else {
                     channel.mixer_track + 1
                 };
                 channel.mixer_track = next;
-                app.audio.set_generator_track(channel_idx, next);
+                app.audio.set_generator_track(vec_idx, next);
                 app.mark_dirty();
             }
             return;
         }
         // '-' to decrement track assignment (when in track zone)
         KeyCode::Char('-') if app.channel_rack.col.is_track_zone() => {
-            let channel_idx = app.channel_rack.channel;
-            if let Some(channel) = app.channels.get_mut(channel_idx) {
+            let slot = app.channel_rack.channel;
+            if let Some(vec_idx) = app.channels.iter().position(|c| c.slot == slot) {
+                let channel = &mut app.channels[vec_idx];
                 let prev = if channel.mixer_track <= 1 {
                     15
                 } else {
                     channel.mixer_track - 1
                 };
                 channel.mixer_track = prev;
-                app.audio.set_generator_track(channel_idx, prev);
+                app.audio.set_generator_track(vec_idx, prev);
                 app.mark_dirty();
             }
             return;
@@ -252,7 +255,8 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
             // Only toggle step if in steps zone
             if app.channel_rack.col.is_step_zone() {
                 // For plugin channels, open piano roll instead of toggling step
-                if let Some(channel) = app.channels.get(app.channel_rack.channel) {
+                let slot = app.channel_rack.channel;
+                if let Some(channel) = app.get_channel_at_slot(slot) {
                     if matches!(&channel.source, ChannelSource::Plugin { .. }) {
                         app.set_view_mode(ViewMode::PianoRoll);
                         return;
@@ -527,7 +531,7 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                     }
                 } else if col.is_step_zone() {
                     // Click on step - toggle it (if sampler channel)
-                    if let Some(channel) = app.channels.get(row) {
+                    if let Some(channel) = app.get_channel_at_slot(row) {
                         if matches!(&channel.source, ChannelSource::Plugin { .. }) {
                             // Plugin channels open piano roll on click
                             app.set_view_mode(ViewMode::PianoRoll);

@@ -378,9 +378,11 @@ impl DeletePlacementsCmd {
 
 impl Command for DeletePlacementsCmd {
     fn execute(&mut self, app: &mut App) {
-        self.deleted_placements =
-            app.arrangement
-                .remove_placements_in_range(self.pattern_id, self.start_bar, self.end_bar);
+        self.deleted_placements = app.arrangement.remove_placements_in_range(
+            self.pattern_id,
+            self.start_bar,
+            self.end_bar,
+        );
         app.mark_dirty();
     }
 
