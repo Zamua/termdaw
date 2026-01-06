@@ -774,6 +774,8 @@ impl App {
             // Update mixer routing
             let channel_idx = self.channels.len() - 1;
             self.mixer.auto_assign_generator(channel_idx);
+            // Sync routing to audio thread so audio goes to the correct mixer track
+            self.audio.set_generator_track(channel_idx, mixer_track);
         }
         self.mark_dirty();
     }
@@ -805,6 +807,8 @@ impl App {
             self.channels.push(channel);
             let idx = self.channels.len() - 1;
             self.mixer.auto_assign_generator(idx);
+            // Sync routing to audio thread so audio goes to the correct mixer track
+            self.audio.set_generator_track(idx, mixer_track);
             idx
         };
 
