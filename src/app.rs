@@ -1315,8 +1315,9 @@ impl PlaylistContext for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::AudioHandle;
+    use crate::audio::{AudioCommand, AudioHandle};
     use crate::mixer::TrackId;
+    use crossbeam_channel::Receiver;
     use tempfile::TempDir;
 
     /// Create a test App with dummy audio in a temp directory
@@ -1328,6 +1329,17 @@ mod tests {
         let audio = AudioHandle::dummy();
         let app = App::new(project_path.to_str().unwrap(), audio);
         (app, temp_dir)
+    }
+
+    /// Create a test App with a testable audio handle that captures commands
+    fn create_test_app_with_audio_rx() -> (App, TempDir, Receiver<AudioCommand>) {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let project_path = temp_dir.path().join("test-project");
+        std::fs::create_dir_all(&project_path).expect("Failed to create project dir");
+
+        let (audio, rx) = AudioHandle::testable();
+        let app = App::new(project_path.to_str().unwrap(), audio);
+        (app, temp_dir, rx)
     }
 
     // ========================================================================
@@ -1629,6 +1641,72 @@ mod tests {
         assert!(
             app.channels.get(0).is_some(),
             "Vec index 0 contains the slot 1 channel"
+        );
+    }
+
+    // ========================================================================
+    // Bug 5: New channels must sync routing to audio thread
+    // ========================================================================
+
+    /// When a new channel is created, the audio thread must receive SetGeneratorTrack
+    /// to route the channel's audio to the correct mixer track.
+    #[test]
+    fn test_new_channel_syncs_audio_routing() {
+        let (mut app, _temp, rx) = create_test_app_with_audio_rx();
+
+        // Add a sample channel
+        app.set_channel_sample(0, "kick.wav".to_string());
+
+        // Get the mixer track assigned to this channel
+        let mixer_track = app.channels[0].mixer_track;
+
+        // Drain all commands and check for SetGeneratorTrack
+        let commands: Vec<AudioCommand> = rx.try_iter().collect();
+
+        let has_set_generator_track = commands.iter().any(|cmd| {
+            matches!(cmd, AudioCommand::SetGeneratorTrack { generator: 0, track } if *track == mixer_track)
+        });
+
+        assert!(
+            has_set_generator_track,
+            "set_channel_sample must send SetGeneratorTrack(0, {}) to audio thread. Commands sent: {:?}",
+            mixer_track, commands
+        );
+    }
+
+    /// When multiple channels are created, each should sync their routing
+    #[test]
+    fn test_multiple_channels_sync_audio_routing() {
+        let (mut app, _temp, rx) = create_test_app_with_audio_rx();
+
+        // Add two channels
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.set_channel_sample(1, "snare.wav".to_string());
+
+        // Get the mixer tracks assigned
+        let track0 = app.channels[0].mixer_track;
+        let track1 = app.channels[1].mixer_track;
+
+        // Drain all commands
+        let commands: Vec<AudioCommand> = rx.try_iter().collect();
+
+        // Both channels should have sent their routing
+        let has_ch0_routing = commands.iter().any(|cmd| {
+            matches!(cmd, AudioCommand::SetGeneratorTrack { generator: 0, track } if *track == track0)
+        });
+        let has_ch1_routing = commands.iter().any(|cmd| {
+            matches!(cmd, AudioCommand::SetGeneratorTrack { generator: 1, track } if *track == track1)
+        });
+
+        assert!(
+            has_ch0_routing,
+            "Channel 0 must sync routing to track {}. Commands: {:?}",
+            track0, commands
+        );
+        assert!(
+            has_ch1_routing,
+            "Channel 1 must sync routing to track {}. Commands: {:?}",
+            track1, commands
         );
     }
 }

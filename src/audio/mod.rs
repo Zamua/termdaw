@@ -488,6 +488,24 @@ impl AudioHandle {
             peak_levels: Arc::new(Mutex::new([StereoLevels::default(); NUM_TRACKS])),
         }
     }
+
+    /// Create a testable AudioHandle that returns a receiver for inspecting commands
+    ///
+    /// Use this when you need to verify specific audio commands are sent.
+    #[cfg(test)]
+    pub fn testable() -> (Self, Receiver<AudioCommand>) {
+        let (tx, rx) = unbounded();
+        let (plugin_tx, _plugin_rx) = unbounded();
+
+        let handle = Self {
+            tx,
+            plugin_tx,
+            sample_rate: 44100,
+            waveform_buffer: Arc::new(Mutex::new(vec![0.0; WAVEFORM_BUFFER_SIZE])),
+            peak_levels: Arc::new(Mutex::new([StereoLevels::default(); NUM_TRACKS])),
+        };
+        (handle, rx)
+    }
 }
 
 /// Audio engine with cpal stream
