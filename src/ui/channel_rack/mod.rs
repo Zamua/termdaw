@@ -11,6 +11,7 @@
 
 mod piano_roll;
 mod step_grid;
+pub mod view_model;
 
 use ratatui::{
     layout::Rect,
