@@ -87,7 +87,7 @@ fn render_transport_info(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // BPM display
     let bpm_display = Span::styled(
-        format!("  {:.0} BPM", app.bpm),
+        format!("  {:.0} BPM", app.transport.bpm),
         Style::default().fg(Color::White),
     );
 

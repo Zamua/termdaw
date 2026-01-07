@@ -80,7 +80,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
                     }
                 } else {
                     // Just preview the file
-                    let full_path = app.project_path.join("samples").join(
+                    let full_path = app.project.samples_path().join(
                         entry
                             .path
                             .strip_prefix(app.browser.root_path())
@@ -102,7 +102,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     if app.browser.cursor != prev_cursor {
         if let Some(entry) = app.browser.current_entry() {
             if !entry.is_dir && app.browser.mode == crate::browser::BrowserMode::Samples {
-                let full_path = app.project_path.join("samples").join(
+                let full_path = app.project.samples_path().join(
                     entry
                         .path
                         .strip_prefix(app.browser.root_path())
@@ -139,7 +139,7 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                     if let Some(entry) = app.browser.current_entry() {
                         if !entry.is_dir && app.browser.mode == crate::browser::BrowserMode::Samples
                         {
-                            let full_path = app.project_path.join("samples").join(
+                            let full_path = app.project.samples_path().join(
                                 entry
                                     .path
                                     .strip_prefix(app.browser.root_path())
@@ -180,7 +180,7 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                         }
                     } else {
                         // Just preview the file - browser previews go directly to master
-                        let full_path = app.project_path.join("samples").join(
+                        let full_path = app.project.samples_path().join(
                             entry
                                 .path
                                 .strip_prefix(app.browser.root_path())

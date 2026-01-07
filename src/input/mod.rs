@@ -173,7 +173,7 @@ fn handle_input_mode_key(key: KeyEvent, app: &mut App) -> bool {
         // Enter confirms input
         KeyCode::Enter => {
             if let Some(bpm) = app.command_picker.get_tempo_value() {
-                app.bpm = bpm.clamp(20.0, 999.0);
+                app.transport.bpm = bpm.clamp(20.0, 999.0);
                 app.mark_dirty();
             }
             app.command_picker.cancel_input();
@@ -509,7 +509,7 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
             }
             Some(AreaId::TransportBpm) => {
                 if matches!(action, MouseAction::Click { .. }) {
-                    app.command_picker.start_tempo_input(app.bpm);
+                    app.command_picker.start_tempo_input(app.transport.bpm);
                 }
             }
 
@@ -995,7 +995,7 @@ fn execute_context_menu_action(
             if let Some(MenuContext::Browser { item_idx }) = context {
                 if let Some(entry) = app.browser.visible_entries.get(item_idx) {
                     if !entry.is_dir {
-                        let full_path = app.project_path.join("samples").join(
+                        let full_path = app.project.samples_path().join(
                             entry
                                 .path
                                 .strip_prefix(app.browser.root_path())

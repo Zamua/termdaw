@@ -6,6 +6,89 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 
 use crate::arrangement::Arrangement;
+
+// ============================================================================
+// Extracted State Structs (Phase 1 Refactoring)
+// ============================================================================
+
+/// Project metadata and paths
+#[derive(Debug, Clone)]
+pub struct ProjectState {
+    /// Project name (directory name)
+    pub name: String,
+    /// Project root path
+    pub path: PathBuf,
+    /// When the project was created
+    pub created_at: DateTime<Utc>,
+}
+
+impl ProjectState {
+    /// Create a new project state
+    pub fn new(name: &str, path: PathBuf, created_at: DateTime<Utc>) -> Self {
+        Self {
+            name: name.to_string(),
+            path,
+            created_at,
+        }
+    }
+
+    /// Get the samples directory path
+    pub fn samples_path(&self) -> PathBuf {
+        self.path.join("samples")
+    }
+
+    /// Get the plugins directory path
+    pub fn plugins_path(&self) -> PathBuf {
+        self.path.join("plugins")
+    }
+}
+
+/// Transport/playback state (bpm, timing, play state)
+#[derive(Debug, Clone)]
+pub struct TransportState {
+    /// Playback state machine (stopped, playing pattern, playing arrangement)
+    pub playback: PlaybackState,
+    /// Tempo in beats per minute
+    pub bpm: f64,
+    /// Time accumulator for step timing (private)
+    step_accumulator: Duration,
+}
+
+impl TransportState {
+    /// Create a new transport state with the given BPM
+    pub fn new(bpm: f64) -> Self {
+        Self {
+            playback: PlaybackState::default(),
+            bpm,
+            step_accumulator: Duration::ZERO,
+        }
+    }
+
+    /// Calculate the duration of one step at current BPM
+    pub fn step_duration(&self) -> Duration {
+        Duration::from_secs_f64(60.0 / self.bpm / 4.0)
+    }
+
+    /// Add time to the accumulator
+    pub fn add_time(&mut self, delta: Duration) {
+        self.step_accumulator += delta;
+    }
+
+    /// Check if enough time has accumulated for a step
+    pub fn should_advance(&self) -> bool {
+        self.step_accumulator >= self.step_duration()
+    }
+
+    /// Consume one step worth of accumulated time
+    pub fn consume_step(&mut self) {
+        self.step_accumulator -= self.step_duration();
+    }
+
+    /// Reset the accumulator (called when playback stops/starts)
+    pub fn reset_accumulator(&mut self) {
+        self.step_accumulator = Duration::ZERO;
+    }
+}
 use crate::audio::AudioHandle;
 use crate::browser::BrowserState;
 use crate::command_picker::CommandPicker;
@@ -34,14 +117,8 @@ pub use crate::mode::{AppMode, Panel, ViewMode};
 /// Main application state
 #[allow(dead_code)]
 pub struct App {
-    /// Project name
-    pub project_name: String,
-
-    /// Project path
-    pub project_path: PathBuf,
-
-    /// When the project was created
-    pub created_at: DateTime<Utc>,
+    /// Project metadata (name, path, created_at)
+    pub project: ProjectState,
 
     /// Whether the app should quit
     pub should_quit: bool,
@@ -58,14 +135,8 @@ pub struct App {
     /// Whether the mixer panel is visible
     pub show_mixer: bool,
 
-    /// Playback state machine
-    pub playback: PlaybackState,
-
-    /// BPM
-    pub bpm: f64,
-
-    /// Time accumulator for step timing
-    step_accumulator: Duration,
+    /// Transport state (playback, bpm, timing)
+    pub transport: TransportState,
 
     /// Terminal dimensions
     pub terminal_width: u16,
@@ -150,7 +221,6 @@ impl App {
     /// Create a new App instance
     pub fn new(project_name: &str, audio: AudioHandle) -> Self {
         let project_path = PathBuf::from(project_name);
-        let samples_path = project_path.join("samples");
 
         // If project doesn't exist, create from template
         if !project::is_valid_project(&project_path) {
@@ -186,6 +256,16 @@ impl App {
                 Self::default_state()
             };
 
+        // Create project state
+        let project = ProjectState::new(
+            project_name,
+            project_path,
+            created_at.unwrap_or_else(Utc::now),
+        );
+
+        // Pre-compute paths needed before moving project into struct
+        let samples_path = project.samples_path();
+
         let num_channels = channels.len();
 
         // Channel rack zones in vim coordinate space:
@@ -201,17 +281,13 @@ impl App {
         ]);
 
         let app = Self {
-            project_name: project_name.to_string(),
-            project_path,
-            created_at: created_at.unwrap_or_else(Utc::now),
+            project,
             should_quit: false,
             mode: AppMode::default(),
             view_mode: ViewMode::default(),
             show_browser: true,
             show_mixer: false,
-            playback: PlaybackState::default(),
-            bpm,
-            step_accumulator: Duration::ZERO,
+            transport: TransportState::new(bpm),
             terminal_width: 80,
             terminal_height: 24,
             channel_rack: ChannelRackCursor::default(),
@@ -271,7 +347,7 @@ impl App {
         let buffer_size = 512;
 
         // Get the plugins directory path
-        let plugins_path = self.project_path.join("plugins");
+        let plugins_path = self.project.plugins_path();
 
         for (channel_idx, channel) in self.channels.iter().enumerate() {
             if let ChannelSource::Plugin { path, .. } = &channel.source {
@@ -359,17 +435,14 @@ impl App {
         // Always update peak levels for mixer meters (even when not playing)
         self.update_peak_levels();
 
-        if !self.playback.is_playing() {
+        if !self.transport.playback.is_playing() {
             return;
         }
 
-        self.step_accumulator += delta;
-
-        // Calculate step duration: 60 / bpm / 4 (4 steps per beat)
-        let step_duration = Duration::from_secs_f64(60.0 / self.bpm / 4.0);
-
-        while self.step_accumulator >= step_duration {
-            self.step_accumulator -= step_duration;
+        // Accumulate time and advance steps as needed
+        self.transport.add_time(delta);
+        while self.transport.should_advance() {
+            self.transport.consume_step();
             self.advance_step();
         }
     }
@@ -378,13 +451,14 @@ impl App {
     fn advance_step(&mut self) {
         // Check if we're about to loop (step is 15 and will become 0)
         let will_loop = self
+            .transport
             .playback
             .current_step()
             .map(|s| s.0 == 15)
             .unwrap_or(false);
 
         // Advance the playback state machine
-        let events = self.playback.advance();
+        let events = self.transport.playback.advance();
 
         // When pattern loops to step 0, stop notes that span the loop boundary
         if will_loop {
@@ -416,10 +490,10 @@ impl App {
     fn stop_spanning_notes(&self) {
         // Get patterns to check based on play mode
         let patterns_to_check: Vec<&crate::sequencer::Pattern> =
-            if self.playback.is_playing_arrangement() {
+            if self.transport.playback.is_playing_arrangement() {
                 // Get all active patterns at current bar
                 self.arrangement
-                    .get_active_placements_at_bar(self.playback.bar_or_zero())
+                    .get_active_placements_at_bar(self.transport.playback.bar_or_zero())
                     .iter()
                     .filter_map(|p| self.patterns.get(p.pattern_id))
                     .collect()
@@ -446,7 +520,7 @@ impl App {
 
     /// Play all active samples at the current step
     fn play_current_step(&self) {
-        if self.playback.is_playing_arrangement() {
+        if self.transport.playback.is_playing_arrangement() {
             self.play_arrangement_step();
         } else {
             self.play_pattern_step();
@@ -456,17 +530,17 @@ impl App {
     /// Play step from current pattern (pattern loop mode)
     fn play_pattern_step(&self) {
         let patterns = self.get_current_pattern().into_iter();
-        self.play_step_from_patterns(patterns, self.playback.step_or_zero());
+        self.play_step_from_patterns(patterns, self.transport.playback.step_or_zero());
     }
 
     /// Play step from arrangement (all active patterns at current bar)
     fn play_arrangement_step(&self) {
-        let bar = self.playback.bar_or_zero();
+        let bar = self.transport.playback.bar_or_zero();
         let placements = self.arrangement.get_active_placements_at_bar(bar);
         let patterns = placements
             .iter()
             .filter_map(|p| self.patterns.get(p.pattern_id));
-        self.play_step_from_patterns(patterns, self.playback.step_or_zero());
+        self.play_step_from_patterns(patterns, self.transport.playback.step_or_zero());
     }
 
     /// Play a step from the given patterns (unified playback logic)
@@ -510,7 +584,7 @@ impl App {
                 // Sampler channels use step sequencer grid
                 if slice.map(|s| s.get_step(step)).unwrap_or(false) {
                     if let Some(ref sample_path) = path {
-                        let full_path = self.project_path.join("samples").join(sample_path);
+                        let full_path = self.project.samples_path().join(sample_path);
                         self.audio.play_sample(&full_path, volume, channel_idx);
                     }
                 }
@@ -535,20 +609,20 @@ impl App {
 
     /// Toggle play/stop
     pub fn toggle_play(&mut self) {
-        if self.playback.is_playing() {
+        if self.transport.playback.is_playing() {
             // Stop playback
             self.stop_all_plugin_notes();
-            self.playback.stop();
-            self.step_accumulator = Duration::ZERO;
+            self.transport.playback.stop();
+            self.transport.reset_accumulator();
             self.audio.stop_all();
         } else {
             // Start playback based on focused panel
             if self.mode.current_panel() == Panel::Playlist {
                 // Start from cursor position in playlist (col 0 is mute, so bar = col - 1)
                 let start_bar = self.playlist.bar.saturating_sub(1);
-                self.playback.play_arrangement_from(start_bar);
+                self.transport.playback.play_arrangement_from(start_bar);
             } else {
-                self.playback.play_pattern();
+                self.transport.playback.play_pattern();
             }
             // Play the first step immediately
             self.play_current_step();
@@ -557,22 +631,22 @@ impl App {
 
     /// Check if currently playing (for backward compatibility)
     pub fn is_playing(&self) -> bool {
-        self.playback.is_playing()
+        self.transport.playback.is_playing()
     }
 
     /// Get current playhead step (for backward compatibility)
     pub fn playhead_step(&self) -> usize {
-        self.playback.step_or_zero()
+        self.transport.playback.step_or_zero()
     }
 
     /// Get current arrangement bar
     pub fn arrangement_bar(&self) -> usize {
-        self.playback.bar_or_zero()
+        self.transport.playback.bar_or_zero()
     }
 
     /// Check if playing arrangement (not pattern)
     pub fn is_playing_arrangement(&self) -> bool {
-        self.playback.is_playing_arrangement()
+        self.transport.playback.is_playing_arrangement()
     }
 
     /// Stop all notes on plugin channels (all notes off)
@@ -822,7 +896,7 @@ impl App {
         // Load and activate the plugin
         let sample_rate = self.audio.sample_rate() as f64;
         let buffer_size = 512;
-        let full_plugin_path = self.project_path.join("plugins").join(&plugin_path);
+        let full_plugin_path = self.project.plugins_path().join(&plugin_path);
 
         match PluginHost::load(&full_plugin_path, sample_rate, buffer_size) {
             Ok(mut host) => match host.activate() {
@@ -854,7 +928,7 @@ impl App {
             match &channel.source {
                 ChannelSource::Sampler { path } => {
                     if let Some(ref sample_path) = path {
-                        let full_path = self.project_path.join("samples").join(sample_path);
+                        let full_path = self.project.samples_path().join(sample_path);
                         self.audio.preview_sample(&full_path, vec_idx);
                     }
                     // Set previewing to prevent key repeat from re-triggering
@@ -917,18 +991,18 @@ impl App {
 
     /// Save the project to disk
     pub fn save_project(&self) {
-        let project = ProjectFile::from_state(
-            &self.project_name,
-            self.bpm,
+        let project_file = ProjectFile::from_state(
+            &self.project.name,
+            self.transport.bpm,
             self.current_pattern,
             &self.channels,
             &self.patterns,
             &self.arrangement,
             &self.mixer,
-            Some(self.created_at),
+            Some(self.project.created_at),
         );
 
-        if let Err(e) = project::save_project(&self.project_path, &project) {
+        if let Err(e) = project::save_project(&self.project.path, &project_file) {
             eprintln!("Failed to save project: {}", e);
         }
     }

@@ -90,7 +90,7 @@ pub fn execute_command(cmd: Command, app: &mut App) -> bool {
             false
         }
         Command::SetTempo => {
-            app.command_picker.start_tempo_input(app.bpm);
+            app.command_picker.start_tempo_input(app.transport.bpm);
             false
         }
         Command::Quit => {
