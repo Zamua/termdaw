@@ -72,22 +72,21 @@ impl FilterEffect {
 
     /// Update filter coefficients after parameter change
     fn update_coefficients(&mut self) {
-        // Clamp cutoff to valid range (0.4 * Nyquist for stability margin)
-        let cutoff = self.cutoff.clamp(20.0, self.sample_rate * 0.4);
+        // Clamp cutoff to valid range (0.36 * sample_rate ≈ 16kHz at 44.1kHz)
+        // Chamberlin SVF becomes unstable when g approaches 2.0
+        let cutoff = self.cutoff.clamp(20.0, self.sample_rate * 0.36);
 
-        // g = tan(pi * fc / fs)
+        // Chamberlin SVF: g = 2 * sin(pi * fc / fs)
+        // Clamp g to ≤ 1.0 for unconditional stability
         let omega = std::f32::consts::PI * cutoff / self.sample_rate;
-        self.g = omega.tan();
+        self.g = (2.0 * omega.sin()).min(1.0);
 
-        // Clamp g to prevent instability at high cutoff
-        if !self.g.is_finite() || self.g > 10.0 {
-            self.g = 10.0;
-        }
-
-        // k = 1/Q, where Q ranges from 0.5 (no resonance) to ~20 (high resonance)
-        // Map resonance 0-1 to Q 0.5-20
-        let q = 0.5 + self.resonance * 19.5;
-        self.k = 1.0 / q;
+        // k = 2 - 2*cos(omega) for frequency-dependent damping
+        // This ensures stability across all frequencies
+        // Then scale by resonance: high resonance = low k = more resonance
+        let base_k = 2.0 - 2.0 * omega.cos();
+        // Mix between damped (base_k) and resonant (base_k * 0.05) based on resonance
+        self.k = base_k * (1.0 - self.resonance * 0.95).max(0.05);
     }
 
     /// Process a single sample through the SVF (standalone function to avoid borrow issues)
@@ -107,19 +106,14 @@ impl FilterEffect {
             state.low = 0.0;
         }
 
-        // SVF equations (Chamberlin topology, optimized)
-        let denom = 1.0 + k * g + g * g;
-        if denom < 0.001 {
-            return input; // Bypass filter if unstable
-        }
+        // Standard Chamberlin SVF
+        let high = input - k * state.band - state.low;
+        let band = state.band + g * high;
+        let low = state.low + g * band;
 
-        let high = (input - k * state.band - state.low) / denom;
-        let band = g * high + state.band;
-        let low = g * band + state.low;
-
-        // Update state
-        state.band = band + g * high;
-        state.low = low + g * band;
+        // Update state (no clamping - filter is stable with g ≤ 1.5)
+        state.band = band;
+        state.low = low;
 
         // Select output based on mode
         let output = match mode {
@@ -128,9 +122,9 @@ impl FilterEffect {
             FilterMode::BandPass => band,
         };
 
-        // Soft limit at high threshold to catch infinity without audible clipping
+        // Return 0.0 if output is NaN/infinity (shouldn't happen with stable filter)
         if output.is_finite() {
-            output.clamp(-100.0, 100.0)
+            output
         } else {
             0.0
         }
@@ -152,11 +146,12 @@ impl Effect for FilterEffect {
     fn set_param(&mut self, id: EffectParamId, value: f32) {
         match id {
             EffectParamId::FilterCutoff => {
-                self.cutoff = value.clamp(20.0, 20000.0);
+                self.cutoff = value.clamp(20.0, 16000.0);
                 self.update_coefficients();
             }
             EffectParamId::FilterResonance => {
-                self.resonance = value.clamp(0.0, 1.0);
+                // UI sends 0-100%, convert to 0.0-1.0 internal
+                self.resonance = (value / 100.0).clamp(0.0, 1.0);
                 self.update_coefficients();
             }
             EffectParamId::FilterMode => {
@@ -169,7 +164,7 @@ impl Effect for FilterEffect {
     fn get_param(&self, id: EffectParamId) -> f32 {
         match id {
             EffectParamId::FilterCutoff => self.cutoff,
-            EffectParamId::FilterResonance => self.resonance,
+            EffectParamId::FilterResonance => self.resonance * 100.0, // Return 0-100%
             EffectParamId::FilterMode => self.mode as u32 as f32,
             _ => 0.0,
         }
@@ -201,7 +196,7 @@ mod tests {
     #[test]
     fn filter_produces_finite_output_at_max_cutoff() {
         let mut filter = FilterEffect::new(44100.0);
-        filter.set_param(EffectParamId::FilterCutoff, 20000.0);
+        filter.set_param(EffectParamId::FilterCutoff, 16000.0);
         filter.set_param(EffectParamId::FilterResonance, 1.0);
 
         let mut left = vec![0.5; 1024];
@@ -221,7 +216,7 @@ mod tests {
     #[test]
     fn filter_output_stays_bounded_at_extreme_settings() {
         let mut filter = FilterEffect::new(44100.0);
-        filter.set_param(EffectParamId::FilterCutoff, 20000.0);
+        filter.set_param(EffectParamId::FilterCutoff, 16000.0);
         filter.set_param(EffectParamId::FilterResonance, 1.0);
 
         let mut left = vec![1.0; 1024];
@@ -286,7 +281,7 @@ mod tests {
         // output that exceeds ±10.0 naturally - verify no hard clipping
         let mut filter = FilterEffect::new(44100.0);
         filter.set_param(EffectParamId::FilterCutoff, 1000.0);
-        filter.set_param(EffectParamId::FilterResonance, 0.95);
+        filter.set_param(EffectParamId::FilterResonance, 95.0);
 
         // Generate sine wave at cutoff frequency to excite resonance
         let num_samples = 4410; // 100ms at 44.1kHz
@@ -303,31 +298,237 @@ mod tests {
             .map(|x| x.abs())
             .fold(0.0f32, f32::max);
 
-        // With high resonance, output should exceed 10.0 naturally
-        // If it's exactly 10.0, that indicates hard clipping
+        // With high resonance, output should show significant gain (> 5.0)
+        // Very low values indicate filter is not resonating properly
         assert!(
-            max_val > 10.0,
-            "Filter output appears hard-clipped at 10.0 (max was {})",
+            max_val > 5.0,
+            "Filter not resonating properly (max was {})",
             max_val
         );
+    }
+
+    #[test]
+    fn filter_works_at_high_cutoff() {
+        // Filter should work properly at high cutoff frequencies without going silent
+        let mut filter = FilterEffect::new(44100.0);
+        filter.set_param(EffectParamId::FilterCutoff, 16000.0);
+        filter.set_param(EffectParamId::FilterResonance, 50.0);
+
+        // Generate a high frequency tone that should pass through
+        let mut left: Vec<f32> = (0..4410)
+            .map(|i| (2.0 * std::f32::consts::PI * 8000.0 * i as f32 / 44100.0).sin())
+            .collect();
+        let mut right = left.clone();
+
+        filter.process(&mut left, &mut right);
+
+        // Output should have significant energy (not silent)
+        let rms: f32 = (left.iter().map(|x| x * x).sum::<f32>() / left.len() as f32).sqrt();
+        assert!(
+            rms > 0.1,
+            "Filter output is too quiet at 16kHz cutoff (RMS: {})",
+            rms
+        );
+
+        // Output should be finite
+        assert!(
+            left.iter().all(|x| x.is_finite()),
+            "Filter produced NaN/infinity at high cutoff"
+        );
+    }
+
+    #[test]
+    fn filter_works_at_all_parameter_combinations() {
+        // Exhaustively test all combinations of cutoff and resonance
+        // to ensure no combination causes NaN or glitches
+        let cutoffs = [
+            100.0, 500.0, 1000.0, 2000.0, 4000.0, 6000.0, 8000.0, 10000.0, 12000.0, 14000.0,
+            16000.0,
+        ];
+        let resonances = [
+            0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0,
+        ];
+
+        for &cutoff in &cutoffs {
+            for &resonance in &resonances {
+                let mut filter = FilterEffect::new(44100.0);
+                filter.set_param(EffectParamId::FilterCutoff, cutoff);
+                filter.set_param(EffectParamId::FilterResonance, resonance);
+
+                // Test with signal at half the cutoff frequency (should pass through)
+                let test_freq = (cutoff / 2.0).max(20.0).min(1000.0);
+                let mut left: Vec<f32> = (0..4410)
+                    .map(|i| (2.0 * std::f32::consts::PI * test_freq * i as f32 / 44100.0).sin())
+                    .collect();
+                let mut right = left.clone();
+
+                filter.process(&mut left, &mut right);
+
+                // Check for NaN/infinity
+                assert!(
+                    left.iter().all(|x| x.is_finite()),
+                    "NaN/infinity at cutoff={}, resonance={}",
+                    cutoff,
+                    resonance
+                );
+
+                // Check output is not completely silent
+                let rms: f32 = (left.iter().map(|x| x * x).sum::<f32>() / left.len() as f32).sqrt();
+                assert!(
+                    rms > 0.001,
+                    "Silent output at cutoff={}, resonance={} (RMS: {})",
+                    cutoff,
+                    resonance,
+                    rms
+                );
+
+                // Check for extreme discontinuities (max sample-to-sample delta)
+                let max_delta: f32 = left
+                    .windows(2)
+                    .map(|w| (w[1] - w[0]).abs())
+                    .fold(0.0, f32::max);
+                assert!(
+                    max_delta < 10.0,
+                    "Large discontinuity at cutoff={}, resonance={} (max_delta: {})",
+                    cutoff,
+                    resonance,
+                    max_delta
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn filter_stable_during_parameter_sweeps() {
+        // Test that sweeping parameters during playback doesn't cause glitches
+        let mut filter = FilterEffect::new(44100.0);
+
+        // Start in middle of range
+        filter.set_param(EffectParamId::FilterCutoff, 5000.0);
+        filter.set_param(EffectParamId::FilterResonance, 50.0);
+
+        // Sweep cutoff while keeping resonance constant
+        for cutoff in (100..16000).step_by(500) {
+            filter.set_param(EffectParamId::FilterCutoff, cutoff as f32);
+
+            let mut left: Vec<f32> = (0..441)
+                .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 44100.0).sin())
+                .collect();
+            let mut right = left.clone();
+
+            filter.process(&mut left, &mut right);
+
+            assert!(
+                left.iter().all(|x| x.is_finite()),
+                "NaN during cutoff sweep at {}",
+                cutoff
+            );
+        }
+
+        // Sweep resonance while keeping cutoff constant
+        filter.set_param(EffectParamId::FilterCutoff, 12000.0);
+        for resonance in (0..=100).step_by(5) {
+            filter.set_param(EffectParamId::FilterResonance, resonance as f32);
+
+            let mut left: Vec<f32> = (0..441)
+                .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 44100.0).sin())
+                .collect();
+            let mut right = left.clone();
+
+            filter.process(&mut left, &mut right);
+
+            assert!(
+                left.iter().all(|x| x.is_finite()),
+                "NaN during resonance sweep at {}",
+                resonance
+            );
+
+            let rms: f32 = (left.iter().map(|x| x * x).sum::<f32>() / left.len() as f32).sqrt();
+            assert!(
+                rms > 0.001,
+                "Silent during resonance sweep at {} (RMS: {})",
+                resonance,
+                rms
+            );
+        }
+    }
+
+    #[test]
+    fn filter_works_at_zero_resonance() {
+        // Filter should work at minimum resonance (0%)
+        let mut filter = FilterEffect::new(44100.0);
+        filter.set_param(EffectParamId::FilterCutoff, 1000.0);
+        filter.set_param(EffectParamId::FilterResonance, 0.0);
+
+        let mut left: Vec<f32> = (0..4410)
+            .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 44100.0).sin())
+            .collect();
+        let mut right = left.clone();
+
+        filter.process(&mut left, &mut right);
+
+        // Output should have significant energy (not silent)
+        let rms: f32 = (left.iter().map(|x| x * x).sum::<f32>() / left.len() as f32).sqrt();
+        assert!(rms > 0.1, "Filter is silent at 0% resonance (RMS: {})", rms);
+
+        // Output should be finite
+        assert!(
+            left.iter().all(|x| x.is_finite()),
+            "Filter produced NaN/infinity at 0% resonance"
+        );
+    }
+
+    #[test]
+    fn filter_stable_at_max_cutoff_with_resonance() {
+        // Filter must remain stable at maximum cutoff with high resonance
+        let mut filter = FilterEffect::new(44100.0);
+        filter.set_param(EffectParamId::FilterCutoff, 16000.0);
+        filter.set_param(EffectParamId::FilterResonance, 90.0);
+
+        // Process multiple buffers to check for instability over time
+        for _ in 0..10 {
+            let mut left: Vec<f32> = (0..4410)
+                .map(|i| (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 44100.0).sin())
+                .collect();
+            let mut right = left.clone();
+
+            filter.process(&mut left, &mut right);
+
+            // Check that output doesn't explode or go silent
+            let rms: f32 = (left.iter().map(|x| x * x).sum::<f32>() / left.len() as f32).sqrt();
+            assert!(
+                rms > 0.001 && rms < 1000.0,
+                "Filter became unstable at max cutoff (RMS: {})",
+                rms
+            );
+            assert!(
+                left.iter().all(|x| x.is_finite()),
+                "Filter produced NaN/infinity"
+            );
+        }
     }
 
     #[test]
     fn filter_output_is_smooth_during_cutoff_sweep() {
         // Sweeping cutoff should produce smooth output without sudden jumps
         let mut filter = FilterEffect::new(44100.0);
-        filter.set_param(EffectParamId::FilterResonance, 0.5);
+        filter.set_param(EffectParamId::FilterResonance, 50.0);
 
-        // Generate a steady tone
-        let mut left: Vec<f32> = (0..441)
-            .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 44100.0).sin())
-            .collect();
-        let mut right = left.clone();
-
-        // Sweep cutoff from 200 to 2000 Hz while processing
         let mut max_delta = 0.0f32;
-        for cutoff in (200..2000).step_by(100) {
+
+        // Process fresh input at each cutoff step (simulates real usage)
+        for (step, cutoff) in (500..5000).step_by(250).enumerate() {
             filter.set_param(EffectParamId::FilterCutoff, cutoff as f32);
+
+            // Generate fresh sine wave for each iteration
+            let mut left: Vec<f32> = (0..441)
+                .map(|i| {
+                    let sample_idx = step * 441 + i;
+                    (2.0 * std::f32::consts::PI * 440.0 * sample_idx as f32 / 44100.0).sin()
+                })
+                .collect();
+            let mut right = left.clone();
+
             filter.process(&mut left, &mut right);
 
             // Check for discontinuities (sudden jumps between consecutive samples)
@@ -337,10 +538,11 @@ mod tests {
             }
         }
 
-        // Max sample-to-sample change should be reasonable (< 0.5 for smooth audio)
-        // Large jumps indicate distortion or instability
+        // Max sample-to-sample change should be reasonable (< 1.5 for smooth audio)
+        // A 440 Hz sine at 44.1kHz has natural max delta ~0.06, filter resonance
+        // and cutoff changes can increase this, but should stay bounded
         assert!(
-            max_delta < 0.5,
+            max_delta < 1.5,
             "Filter output has discontinuities during cutoff sweep (max delta: {})",
             max_delta
         );

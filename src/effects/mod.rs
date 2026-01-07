@@ -170,7 +170,7 @@ pub fn get_param_defs(effect_type: EffectType) -> Vec<EffectParamDef> {
             EffectParamDef {
                 id: EffectParamId::FilterCutoff,
                 min: 20.0,
-                max: 20000.0,
+                max: 16000.0, // Limited to ensure filter stability
                 default: 1000.0,
                 display: ParamDisplay::Continuous {
                     unit: "Hz",
@@ -180,8 +180,8 @@ pub fn get_param_defs(effect_type: EffectType) -> Vec<EffectParamDef> {
             EffectParamDef {
                 id: EffectParamId::FilterResonance,
                 min: 0.0,
-                max: 1.0,
-                default: 0.5,
+                max: 100.0,
+                default: 50.0,
                 display: ParamDisplay::Continuous {
                     unit: "%",
                     decimals: 0,
