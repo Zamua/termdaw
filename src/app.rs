@@ -760,12 +760,15 @@ impl App {
             .to_string();
 
         // Search for existing channel with this slot
-        if let Some(channel) = self.channels.iter_mut().find(|c| c.slot == slot) {
+        if let Some(idx) = self.channels.iter().position(|c| c.slot == slot) {
             // Update existing channel
+            let channel = &mut self.channels[idx];
             channel.name = name;
             channel.source = ChannelSource::Sampler {
                 path: Some(sample_path),
             };
+            // Re-sync routing to audio thread to ensure consistency
+            self.audio.set_generator_track(idx, channel.mixer_track);
         } else {
             // Create new channel with unique mixer track
             let mixer_track = self.find_available_mixer_track();
@@ -799,6 +802,8 @@ impl App {
                 path: plugin_path.clone(),
                 params: std::collections::HashMap::new(),
             };
+            // Re-sync routing to audio thread to ensure consistency
+            self.audio.set_generator_track(idx, channel.mixer_track);
             idx
         } else {
             // Create new channel with unique mixer track

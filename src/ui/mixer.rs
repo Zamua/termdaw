@@ -156,8 +156,19 @@ fn render_track(
     let levels = app.mixer.peak_levels[track_idx];
 
     // Calculate filled heights based on peak levels
-    let left_filled = ((levels.left * meter_height as f32) as u16).min(meter_height);
-    let right_filled = ((levels.right * meter_height as f32) as u16).min(meter_height);
+    // Use logarithmic scaling for better visibility of low-level audio
+    // Map 0.001 (-60dB) to 0.1 and 1.0 (0dB) to 1.0
+    fn log_scale(level: f32) -> f32 {
+        if level < 0.001 {
+            0.0
+        } else {
+            // Map log scale: -60dB (0.001) -> 0.1, 0dB (1.0) -> 1.0
+            let db = 20.0 * level.log10(); // -60 to 0
+            ((db + 60.0) / 60.0).clamp(0.0, 1.0)
+        }
+    }
+    let left_filled = ((log_scale(levels.left) * meter_height as f32) as u16).min(meter_height);
+    let right_filled = ((log_scale(levels.right) * meter_height as f32) as u16).min(meter_height);
 
     // Also show volume fader position
     let fader_height = ((track.volume * meter_height as f32) as u16).min(meter_height);
