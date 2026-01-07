@@ -5,6 +5,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::App;
+use crate::command::AppCommand;
 use crate::mode::ViewMode;
 
 use super::common::key_to_vim_char;
@@ -167,8 +168,18 @@ fn execute_piano_roll_vim_action(action: VimAction, app: &mut App) {
         VimAction::Delete(range) => {
             let data = get_piano_roll_data(app, &range);
             app.ui.vim.piano_roll.store_delete(data, range.range_type);
-            delete_piano_roll_data(app, &range);
-            app.mark_dirty();
+
+            // Convert range to BatchDeleteNotes for undo support
+            let channel = app.ui.cursors.channel_rack.channel;
+            let pattern = app.current_pattern;
+            let positions = range_to_delete_positions(app, &range);
+            if !positions.is_empty() {
+                app.dispatch(AppCommand::BatchDeleteNotes {
+                    channel,
+                    pattern,
+                    positions,
+                });
+            }
         }
 
         VimAction::Paste | VimAction::PasteBefore => {
@@ -262,8 +273,8 @@ fn handle_piano_roll_toggle(app: &mut App) {
 
     let pitch = app.ui.cursors.piano_roll.pitch;
     let step = app.ui.cursors.piano_roll.step;
-    let channel_idx = app.ui.cursors.channel_rack.channel;
-    let pattern_id = app.current_pattern;
+    let channel = app.ui.cursors.channel_rack.channel;
+    let pattern = app.current_pattern;
 
     if let Some(start_step) = app.ui.cursors.piano_roll.placing_note {
         // Finish placing note
@@ -272,21 +283,29 @@ fn handle_piano_roll_toggle(app: &mut App) {
         let duration = max_step - min_step + 1;
 
         let note = Note::new(pitch, min_step, duration);
-        // Use history-aware add for undo/redo support
-        app.add_note_with_history(note);
+        app.dispatch(AppCommand::AddNote {
+            channel,
+            pattern,
+            note,
+        });
         app.ui.cursors.piano_roll.placing_note = None;
     } else {
         // Check for existing note at cursor
         let existing = app
             .channels
-            .get(channel_idx)
-            .and_then(|c| c.get_pattern(pattern_id))
+            .get(channel)
+            .and_then(|c| c.get_pattern(pattern))
             .and_then(|s| s.get_note_at(pitch, step))
-            .map(|n| (n.id.clone(), n.start_step));
+            .map(|n| (n.pitch, n.start_step));
 
-        if let Some((note_id, start)) = existing {
-            // Remove existing note with history and start new placement from its position
-            app.remove_note_with_history(note_id);
+        if let Some((note_pitch, start)) = existing {
+            // Remove existing note and start new placement from its position
+            app.dispatch(AppCommand::DeleteNote {
+                channel,
+                pattern,
+                pitch: note_pitch,
+                start_step: start,
+            });
             app.ui.cursors.piano_roll.placing_note = Some(start);
         } else {
             // Start new placement
@@ -299,30 +318,34 @@ fn handle_piano_roll_toggle(app: &mut App) {
 fn nudge_note(app: &mut App, delta: i32) {
     let pitch = app.ui.cursors.piano_roll.pitch;
     let step = app.ui.cursors.piano_roll.step;
-    let channel_idx = app.ui.cursors.channel_rack.channel;
-    let pattern_id = app.current_pattern;
+    let channel = app.ui.cursors.channel_rack.channel;
+    let pattern = app.current_pattern;
 
     // Find note at cursor
     let note_info = app
         .channels
-        .get(channel_idx)
-        .and_then(|c| c.get_pattern(pattern_id))
+        .get(channel)
+        .and_then(|c| c.get_pattern(pattern))
         .and_then(|s| s.get_note_at(pitch, step))
-        .map(|n| (n.id.clone(), n.start_step, n.duration));
+        .map(|n| (n.pitch, n.start_step, n.duration));
 
-    if let Some((note_id, start_step, duration)) = note_info {
+    if let Some((note_pitch, start_step, duration)) = note_info {
         let new_start = (start_step as i32 + delta).clamp(0, 15 - duration as i32 + 1) as usize;
         if new_start != start_step {
-            if let Some(channel) = app.channels.get_mut(channel_idx) {
-                if let Some(slice) = channel.get_pattern_mut(pattern_id) {
-                    // Remove old note
-                    slice.remove_note(&note_id);
-                    // Add new note at nudged position
-                    let note = crate::sequencer::Note::new(pitch, new_start, duration);
-                    slice.add_note(note);
-                }
-            }
-            app.mark_dirty();
+            // Delete old note
+            app.dispatch(AppCommand::DeleteNote {
+                channel,
+                pattern,
+                pitch: note_pitch,
+                start_step,
+            });
+            // Add new note at nudged position
+            let note = crate::sequencer::Note::new(pitch, new_start, duration);
+            app.dispatch(AppCommand::AddNote {
+                channel,
+                pattern,
+                note,
+            });
         }
     }
 }
@@ -331,31 +354,35 @@ fn nudge_note(app: &mut App, delta: i32) {
 fn transpose_note(app: &mut App, delta: i32) {
     let pitch = app.ui.cursors.piano_roll.pitch;
     let step = app.ui.cursors.piano_roll.step;
-    let channel_idx = app.ui.cursors.channel_rack.channel;
-    let pattern_id = app.current_pattern;
+    let channel = app.ui.cursors.channel_rack.channel;
+    let pattern = app.current_pattern;
 
     // Find note at cursor
     let note_info = app
         .channels
-        .get(channel_idx)
-        .and_then(|c| c.get_pattern(pattern_id))
+        .get(channel)
+        .and_then(|c| c.get_pattern(pattern))
         .and_then(|s| s.get_note_at(pitch, step))
-        .map(|n| (n.id.clone(), n.pitch, n.start_step, n.duration));
+        .map(|n| (n.pitch, n.start_step, n.duration));
 
-    if let Some((note_id, old_pitch, start_step, duration)) = note_info {
+    if let Some((old_pitch, start_step, duration)) = note_info {
         let new_pitch =
             (old_pitch as i32 + delta).clamp(PIANO_MIN_PITCH as i32, PIANO_MAX_PITCH as i32) as u8;
         if new_pitch != old_pitch {
-            if let Some(channel) = app.channels.get_mut(channel_idx) {
-                if let Some(slice) = channel.get_pattern_mut(pattern_id) {
-                    // Remove old note
-                    slice.remove_note(&note_id);
-                    // Add new note at transposed pitch
-                    let note = crate::sequencer::Note::new(new_pitch, start_step, duration);
-                    slice.add_note(note);
-                }
-            }
-            app.mark_dirty();
+            // Delete old note
+            app.dispatch(AppCommand::DeleteNote {
+                channel,
+                pattern,
+                pitch: old_pitch,
+                start_step,
+            });
+            // Add new note at transposed pitch
+            let note = crate::sequencer::Note::new(new_pitch, start_step, duration);
+            app.dispatch(AppCommand::AddNote {
+                channel,
+                pattern,
+                note,
+            });
         }
     }
 }
@@ -420,8 +447,9 @@ fn get_piano_roll_data(app: &App, range: &vim::Range) -> Vec<crate::sequencer::Y
     yanked
 }
 
-/// Delete notes in range from pattern
-fn delete_piano_roll_data(app: &mut App, range: &vim::Range) {
+/// Convert a vim range to note positions for BatchDeleteNotes
+/// Returns Vec<(pitch, start_step)>
+fn range_to_delete_positions(app: &App, range: &vim::Range) -> Vec<(u8, usize)> {
     let channel_idx = app.ui.cursors.channel_rack.channel;
     let pattern_id = app.current_pattern;
     let (start, end) = range.normalized();
@@ -429,9 +457,7 @@ fn delete_piano_roll_data(app: &mut App, range: &vim::Range) {
     let min_pitch = row_to_pitch(end.row);
     let max_pitch = row_to_pitch(start.row);
 
-    // Collect IDs of notes to delete
-    let to_delete: Vec<String> = app
-        .channels
+    app.channels
         .get(channel_idx)
         .and_then(|c| c.get_pattern(pattern_id))
         .map(|slice| {
@@ -464,19 +490,10 @@ fn delete_piano_roll_data(app: &mut App, range: &vim::Range) {
                         }
                     }
                 })
-                .map(|n| n.id.clone())
+                .map(|n| (n.pitch, n.start_step))
                 .collect()
         })
-        .unwrap_or_default();
-
-    // Delete collected notes
-    if let Some(channel) = app.channels.get_mut(channel_idx) {
-        if let Some(slice) = channel.get_pattern_mut(pattern_id) {
-            for id in to_delete {
-                slice.remove_note(&id);
-            }
-        }
-    }
+        .unwrap_or_default()
 }
 
 /// Paste notes from register at cursor position
@@ -550,24 +567,24 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
             // Double-click to delete note at position
             if let Some((vim_row, step)) = app.ui.screen_areas.piano_roll_cell_at(*x, *y) {
                 let pitch = row_to_pitch(vim_row).clamp(PIANO_MIN_PITCH, PIANO_MAX_PITCH);
-                let channel_idx = app.ui.cursors.channel_rack.channel;
-                let pattern_id = app.current_pattern;
+                let channel = app.ui.cursors.channel_rack.channel;
+                let pattern = app.current_pattern;
 
-                // Find and delete note at this position
-                let note_id = app
+                // Find note at this position
+                let note_info = app
                     .channels
-                    .get(channel_idx)
-                    .and_then(|c| c.get_pattern(pattern_id))
+                    .get(channel)
+                    .and_then(|c| c.get_pattern(pattern))
                     .and_then(|s| s.get_note_at(pitch, step))
-                    .map(|n| n.id.clone());
+                    .map(|n| (n.pitch, n.start_step));
 
-                if let Some(id) = note_id {
-                    if let Some(channel) = app.channels.get_mut(channel_idx) {
-                        if let Some(slice) = channel.get_pattern_mut(pattern_id) {
-                            slice.remove_note(&id);
-                            app.mark_dirty();
-                        }
-                    }
+                if let Some((note_pitch, start_step)) = note_info {
+                    app.dispatch(AppCommand::DeleteNote {
+                        channel,
+                        pattern,
+                        pitch: note_pitch,
+                        start_step,
+                    });
                 }
             }
         }
@@ -604,17 +621,15 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                     let max_step = start_step.max(end_step);
                     let duration = max_step - min_step + 1;
 
-                    // Copy values before mutable borrow
                     let pitch = app.ui.cursors.piano_roll.pitch;
-                    let channel_idx = app.ui.cursors.channel_rack.channel;
-                    let pattern_id = app.current_pattern;
-                    let pattern_length = app.get_current_pattern().map(|p| p.length).unwrap_or(16);
+                    let channel = app.ui.cursors.channel_rack.channel;
+                    let pattern = app.current_pattern;
                     let note = crate::sequencer::Note::new(pitch, min_step, duration);
-                    if let Some(channel) = app.channels.get_mut(channel_idx) {
-                        let slice = channel.get_or_create_pattern(pattern_id, pattern_length);
-                        slice.add_note(note);
-                    }
-                    app.mark_dirty();
+                    app.dispatch(AppCommand::AddNote {
+                        channel,
+                        pattern,
+                        note,
+                    });
                 }
                 app.ui.cursors.piano_roll.placing_note = None;
             }

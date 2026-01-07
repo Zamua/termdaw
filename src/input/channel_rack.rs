@@ -5,33 +5,14 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, Panel};
+use crate::command::AppCommand;
 use crate::coords::{AppCol, VimCol};
-use crate::mixer::TrackId;
 use crate::mode::ViewMode;
 use crate::plugin_host::params::build_editor_params;
 use crate::sequencer::ChannelSource;
 
 use super::common::key_to_vim_char;
 use super::vim::{Position, Range, RangeType, VimAction};
-
-/// Cycle mute state on the mixer track for a channel: normal -> muted -> solo -> normal
-fn cycle_channel_mute_state(app: &mut App, slot: usize) {
-    let track_id = app
-        .get_channel_at_slot(slot)
-        .map(|c| TrackId(c.mixer_track))
-        .unwrap_or(TrackId(1));
-    let track = app.mixer.track_mut(track_id);
-
-    if track.solo {
-        track.solo = false;
-        track.muted = false;
-    } else if track.muted {
-        track.muted = false;
-        track.solo = true;
-    } else {
-        track.muted = true;
-    }
-}
 
 /// Handle keyboard input for channel rack
 pub fn handle_key(key: KeyEvent, app: &mut App) {
@@ -41,9 +22,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         KeyCode::Char('m') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             let slot = app.ui.cursors.channel_rack.channel;
             if app.get_channel_at_slot(slot).is_some() {
-                cycle_channel_mute_state(app, slot);
-                app.audio_sync.mark_mixer_dirty();
-                app.mark_dirty();
+                app.dispatch(AppCommand::CycleChannelMuteState(slot));
             }
             return;
         }
@@ -58,11 +37,8 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         // 'S' (shift+s) to toggle solo on current channel's mixer track
         KeyCode::Char('S') => {
             let slot = app.ui.cursors.channel_rack.channel;
-            if let Some(channel) = app.get_channel_at_slot(slot) {
-                let track_id = TrackId(channel.mixer_track);
-                app.mixer.toggle_solo(track_id);
-                app.audio_sync.mark_mixer_dirty();
-                app.mark_dirty();
+            if app.get_channel_at_slot(slot).is_some() {
+                app.dispatch(AppCommand::ToggleSolo(slot));
             }
             return;
         }
@@ -90,35 +66,18 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // '[' to switch to previous pattern
         KeyCode::Char('[') => {
-            if app.current_pattern > 0 {
-                app.current_pattern -= 1;
-                app.mark_dirty();
-            }
+            app.dispatch(AppCommand::PreviousPattern);
             return;
         }
         // ']' to switch to next pattern (or create new)
         KeyCode::Char(']') => {
-            if app.current_pattern + 1 < app.patterns.len() {
-                app.current_pattern += 1;
-            } else {
-                // Create a new pattern (now metadata-only)
-                let new_id = app.patterns.len();
-                app.patterns
-                    .push(crate::sequencer::Pattern::new(new_id, 16));
-                app.current_pattern = new_id;
-            }
-            app.mark_dirty();
+            app.dispatch(AppCommand::NextPattern);
             return;
         }
         // 'd' in sample zone to delete channel
         KeyCode::Char('d') if app.cursor_zone() == "sample" => {
             let slot = app.ui.cursors.channel_rack.channel;
-            // Find the channel by slot and remove it
-            if let Some(idx) = app.channels.iter().position(|c| c.slot == slot) {
-                app.channels.remove(idx);
-                // Cursor stays at the same slot position (sparse model)
-                app.mark_dirty();
-            }
+            app.dispatch(AppCommand::DeleteChannel(slot));
             return;
         }
         // 'x' or Enter in non-steps zones - zone-aware action
@@ -128,25 +87,11 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             if app.ui.cursors.channel_rack.col.is_mute_zone() {
                 // Cycle mute state on the mixer track
                 if app.get_channel_at_slot(slot).is_some() {
-                    cycle_channel_mute_state(app, slot);
-                    app.audio_sync.mark_mixer_dirty();
-                    app.mark_dirty();
+                    app.dispatch(AppCommand::CycleChannelMuteState(slot));
                 }
             } else if app.ui.cursors.channel_rack.col.is_track_zone() {
                 // Cycle to next mixer track (1-15, wrap around)
-                // Find Vec index for audio engine
-                if let Some(vec_idx) = app.channels.iter().position(|c| c.slot == slot) {
-                    let channel = &mut app.channels[vec_idx];
-                    // Cycle through tracks 1-15 (skip master)
-                    let next = if channel.mixer_track >= 15 {
-                        1
-                    } else {
-                        channel.mixer_track + 1
-                    };
-                    channel.mixer_track = next;
-                    app.audio.set_generator_track(vec_idx, next);
-                    app.mark_dirty();
-                }
+                app.dispatch(AppCommand::IncrementChannelRouting(slot));
             } else if app.ui.cursors.channel_rack.col.is_sample_zone() {
                 // Open sample browser - record position for Ctrl+O
                 let current = app.current_jump_position();
@@ -164,33 +109,13 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             if app.ui.cursors.channel_rack.col.is_track_zone() =>
         {
             let slot = app.ui.cursors.channel_rack.channel;
-            if let Some(vec_idx) = app.channels.iter().position(|c| c.slot == slot) {
-                let channel = &mut app.channels[vec_idx];
-                let next = if channel.mixer_track >= 15 {
-                    1
-                } else {
-                    channel.mixer_track + 1
-                };
-                channel.mixer_track = next;
-                app.audio.set_generator_track(vec_idx, next);
-                app.mark_dirty();
-            }
+            app.dispatch(AppCommand::IncrementChannelRouting(slot));
             return;
         }
         // '-' to decrement track assignment (when in track zone)
         KeyCode::Char('-') if app.ui.cursors.channel_rack.col.is_track_zone() => {
             let slot = app.ui.cursors.channel_rack.channel;
-            if let Some(vec_idx) = app.channels.iter().position(|c| c.slot == slot) {
-                let channel = &mut app.channels[vec_idx];
-                let prev = if channel.mixer_track <= 1 {
-                    15
-                } else {
-                    channel.mixer_track - 1
-                };
-                channel.mixer_track = prev;
-                app.audio.set_generator_track(vec_idx, prev);
-                app.mark_dirty();
-            }
+            app.dispatch(AppCommand::DecrementChannelRouting(slot));
             return;
         }
         // Arrow keys mapped to vim motions
@@ -269,8 +194,14 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
                         return;
                     }
                 }
-                // Use history-aware toggle for undo/redo support
-                app.toggle_step_with_history();
+                // Toggle the step via command dispatch
+                let step = app.cursor_step();
+                let pattern = app.current_pattern;
+                app.dispatch(AppCommand::ToggleStep {
+                    channel: slot,
+                    pattern,
+                    step,
+                });
             }
         }
 
@@ -283,8 +214,16 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
             // Store deleted data in register 1 (and shift history) before deleting
             let data = get_pattern_data(app, &range);
             app.ui.vim.channel_rack.store_delete(data, range.range_type);
-            delete_pattern_data(app, &range);
-            app.mark_dirty();
+
+            // Convert range to BatchClearSteps operations for undo support
+            let pattern = app.current_pattern;
+            let operations = range_to_clear_operations(app, &range);
+            if !operations.is_empty() {
+                app.dispatch(AppCommand::BatchClearSteps {
+                    pattern,
+                    operations,
+                });
+            }
         }
 
         VimAction::Paste => {
@@ -413,12 +352,13 @@ fn get_pattern_data(app: &App, range: &Range) -> Vec<Vec<bool>> {
     data
 }
 
-/// Delete pattern data in a range (vim coordinates)
-fn delete_pattern_data(app: &mut App, range: &Range) {
+/// Convert a vim range to BatchClearSteps operations
+/// Returns Vec<(channel, start_step, end_step)>
+fn range_to_clear_operations(app: &App, range: &Range) -> Vec<(usize, usize, usize)> {
     let (start, end) = range.normalized();
-
-    let pattern_id = app.current_pattern;
     let pattern_length = app.get_current_pattern().map(|p| p.length).unwrap_or(16);
+
+    let mut operations = Vec::new();
 
     for row in start.row..=end.row {
         // Convert vim columns to step indices
@@ -443,14 +383,12 @@ fn delete_pattern_data(app: &mut App, range: &Range) {
         let col_start = col_start.min(pattern_length.saturating_sub(1));
         let col_end = col_end.min(pattern_length.saturating_sub(1));
 
-        // Get the channel's pattern slice and clear the steps
-        if let Some(channel) = app.channels.get_mut(row) {
-            let slice = channel.get_or_create_pattern(pattern_id, pattern_length);
-            for col in col_start..=col_end {
-                slice.set_step(col, false);
-            }
+        if col_start <= col_end && row < app.channels.len() {
+            operations.push((row, col_start, col_end));
         }
     }
+
+    operations
 }
 
 /// Paste clipboard at cursor position
@@ -537,10 +475,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                 let col = AppCol::from(VimCol(vim_col));
                 if col.is_mute_zone() {
                     // Click on mute column - cycle mute state via mixer track
-                    if row < app.channels.len() {
-                        cycle_channel_mute_state(app, row);
-                        app.audio_sync.mark_mixer_dirty();
-                        app.mark_dirty();
+                    if app.get_channel_at_slot(row).is_some() {
+                        app.dispatch(AppCommand::CycleChannelMuteState(row));
                     }
                 } else if col.is_step_zone() {
                     // Click on step - toggle it (if sampler channel)
@@ -549,12 +485,24 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                             // Plugin channels open piano roll on click
                             app.set_view_mode(ViewMode::PianoRoll);
                         } else {
-                            // Toggle step for sampler channels (with undo support)
-                            app.toggle_step_with_history();
+                            // Toggle step for sampler channels via dispatch
+                            let step = app.cursor_step();
+                            let pattern = app.current_pattern;
+                            app.dispatch(AppCommand::ToggleStep {
+                                channel: row,
+                                pattern,
+                                step,
+                            });
                         }
                     } else {
-                        // Empty slot - toggle anyway (with undo support)
-                        app.toggle_step_with_history();
+                        // Empty slot - toggle anyway via dispatch
+                        let step = app.cursor_step();
+                        let pattern = app.current_pattern;
+                        app.dispatch(AppCommand::ToggleStep {
+                            channel: row,
+                            pattern,
+                            step,
+                        });
                     }
                 }
                 // Sample zone click just moves cursor

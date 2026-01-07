@@ -5,6 +5,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::App;
+use crate::command::AppCommand;
 use crate::sequencer::Pattern;
 
 use super::common::key_to_vim_char;
@@ -190,8 +191,13 @@ fn handle_playlist_toggle(app: &mut App) {
     if let Some(pattern_id) = get_pattern_id_at_row(app, app.ui.cursors.playlist.row) {
         // Convert cursor_bar (1-16) to bar index (0-15)
         let bar = app.ui.cursors.playlist.bar - 1;
-        // Use history-aware toggle for undo/redo support
-        app.toggle_placement_with_history(pattern_id, bar);
+        // Check if placement exists to determine if we add or remove
+        let has_placement = app.arrangement.get_placement_at(pattern_id, bar).is_some();
+        if has_placement {
+            app.dispatch(AppCommand::RemovePlacement { pattern_id, bar });
+        } else {
+            app.dispatch(AppCommand::PlacePattern { pattern_id, bar });
+        }
     }
 }
 
@@ -199,8 +205,7 @@ fn handle_playlist_toggle(app: &mut App) {
 /// Cycles: normal -> muted -> solo -> normal (same order as channel rack)
 fn handle_playlist_mute(app: &mut App) {
     if let Some(pattern_id) = get_pattern_id_at_row(app, app.ui.cursors.playlist.row) {
-        app.arrangement.cycle_pattern_state(pattern_id);
-        app.mark_dirty();
+        app.dispatch(AppCommand::TogglePatternMute(pattern_id));
     }
 }
 

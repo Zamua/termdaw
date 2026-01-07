@@ -96,7 +96,7 @@ use crate::command_picker::CommandPicker;
 use crate::coords::AppCol;
 use crate::cursor::CursorStates;
 use crate::effects::{EffectSlot, EffectType, EFFECT_SLOTS};
-use crate::history::{GlobalJumplist, History, JumpPosition};
+use crate::history::{Command, GlobalJumplist, History, JumpPosition};
 use crate::input::context::{PianoRollContext, PlaylistContext, StepGridContext};
 use crate::input::mouse::MouseState;
 use crate::input::vim::{GridSemantics, VimStates, Zone};
@@ -514,6 +514,577 @@ impl App {
             None,
             mixer,
         )
+    }
+
+    // ========================================================================
+    // Command Dispatch System
+    // ========================================================================
+
+    /// Dispatch a command for execution.
+    ///
+    /// All state mutations should go through this method. It:
+    /// 1. Records undoable commands to history
+    /// 2. Executes the command
+    /// 3. Marks the project as dirty (for most commands)
+    pub fn dispatch(&mut self, cmd: crate::command::AppCommand) {
+        use crate::command::AppCommand;
+        use crate::history::command::{
+            AddNoteCmd, AddNotesCmd, DeleteChannelCmd, DeleteNotesCmd, DeletePatternCmd,
+            DeleteStepsCmd, RemoveNoteCmd, SetStepsCmd, TogglePlacementCmd, ToggleStepCmd,
+        };
+
+        // For undoable commands with history support, use history.execute()
+        // which both executes AND records for undo/redo
+        let handled = match &cmd {
+            AppCommand::ToggleStep {
+                channel,
+                pattern,
+                step,
+            } => {
+                let history_cmd =
+                    Box::new(ToggleStepCmd::new(*pattern, *channel, *step)) as Box<dyn Command>;
+                let mut history = std::mem::take(&mut self.history);
+                history.execute(history_cmd, self);
+                self.history = history;
+                true
+            }
+            AppCommand::SetSteps {
+                channel,
+                pattern,
+                steps,
+            } => {
+                // Capture current step states for undo
+                let pattern_length = self.patterns.get(*pattern).map(|p| p.length).unwrap_or(16);
+                let mut history_cmd = SetStepsCmd::new(*pattern);
+
+                if let Some(ch) = self.channels.get(*channel) {
+                    let slice = ch.get_pattern(*pattern);
+                    for &(step_idx, new_value) in steps {
+                        let old_value = slice.map(|s| s.get_step(step_idx)).unwrap_or(false);
+                        if step_idx < pattern_length {
+                            history_cmd.add_step(*channel, step_idx, new_value, old_value);
+                        }
+                    }
+                }
+
+                let mut history = std::mem::take(&mut self.history);
+                history.execute(Box::new(history_cmd), self);
+                self.history = history;
+                true
+            }
+            AppCommand::BatchSetSteps {
+                pattern,
+                operations,
+            } => {
+                // Capture current step states for undo
+                let pattern_length = self.patterns.get(*pattern).map(|p| p.length).unwrap_or(16);
+                let mut history_cmd = SetStepsCmd::new(*pattern);
+
+                for &(channel, step_idx, new_value) in operations {
+                    if let Some(ch) = self.channels.get(channel) {
+                        let slice = ch.get_pattern(*pattern);
+                        let old_value = slice.map(|s| s.get_step(step_idx)).unwrap_or(false);
+                        if step_idx < pattern_length {
+                            history_cmd.add_step(channel, step_idx, new_value, old_value);
+                        }
+                    }
+                }
+
+                let mut history = std::mem::take(&mut self.history);
+                history.execute(Box::new(history_cmd), self);
+                self.history = history;
+                true
+            }
+            AppCommand::AddNote {
+                channel,
+                pattern,
+                note,
+            } => {
+                let history_cmd =
+                    Box::new(AddNoteCmd::new(*pattern, *channel, note.clone())) as Box<dyn Command>;
+                let mut history = std::mem::take(&mut self.history);
+                history.execute(history_cmd, self);
+                self.history = history;
+                true
+            }
+            AppCommand::BatchAddNotes {
+                channel,
+                pattern,
+                notes,
+            } => {
+                let history_cmd = AddNotesCmd::new(*pattern, *channel, notes.clone());
+                let mut history = std::mem::take(&mut self.history);
+                history.execute(Box::new(history_cmd), self);
+                self.history = history;
+                true
+            }
+            AppCommand::DeleteNote {
+                channel,
+                pattern,
+                pitch,
+                start_step,
+            } => {
+                // Find the note ID first
+                if let Some(ch) = self.channels.get(*channel) {
+                    if let Some(slice) = ch.get_pattern(*pattern) {
+                        if let Some(note) = slice
+                            .notes
+                            .iter()
+                            .find(|n| n.pitch == *pitch && n.start_step == *start_step)
+                        {
+                            let history_cmd = Box::new(RemoveNoteCmd::from_note(
+                                *pattern,
+                                *channel,
+                                note.clone(),
+                            )) as Box<dyn Command>;
+                            let mut history = std::mem::take(&mut self.history);
+                            history.execute(history_cmd, self);
+                            self.history = history;
+                            return; // mark_dirty is handled by the command
+                        }
+                    }
+                }
+                false
+            }
+            AppCommand::BatchClearSteps {
+                pattern,
+                operations,
+            } => {
+                // Capture current step states for undo
+                let pattern_length = self.patterns.get(*pattern).map(|p| p.length).unwrap_or(16);
+                let mut history_cmd = DeleteStepsCmd::new(*pattern);
+
+                for &(channel, start_step, end_step) in operations {
+                    if let Some(ch) = self.channels.get(channel) {
+                        if let Some(slice) = ch.get_pattern(*pattern) {
+                            for step in start_step..=end_step {
+                                if step < pattern_length {
+                                    let was_active = slice.get_step(step);
+                                    history_cmd.add_step(channel, step, was_active);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let mut history = std::mem::take(&mut self.history);
+                history.execute(Box::new(history_cmd), self);
+                self.history = history;
+                true
+            }
+            AppCommand::BatchDeleteNotes {
+                channel,
+                pattern,
+                positions,
+            } => {
+                // Capture notes for undo
+                let notes_to_delete: Vec<_> = if let Some(ch) = self.channels.get(*channel) {
+                    if let Some(slice) = ch.get_pattern(*pattern) {
+                        positions
+                            .iter()
+                            .filter_map(|(pitch, start_step)| {
+                                slice
+                                    .notes
+                                    .iter()
+                                    .find(|n| n.pitch == *pitch && n.start_step == *start_step)
+                                    .cloned()
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                if !notes_to_delete.is_empty() {
+                    let history_cmd = DeleteNotesCmd::new(*pattern, *channel, notes_to_delete);
+                    let mut history = std::mem::take(&mut self.history);
+                    history.execute(Box::new(history_cmd), self);
+                    self.history = history;
+                }
+                true
+            }
+            AppCommand::DeleteChannel(slot) => {
+                let history_cmd = DeleteChannelCmd::new(*slot);
+                let mut history = std::mem::take(&mut self.history);
+                history.execute(Box::new(history_cmd), self);
+                self.history = history;
+                true
+            }
+            AppCommand::DeletePattern(pattern_id) => {
+                let history_cmd = DeletePatternCmd::new(*pattern_id);
+                let mut history = std::mem::take(&mut self.history);
+                history.execute(Box::new(history_cmd), self);
+                self.history = history;
+                true
+            }
+            AppCommand::PlacePattern { pattern_id, bar }
+            | AppCommand::RemovePlacement { pattern_id, bar } => {
+                let history_cmd =
+                    Box::new(TogglePlacementCmd::new(*pattern_id, *bar)) as Box<dyn Command>;
+                let mut history = std::mem::take(&mut self.history);
+                history.execute(history_cmd, self);
+                self.history = history;
+                true
+            }
+            _ => false,
+        };
+
+        // For commands without history support, execute directly
+        if !handled {
+            self.execute(cmd.clone());
+        }
+
+        // Mark dirty for most commands
+        match cmd {
+            AppCommand::TogglePlayback | AppCommand::StopPlayback => {
+                // Transport commands don't mark dirty
+            }
+            _ => {
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Execute a command (internal implementation).
+    ///
+    /// This method contains the actual mutation logic for each command.
+    fn execute(&mut self, cmd: crate::command::AppCommand) {
+        use crate::command::AppCommand;
+        use crate::mixer::TrackId;
+
+        match cmd {
+            // ================================================================
+            // Transport
+            // ================================================================
+            AppCommand::TogglePlayback => {
+                self.toggle_play();
+            }
+            AppCommand::StopPlayback => {
+                self.transport.playback.stop();
+                self.transport.reset_accumulator();
+            }
+            AppCommand::SetBpm(bpm) => {
+                self.transport.bpm = bpm;
+                self.audio.update_tempo(bpm);
+            }
+
+            // ================================================================
+            // Pattern selection
+            // ================================================================
+            AppCommand::PreviousPattern => {
+                if self.current_pattern > 0 {
+                    self.current_pattern -= 1;
+                }
+            }
+            AppCommand::NextPattern => {
+                if self.current_pattern + 1 < self.patterns.len() {
+                    self.current_pattern += 1;
+                } else {
+                    // Create a new pattern
+                    let new_id = self.patterns.len();
+                    self.patterns
+                        .push(crate::sequencer::Pattern::new(new_id, 16));
+                    self.current_pattern = new_id;
+                }
+            }
+            AppCommand::CreatePattern => {
+                let new_id = self.patterns.len();
+                self.patterns
+                    .push(crate::sequencer::Pattern::new(new_id, 16));
+            }
+            AppCommand::DeletePattern(id) => {
+                if id < self.patterns.len() && self.patterns.len() > 1 {
+                    self.patterns.remove(id);
+                    if self.current_pattern >= self.patterns.len() {
+                        self.current_pattern = self.patterns.len() - 1;
+                    }
+                }
+            }
+
+            // ================================================================
+            // Channel operations
+            // ================================================================
+            AppCommand::CycleChannelMuteState(slot) => {
+                if let Some(channel) = self.get_channel_at_slot(slot) {
+                    let track_id = TrackId(channel.mixer_track);
+                    let track = self.mixer.track_mut(track_id);
+                    if track.solo {
+                        track.solo = false;
+                        track.muted = false;
+                    } else if track.muted {
+                        track.muted = false;
+                        track.solo = true;
+                    } else {
+                        track.muted = true;
+                    }
+                    self.audio_sync.mark_mixer_dirty();
+                }
+            }
+            AppCommand::ToggleSolo(slot) => {
+                if let Some(channel) = self.get_channel_at_slot(slot) {
+                    let track_id = TrackId(channel.mixer_track);
+                    self.mixer.toggle_solo(track_id);
+                    self.audio_sync.mark_mixer_dirty();
+                }
+            }
+            AppCommand::DeleteChannel(slot) => {
+                if let Some(idx) = self.channels.iter().position(|c| c.slot == slot) {
+                    self.channels.remove(idx);
+                }
+            }
+            AppCommand::SetChannelSample { slot, path } => {
+                self.set_channel_sample(slot, path);
+            }
+            AppCommand::SetChannelPlugin { slot, path } => {
+                self.set_channel_plugin(slot, path);
+            }
+            AppCommand::SetChannelRouting { slot, track } => {
+                if let Some(vec_idx) = self.channels.iter().position(|c| c.slot == slot) {
+                    self.channels[vec_idx].mixer_track = track;
+                    self.audio.set_generator_track(vec_idx, track);
+                }
+            }
+            AppCommand::IncrementChannelRouting(slot) => {
+                if let Some(vec_idx) = self.channels.iter().position(|c| c.slot == slot) {
+                    let channel = &mut self.channels[vec_idx];
+                    let next = if channel.mixer_track >= 15 {
+                        1
+                    } else {
+                        channel.mixer_track + 1
+                    };
+                    channel.mixer_track = next;
+                    self.audio.set_generator_track(vec_idx, next);
+                }
+            }
+            AppCommand::DecrementChannelRouting(slot) => {
+                if let Some(vec_idx) = self.channels.iter().position(|c| c.slot == slot) {
+                    let channel = &mut self.channels[vec_idx];
+                    let prev = if channel.mixer_track <= 1 {
+                        15
+                    } else {
+                        channel.mixer_track - 1
+                    };
+                    channel.mixer_track = prev;
+                    self.audio.set_generator_track(vec_idx, prev);
+                }
+            }
+
+            // ================================================================
+            // Step grid
+            // ================================================================
+            AppCommand::ToggleStep {
+                channel,
+                pattern,
+                step,
+            } => {
+                let pattern_length = self.patterns.get(pattern).map(|p| p.length).unwrap_or(16);
+                if let Some(ch) = self.channels.get_mut(channel) {
+                    let slice = ch.get_or_create_pattern(pattern, pattern_length);
+                    slice.toggle_step(step);
+                }
+            }
+            AppCommand::SetSteps {
+                channel,
+                pattern,
+                steps,
+            } => {
+                let pattern_length = self.patterns.get(pattern).map(|p| p.length).unwrap_or(16);
+                if let Some(ch) = self.channels.get_mut(channel) {
+                    let slice = ch.get_or_create_pattern(pattern, pattern_length);
+                    for (step_idx, value) in steps {
+                        slice.set_step(step_idx, value);
+                    }
+                }
+            }
+            AppCommand::ClearSteps {
+                channel,
+                pattern,
+                start_step,
+                end_step,
+            } => {
+                let pattern_length = self.patterns.get(pattern).map(|p| p.length).unwrap_or(16);
+                if let Some(ch) = self.channels.get_mut(channel) {
+                    let slice = ch.get_or_create_pattern(pattern, pattern_length);
+                    for step_idx in start_step..=end_step {
+                        slice.set_step(step_idx, false);
+                    }
+                }
+            }
+            AppCommand::BatchSetSteps {
+                pattern,
+                operations,
+            } => {
+                let pattern_length = self.patterns.get(pattern).map(|p| p.length).unwrap_or(16);
+                for (channel, step_idx, value) in operations {
+                    if let Some(ch) = self.channels.get_mut(channel) {
+                        let slice = ch.get_or_create_pattern(pattern, pattern_length);
+                        slice.set_step(step_idx, value);
+                    }
+                }
+            }
+            AppCommand::BatchClearSteps {
+                pattern,
+                operations,
+            } => {
+                let pattern_length = self.patterns.get(pattern).map(|p| p.length).unwrap_or(16);
+                for (channel, start_step, end_step) in operations {
+                    if let Some(ch) = self.channels.get_mut(channel) {
+                        let slice = ch.get_or_create_pattern(pattern, pattern_length);
+                        for step_idx in start_step..=end_step {
+                            slice.set_step(step_idx, false);
+                        }
+                    }
+                }
+            }
+
+            // ================================================================
+            // Piano roll
+            // ================================================================
+            AppCommand::AddNote {
+                channel,
+                pattern,
+                note,
+            } => {
+                let pattern_length = self.patterns.get(pattern).map(|p| p.length).unwrap_or(16);
+                if let Some(ch) = self.channels.get_mut(channel) {
+                    let slice = ch.get_or_create_pattern(pattern, pattern_length);
+                    slice.add_note(note);
+                }
+            }
+            AppCommand::DeleteNote {
+                channel,
+                pattern,
+                pitch,
+                start_step,
+            } => {
+                if let Some(ch) = self.channels.get_mut(channel) {
+                    if let Some(slice) = ch.pattern_data.get_mut(&pattern) {
+                        // Find the note by pitch and start_step, then remove it
+                        if let Some(idx) = slice
+                            .notes
+                            .iter()
+                            .position(|n| n.pitch == pitch && n.start_step == start_step)
+                        {
+                            slice.notes.remove(idx);
+                        }
+                    }
+                }
+            }
+            AppCommand::BatchAddNotes {
+                channel,
+                pattern,
+                notes,
+            } => {
+                let pattern_length = self.patterns.get(pattern).map(|p| p.length).unwrap_or(16);
+                if let Some(ch) = self.channels.get_mut(channel) {
+                    let slice = ch.get_or_create_pattern(pattern, pattern_length);
+                    for note in notes {
+                        slice.add_note(note);
+                    }
+                }
+            }
+            AppCommand::BatchDeleteNotes {
+                channel,
+                pattern,
+                positions,
+            } => {
+                if let Some(ch) = self.channels.get_mut(channel) {
+                    if let Some(slice) = ch.pattern_data.get_mut(&pattern) {
+                        for (pitch, start_step) in positions {
+                            if let Some(idx) = slice
+                                .notes
+                                .iter()
+                                .position(|n| n.pitch == pitch && n.start_step == start_step)
+                            {
+                                slice.notes.remove(idx);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ================================================================
+            // Playlist / Arrangement
+            // ================================================================
+            AppCommand::PlacePattern { pattern_id, bar } => {
+                use crate::arrangement::PatternPlacement;
+                self.arrangement
+                    .add_placement(PatternPlacement::new(pattern_id, bar));
+            }
+            AppCommand::RemovePlacement { pattern_id, bar } => {
+                self.arrangement
+                    .remove_placements_in_range(pattern_id, bar, bar);
+            }
+            AppCommand::TogglePatternMute(pattern_id) => {
+                self.arrangement.toggle_pattern_mute(pattern_id);
+            }
+
+            // ================================================================
+            // Mixer
+            // ================================================================
+            AppCommand::SetTrackVolume { track, volume } => {
+                self.mixer.set_volume(TrackId(track), volume);
+                self.audio_sync.mark_mixer_dirty();
+            }
+            AppCommand::SetTrackPan { track, pan } => {
+                self.mixer.set_pan(TrackId(track), pan);
+                self.audio_sync.mark_mixer_dirty();
+            }
+            AppCommand::ToggleTrackMute(track) => {
+                self.mixer.toggle_mute(TrackId(track));
+                self.audio_sync.mark_mixer_dirty();
+            }
+            AppCommand::ToggleTrackSolo(track) => {
+                self.mixer.toggle_solo(TrackId(track));
+                self.audio_sync.mark_mixer_dirty();
+            }
+            AppCommand::ResetTrackVolume(track) => {
+                self.mixer.set_volume(TrackId(track), 0.8);
+                self.audio_sync.mark_mixer_dirty();
+            }
+            AppCommand::ResetTrackPan(track) => {
+                self.mixer.set_pan(TrackId(track), 0.0);
+                self.audio_sync.mark_mixer_dirty();
+            }
+
+            // ================================================================
+            // Effects
+            // ================================================================
+            AppCommand::AddEffect {
+                track,
+                slot,
+                effect_type,
+            } => {
+                use crate::effects::EffectSlot;
+                let effect_slot = EffectSlot::new(effect_type);
+                self.mixer.tracks[track].effects[slot] = Some(effect_slot);
+                self.audio.set_effect(track, slot, Some(effect_type));
+            }
+            AppCommand::RemoveEffect { track, slot } => {
+                self.mixer.tracks[track].effects[slot] = None;
+                self.audio.set_effect(track, slot, None);
+            }
+            AppCommand::SetEffectParam {
+                track,
+                slot,
+                param,
+                value,
+            } => {
+                if let Some(ref mut effect_slot) = self.mixer.tracks[track].effects[slot] {
+                    effect_slot.params.insert(param, value);
+                }
+                self.audio.set_effect_param(track, slot, param, value);
+            }
+            AppCommand::ToggleEffectBypass { track, slot } => {
+                if let Some(ref mut effect_slot) = self.mixer.tracks[track].effects[slot] {
+                    effect_slot.bypassed = !effect_slot.bypassed;
+                    let enabled = !effect_slot.bypassed;
+                    self.audio.set_effect_enabled(track, slot, enabled);
+                }
+            }
+        }
     }
 
     /// Get the current pattern
@@ -1884,6 +2455,529 @@ mod tests {
             has_ch1_routing,
             "Channel 1 must sync routing to track {}. Commands: {:?}",
             track1, commands
+        );
+    }
+
+    // ========================================================================
+    // Command dispatch tests
+    // ========================================================================
+
+    #[test]
+    fn test_dispatch_toggle_step() {
+        let (mut app, _temp) = create_test_app();
+
+        // Create a channel and pattern
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.patterns.push(Pattern::new(0, 16));
+
+        // Step should be off initially
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert!(!slice.get_step(0), "Step should be off initially");
+
+        // Dispatch toggle command
+        use crate::command::AppCommand;
+        app.dispatch(AppCommand::ToggleStep {
+            channel: 0,
+            pattern: 0,
+            step: 0,
+        });
+
+        // Step should now be on
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert!(slice.get_step(0), "Step should be on after dispatch");
+    }
+
+    #[test]
+    fn test_dispatch_add_note() {
+        let (mut app, _temp) = create_test_app();
+
+        // Create a channel and pattern
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.patterns.push(Pattern::new(0, 16));
+
+        // Dispatch add note command
+        use crate::command::AppCommand;
+        use crate::sequencer::Note;
+        app.dispatch(AppCommand::AddNote {
+            channel: 0,
+            pattern: 0,
+            note: Note::new(60, 0, 4), // C4 at step 0, 4 steps long
+        });
+
+        // Note should exist
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert_eq!(slice.notes.len(), 1, "Should have 1 note");
+        assert_eq!(slice.notes[0].pitch, 60, "Note pitch should be 60");
+        assert_eq!(slice.notes[0].start_step, 0, "Note start should be 0");
+    }
+
+    #[test]
+    fn test_dispatch_delete_note() {
+        let (mut app, _temp) = create_test_app();
+
+        // Create a channel and pattern with a note
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.patterns.push(Pattern::new(0, 16));
+
+        use crate::command::AppCommand;
+        use crate::sequencer::Note;
+
+        // Add a note first
+        app.dispatch(AppCommand::AddNote {
+            channel: 0,
+            pattern: 0,
+            note: Note::new(60, 0, 4),
+        });
+        assert_eq!(app.channels[0].get_or_create_pattern(0, 16).notes.len(), 1);
+
+        // Delete the note
+        app.dispatch(AppCommand::DeleteNote {
+            channel: 0,
+            pattern: 0,
+            pitch: 60,
+            start_step: 0,
+        });
+
+        // Note should be gone
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert_eq!(slice.notes.len(), 0, "Note should be deleted");
+    }
+
+    #[test]
+    fn test_dispatch_set_track_volume() {
+        let (mut app, _temp) = create_test_app();
+
+        use crate::command::AppCommand;
+        use crate::mixer::TrackId;
+
+        // Set volume on track 1
+        app.dispatch(AppCommand::SetTrackVolume {
+            track: 1,
+            volume: 0.5,
+        });
+
+        // Verify volume was set
+        assert!(
+            (app.mixer.track(TrackId(1)).volume - 0.5).abs() < 0.001,
+            "Track 1 volume should be 0.5"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_marks_dirty_for_undoable_commands() {
+        let (mut app, _temp) = create_test_app();
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.patterns.push(Pattern::new(0, 16));
+
+        // Clear dirty flag
+        app.dirty = false;
+
+        // Dispatch an undoable command
+        use crate::command::AppCommand;
+        app.dispatch(AppCommand::ToggleStep {
+            channel: 0,
+            pattern: 0,
+            step: 0,
+        });
+
+        assert!(
+            app.dirty,
+            "Dispatch should mark dirty for undoable commands"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_does_not_mark_dirty_for_transport() {
+        let (mut app, _temp) = create_test_app();
+
+        // Clear dirty flag
+        app.dirty = false;
+
+        // Dispatch transport command (not undoable)
+        use crate::command::AppCommand;
+        app.dispatch(AppCommand::TogglePlayback);
+
+        assert!(
+            !app.dirty,
+            "Dispatch should NOT mark dirty for transport commands"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_records_to_history_for_undo() {
+        let (mut app, _temp) = create_test_app();
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.patterns.push(Pattern::new(0, 16));
+
+        // Verify no undo available initially
+        assert!(
+            !app.history.can_undo(),
+            "Should have no undo history initially"
+        );
+
+        // Verify step is off
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert!(!slice.get_step(0), "Step should be off initially");
+
+        // Dispatch toggle step command
+        use crate::command::AppCommand;
+        app.dispatch(AppCommand::ToggleStep {
+            channel: 0,
+            pattern: 0,
+            step: 0,
+        });
+
+        // Verify step is now on
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert!(slice.get_step(0), "Step should be on after dispatch");
+
+        // Verify undo is available
+        assert!(
+            app.history.can_undo(),
+            "Should have undo history after dispatch"
+        );
+
+        // Perform undo - take history temporarily to avoid borrow conflict
+        let mut history = std::mem::take(&mut app.history);
+        history.undo(&mut app);
+        app.history = history;
+
+        // Verify step is back to off
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert!(!slice.get_step(0), "Step should be off after undo");
+    }
+
+    #[test]
+    fn test_dispatch_batch_clear_steps_records_to_history() {
+        let (mut app, _temp) = create_test_app();
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.patterns.push(Pattern::new(0, 16));
+
+        // Set some steps first
+        use crate::command::AppCommand;
+        app.dispatch(AppCommand::ToggleStep {
+            channel: 0,
+            pattern: 0,
+            step: 0,
+        });
+        app.dispatch(AppCommand::ToggleStep {
+            channel: 0,
+            pattern: 0,
+            step: 1,
+        });
+        app.dispatch(AppCommand::ToggleStep {
+            channel: 0,
+            pattern: 0,
+            step: 2,
+        });
+
+        // Verify steps are on
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert!(slice.get_step(0) && slice.get_step(1) && slice.get_step(2));
+
+        // Clear history so we can test BatchClearSteps specifically
+        app.history = History::new();
+        assert!(!app.history.can_undo());
+
+        // Use BatchClearSteps to delete steps 0-2
+        app.dispatch(AppCommand::BatchClearSteps {
+            pattern: 0,
+            operations: vec![(0, 0, 2)],
+        });
+
+        // Verify steps are now off
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert!(
+            !slice.get_step(0) && !slice.get_step(1) && !slice.get_step(2),
+            "Steps should be off after BatchClearSteps"
+        );
+
+        // Verify undo is available
+        assert!(
+            app.history.can_undo(),
+            "BatchClearSteps should record to history"
+        );
+
+        // Perform undo
+        let mut history = std::mem::take(&mut app.history);
+        history.undo(&mut app);
+        app.history = history;
+
+        // Verify steps are restored
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert!(
+            slice.get_step(0) && slice.get_step(1) && slice.get_step(2),
+            "Steps should be restored after undo"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_batch_delete_notes_records_to_history() {
+        let (mut app, _temp) = create_test_app();
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.patterns.push(Pattern::new(0, 16));
+
+        // Add some notes first
+        use crate::command::AppCommand;
+        use crate::sequencer::Note;
+        app.dispatch(AppCommand::AddNote {
+            channel: 0,
+            pattern: 0,
+            note: Note::new(60, 0, 4),
+        });
+        app.dispatch(AppCommand::AddNote {
+            channel: 0,
+            pattern: 0,
+            note: Note::new(62, 4, 4),
+        });
+
+        // Verify notes exist
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert_eq!(slice.notes.len(), 2, "Should have 2 notes");
+
+        // Clear history so we can test BatchDeleteNotes specifically
+        app.history = History::new();
+        assert!(!app.history.can_undo());
+
+        // Use BatchDeleteNotes to delete both notes
+        app.dispatch(AppCommand::BatchDeleteNotes {
+            channel: 0,
+            pattern: 0,
+            positions: vec![(60, 0), (62, 4)],
+        });
+
+        // Verify notes are now gone
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert_eq!(
+            slice.notes.len(),
+            0,
+            "Notes should be deleted after BatchDeleteNotes"
+        );
+
+        // Verify undo is available
+        assert!(
+            app.history.can_undo(),
+            "BatchDeleteNotes should record to history"
+        );
+
+        // Perform undo
+        let mut history = std::mem::take(&mut app.history);
+        history.undo(&mut app);
+        app.history = history;
+
+        // Verify notes are restored
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert_eq!(slice.notes.len(), 2, "Notes should be restored after undo");
+    }
+
+    // ========================================================================
+    // Paste operations undo tests
+    // ========================================================================
+
+    #[test]
+    fn test_dispatch_set_steps_records_to_history() {
+        let (mut app, _temp) = create_test_app();
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.patterns.push(Pattern::new(0, 16));
+
+        // Verify steps are off initially
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert!(!slice.get_step(0) && !slice.get_step(1));
+
+        // Clear history
+        app.history = History::new();
+
+        // Use SetSteps to set steps (simulates paste)
+        use crate::command::AppCommand;
+        app.dispatch(AppCommand::SetSteps {
+            channel: 0,
+            pattern: 0,
+            steps: vec![(0, true), (1, true), (2, true)],
+        });
+
+        // Verify steps are now on
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert!(
+            slice.get_step(0) && slice.get_step(1) && slice.get_step(2),
+            "Steps should be on after SetSteps"
+        );
+
+        // Verify undo is available
+        assert!(app.history.can_undo(), "SetSteps should record to history");
+
+        // Perform undo
+        let mut history = std::mem::take(&mut app.history);
+        history.undo(&mut app);
+        app.history = history;
+
+        // Verify steps are back to off
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert!(
+            !slice.get_step(0) && !slice.get_step(1) && !slice.get_step(2),
+            "Steps should be off after undo"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_batch_set_steps_records_to_history() {
+        let (mut app, _temp) = create_test_app();
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.set_channel_sample(1, "snare.wav".to_string());
+        app.patterns.push(Pattern::new(0, 16));
+
+        // Clear history
+        app.history = History::new();
+
+        // Use BatchSetSteps to set steps across multiple channels (simulates multi-row paste)
+        use crate::command::AppCommand;
+        app.dispatch(AppCommand::BatchSetSteps {
+            pattern: 0,
+            operations: vec![(0, 0, true), (0, 1, true), (1, 0, true), (1, 1, true)],
+        });
+
+        // Verify steps are now on
+        assert!(app.channels[0].get_or_create_pattern(0, 16).get_step(0));
+        assert!(app.channels[0].get_or_create_pattern(0, 16).get_step(1));
+        assert!(app.channels[1].get_or_create_pattern(0, 16).get_step(0));
+        assert!(app.channels[1].get_or_create_pattern(0, 16).get_step(1));
+
+        // Verify undo is available
+        assert!(
+            app.history.can_undo(),
+            "BatchSetSteps should record to history"
+        );
+
+        // Perform undo
+        let mut history = std::mem::take(&mut app.history);
+        history.undo(&mut app);
+        app.history = history;
+
+        // Verify steps are back to off
+        assert!(!app.channels[0].get_or_create_pattern(0, 16).get_step(0));
+        assert!(!app.channels[0].get_or_create_pattern(0, 16).get_step(1));
+        assert!(!app.channels[1].get_or_create_pattern(0, 16).get_step(0));
+        assert!(!app.channels[1].get_or_create_pattern(0, 16).get_step(1));
+    }
+
+    #[test]
+    fn test_dispatch_batch_add_notes_records_to_history() {
+        let (mut app, _temp) = create_test_app();
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.patterns.push(Pattern::new(0, 16));
+
+        // Clear history
+        app.history = History::new();
+
+        // Use BatchAddNotes to add notes (simulates paste in piano roll)
+        use crate::command::AppCommand;
+        use crate::sequencer::Note;
+        app.dispatch(AppCommand::BatchAddNotes {
+            channel: 0,
+            pattern: 0,
+            notes: vec![Note::new(60, 0, 4), Note::new(62, 4, 4)],
+        });
+
+        // Verify notes exist
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert_eq!(
+            slice.notes.len(),
+            2,
+            "Should have 2 notes after BatchAddNotes"
+        );
+
+        // Verify undo is available
+        assert!(
+            app.history.can_undo(),
+            "BatchAddNotes should record to history"
+        );
+
+        // Perform undo
+        let mut history = std::mem::take(&mut app.history);
+        history.undo(&mut app);
+        app.history = history;
+
+        // Verify notes are removed
+        let slice = app.channels[0].get_or_create_pattern(0, 16);
+        assert_eq!(slice.notes.len(), 0, "Notes should be removed after undo");
+    }
+
+    // ========================================================================
+    // Destructive operations undo tests
+    // ========================================================================
+
+    #[test]
+    fn test_dispatch_delete_channel_records_to_history() {
+        let (mut app, _temp) = create_test_app();
+        app.set_channel_sample(0, "kick.wav".to_string());
+        app.set_channel_sample(1, "snare.wav".to_string());
+
+        // Verify we have 2 channels
+        assert_eq!(app.channels.len(), 2);
+
+        // Clear history
+        app.history = History::new();
+
+        // Delete channel 0
+        use crate::command::AppCommand;
+        app.dispatch(AppCommand::DeleteChannel(0));
+
+        // Verify channel was deleted
+        assert_eq!(app.channels.len(), 1, "Should have 1 channel after delete");
+
+        // Verify undo is available
+        assert!(
+            app.history.can_undo(),
+            "DeleteChannel should record to history"
+        );
+
+        // Perform undo
+        let mut history = std::mem::take(&mut app.history);
+        history.undo(&mut app);
+        app.history = history;
+
+        // Verify channel is restored
+        assert_eq!(app.channels.len(), 2, "Should have 2 channels after undo");
+    }
+
+    #[test]
+    fn test_dispatch_delete_pattern_records_to_history() {
+        let (mut app, _temp) = create_test_app();
+
+        // App starts with 1 default pattern, add one more
+        let initial_count = app.patterns.len();
+        app.patterns.push(Pattern::new(initial_count, 16));
+        let pattern_count = app.patterns.len();
+
+        // Clear history
+        app.history = History::new();
+
+        // Delete the last pattern
+        use crate::command::AppCommand;
+        app.dispatch(AppCommand::DeletePattern(pattern_count - 1));
+
+        // Verify pattern was deleted
+        assert_eq!(
+            app.patterns.len(),
+            pattern_count - 1,
+            "Should have one less pattern after delete"
+        );
+
+        // Verify undo is available
+        assert!(
+            app.history.can_undo(),
+            "DeletePattern should record to history"
+        );
+
+        // Perform undo
+        let mut history = std::mem::take(&mut app.history);
+        history.undo(&mut app);
+        app.history = history;
+
+        // Verify pattern is restored
+        assert_eq!(
+            app.patterns.len(),
+            pattern_count,
+            "Pattern count should be restored after undo"
         );
     }
 }

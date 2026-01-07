@@ -24,6 +24,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, Mou
 use tui_input::backend::crossterm::EventHandler;
 
 use crate::app::{App, Panel};
+use crate::command::AppCommand;
 
 /// Handle a keyboard event
 /// Returns true if the app should quit
@@ -838,22 +839,14 @@ fn execute_context_menu_action(
         // Channel Rack actions
         ContextMenuAction::DeleteChannel => {
             if let Some(MenuContext::ChannelRack { channel: slot }) = context {
-                // Find the channel by slot and remove it
-                if let Some(idx) = app.channels.iter().position(|c| c.slot == slot) {
-                    app.channels.remove(idx);
-                    app.mark_dirty();
-                }
+                app.dispatch(AppCommand::DeleteChannel(slot));
             }
         }
         ContextMenuAction::MuteChannel => {
             if let Some(MenuContext::ChannelRack { channel: slot }) = context {
                 // Toggle mute on the mixer track this channel routes to
                 if let Some(ch) = app.get_channel_at_slot(slot) {
-                    let track_id = crate::mixer::TrackId(ch.mixer_track);
-                    let track = app.mixer.track_mut(track_id);
-                    track.muted = !track.muted;
-                    app.audio_sync.mark_mixer_dirty();
-                    app.mark_dirty();
+                    app.dispatch(AppCommand::ToggleTrackMute(ch.mixer_track));
                 }
             }
         }
@@ -861,11 +854,7 @@ fn execute_context_menu_action(
             if let Some(MenuContext::ChannelRack { channel: slot }) = context {
                 // Toggle solo on the mixer track this channel routes to
                 if let Some(ch) = app.get_channel_at_slot(slot) {
-                    let track_id = crate::mixer::TrackId(ch.mixer_track);
-                    let track = app.mixer.track_mut(track_id);
-                    track.solo = !track.solo;
-                    app.audio_sync.mark_mixer_dirty();
-                    app.mark_dirty();
+                    app.dispatch(AppCommand::ToggleTrackSolo(ch.mixer_track));
                 }
             }
         }
@@ -921,23 +910,23 @@ fn execute_context_menu_action(
         // Piano Roll actions
         ContextMenuAction::DeleteNote => {
             if let Some(MenuContext::PianoRoll { pitch, step }) = context {
-                let channel_idx = app.ui.cursors.channel_rack.channel;
-                let pattern_id = app.current_pattern;
-                // Find note ID first, then delete
-                let note_id = app
+                let channel = app.ui.cursors.channel_rack.channel;
+                let pattern = app.current_pattern;
+                // Find note position first
+                let note_info = app
                     .channels
-                    .get(channel_idx)
-                    .and_then(|c| c.get_pattern(pattern_id))
+                    .get(channel)
+                    .and_then(|c| c.get_pattern(pattern))
                     .and_then(|s| s.get_note_at(pitch, step))
-                    .map(|n| n.id.clone());
+                    .map(|n| (n.pitch, n.start_step));
 
-                if let Some(id) = note_id {
-                    if let Some(channel) = app.channels.get_mut(channel_idx) {
-                        if let Some(slice) = channel.get_pattern_mut(pattern_id) {
-                            slice.remove_note(&id);
-                            app.mark_dirty();
-                        }
-                    }
+                if let Some((note_pitch, start_step)) = note_info {
+                    app.dispatch(AppCommand::DeleteNote {
+                        channel,
+                        pattern,
+                        pitch: note_pitch,
+                        start_step,
+                    });
                 }
             }
         }
@@ -954,9 +943,10 @@ fn execute_context_menu_action(
                 // Capture pattern.id before mutable borrow
                 let pattern_id = app.patterns.get(row).map(|p| p.id);
                 if let Some(id) = pattern_id {
-                    // Remove placement at this specific bar
-                    app.arrangement.remove_placements_in_range(id, bar, bar);
-                    app.mark_dirty();
+                    app.dispatch(AppCommand::RemovePlacement {
+                        pattern_id: id,
+                        bar,
+                    });
                 }
             }
         }
@@ -968,8 +958,7 @@ fn execute_context_menu_action(
                 // Capture pattern.id before mutable borrow
                 let pattern_id = app.patterns.get(row).map(|p| p.id);
                 if let Some(id) = pattern_id {
-                    app.arrangement.toggle_pattern_mute(id);
-                    app.mark_dirty();
+                    app.dispatch(AppCommand::TogglePatternMute(id));
                 }
             }
         }
@@ -978,28 +967,17 @@ fn execute_context_menu_action(
         ContextMenuAction::ResetVolume => {
             if let Some(MenuContext::Mixer { channel }) = context {
                 // channel here is a track index
-                let track_id = crate::mixer::TrackId(channel);
-                app.mixer.set_volume(track_id, 0.8);
-                app.audio_sync.mark_mixer_dirty();
-                app.mark_dirty();
+                app.dispatch(AppCommand::ResetTrackVolume(channel));
             }
         }
         ContextMenuAction::MuteTrack => {
             if let Some(MenuContext::Mixer { channel }) = context {
-                let track_id = crate::mixer::TrackId(channel);
-                let track = app.mixer.track_mut(track_id);
-                track.muted = !track.muted;
-                app.audio_sync.mark_mixer_dirty();
-                app.mark_dirty();
+                app.dispatch(AppCommand::ToggleTrackMute(channel));
             }
         }
         ContextMenuAction::SoloTrack => {
             if let Some(MenuContext::Mixer { channel }) = context {
-                let track_id = crate::mixer::TrackId(channel);
-                let track = app.mixer.track_mut(track_id);
-                track.solo = !track.solo;
-                app.audio_sync.mark_mixer_dirty();
-                app.mark_dirty();
+                app.dispatch(AppCommand::ToggleTrackSolo(channel));
             }
         }
 

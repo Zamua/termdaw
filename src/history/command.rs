@@ -399,6 +399,205 @@ impl Command for DeletePlacementsCmd {
 }
 
 // ============================================================================
+// Set Steps Command (for paste operations)
+// ============================================================================
+
+/// Set multiple steps with undo support (for paste operations)
+#[derive(Debug)]
+pub struct SetStepsCmd {
+    pub pattern_id: usize,
+    /// Vec<(channel, step, new_value, old_value)>
+    steps: Vec<(usize, usize, bool, bool)>,
+}
+
+impl SetStepsCmd {
+    pub fn new(pattern_id: usize) -> Self {
+        Self {
+            pattern_id,
+            steps: Vec::new(),
+        }
+    }
+
+    /// Add a step to set (call before execute with the old value captured)
+    pub fn add_step(&mut self, channel: usize, step: usize, new_value: bool, old_value: bool) {
+        self.steps.push((channel, step, new_value, old_value));
+    }
+}
+
+impl Command for SetStepsCmd {
+    fn execute(&mut self, app: &mut App) {
+        let pattern_length = app.pattern_length();
+        for &(channel, step, new_value, _) in &self.steps {
+            if let Some(ch) = app.channels.get_mut(channel) {
+                let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
+                slice.set_step(step, new_value);
+            }
+        }
+        app.mark_dirty();
+    }
+
+    fn undo(&mut self, app: &mut App) {
+        let pattern_length = app.pattern_length();
+        for &(channel, step, _, old_value) in &self.steps {
+            if let Some(ch) = app.channels.get_mut(channel) {
+                let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
+                slice.set_step(step, old_value);
+            }
+        }
+        app.mark_dirty();
+    }
+
+    fn description(&self) -> &str {
+        "Set steps"
+    }
+}
+
+// ============================================================================
+// Add Notes Command (for paste operations)
+// ============================================================================
+
+/// Add multiple notes with undo support (for paste operations)
+#[derive(Debug)]
+pub struct AddNotesCmd {
+    pub pattern_id: usize,
+    pub channel: usize,
+    pub notes: Vec<Note>,
+}
+
+impl AddNotesCmd {
+    pub fn new(pattern_id: usize, channel: usize, notes: Vec<Note>) -> Self {
+        Self {
+            pattern_id,
+            channel,
+            notes,
+        }
+    }
+}
+
+impl Command for AddNotesCmd {
+    fn execute(&mut self, app: &mut App) {
+        let pattern_length = app.pattern_length();
+        if let Some(ch) = app.channels.get_mut(self.channel) {
+            let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
+            for note in &self.notes {
+                slice.add_note(note.clone());
+            }
+            app.mark_dirty();
+        }
+    }
+
+    fn undo(&mut self, app: &mut App) {
+        if let Some(ch) = app.channels.get_mut(self.channel) {
+            if let Some(slice) = ch.get_pattern_mut(self.pattern_id) {
+                for note in &self.notes {
+                    slice.remove_note(&note.id);
+                }
+                app.mark_dirty();
+            }
+        }
+    }
+
+    fn description(&self) -> &str {
+        "Add notes"
+    }
+}
+
+// ============================================================================
+// Delete Channel Command
+// ============================================================================
+
+/// Delete a channel with undo support
+#[derive(Debug)]
+pub struct DeleteChannelCmd {
+    pub slot: usize,
+    /// The deleted channel (captured during execute)
+    deleted_channel: Option<crate::sequencer::Channel>,
+    /// The index in the channels Vec where it was
+    deleted_index: Option<usize>,
+}
+
+impl DeleteChannelCmd {
+    pub fn new(slot: usize) -> Self {
+        Self {
+            slot,
+            deleted_channel: None,
+            deleted_index: None,
+        }
+    }
+}
+
+impl Command for DeleteChannelCmd {
+    fn execute(&mut self, app: &mut App) {
+        if let Some(idx) = app.channels.iter().position(|c| c.slot == self.slot) {
+            self.deleted_index = Some(idx);
+            self.deleted_channel = Some(app.channels.remove(idx));
+            app.mark_dirty();
+        }
+    }
+
+    fn undo(&mut self, app: &mut App) {
+        if let (Some(channel), Some(idx)) = (self.deleted_channel.take(), self.deleted_index) {
+            // Insert at the original index (or at end if index is out of bounds)
+            let insert_idx = idx.min(app.channels.len());
+            app.channels.insert(insert_idx, channel.clone());
+            self.deleted_channel = Some(app.channels[insert_idx].clone());
+            app.mark_dirty();
+        }
+    }
+
+    fn description(&self) -> &str {
+        "Delete channel"
+    }
+}
+
+// ============================================================================
+// Delete Pattern Command
+// ============================================================================
+
+/// Delete a pattern with undo support
+#[derive(Debug)]
+pub struct DeletePatternCmd {
+    pub pattern_id: usize,
+    /// The deleted pattern (captured during execute)
+    deleted_pattern: Option<crate::sequencer::Pattern>,
+}
+
+impl DeletePatternCmd {
+    pub fn new(pattern_id: usize) -> Self {
+        Self {
+            pattern_id,
+            deleted_pattern: None,
+        }
+    }
+}
+
+impl Command for DeletePatternCmd {
+    fn execute(&mut self, app: &mut App) {
+        if self.pattern_id < app.patterns.len() && app.patterns.len() > 1 {
+            self.deleted_pattern = Some(app.patterns.remove(self.pattern_id));
+            if app.current_pattern >= app.patterns.len() {
+                app.current_pattern = app.patterns.len() - 1;
+            }
+            app.mark_dirty();
+        }
+    }
+
+    fn undo(&mut self, app: &mut App) {
+        if let Some(pattern) = self.deleted_pattern.take() {
+            // Insert at the original index (or at end if index is out of bounds)
+            let insert_idx = self.pattern_id.min(app.patterns.len());
+            app.patterns.insert(insert_idx, pattern.clone());
+            self.deleted_pattern = Some(app.patterns[insert_idx].clone());
+            app.mark_dirty();
+        }
+    }
+
+    fn description(&self) -> &str {
+        "Delete pattern"
+    }
+}
+
+// ============================================================================
 // Batch Command (for grouping operations)
 // ============================================================================
 

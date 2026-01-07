@@ -3,6 +3,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::App;
+use crate::command::AppCommand;
 use crate::effects::EFFECT_SLOTS;
 use crate::mixer::{TrackId, NUM_TRACKS};
 
@@ -73,7 +74,7 @@ fn handle_effects_key(key: KeyEvent, app: &mut App) {
             } else if selected == PAN_ITEM {
                 adjust_pan(app, -0.05);
             } else if selected == VOLUME_ITEM {
-                app.adjust_mixer_volume(-0.02);
+                adjust_volume(app, -0.02);
             }
         }
         // l = move to effect column (for effect slots) or adjust pan/volume
@@ -84,7 +85,7 @@ fn handle_effects_key(key: KeyEvent, app: &mut App) {
             } else if selected == PAN_ITEM {
                 adjust_pan(app, 0.05);
             } else if selected == VOLUME_ITEM {
-                app.adjust_mixer_volume(0.02);
+                adjust_volume(app, 0.02);
             }
         }
         // H/L for fine adjustment (pan/volume only)
@@ -92,30 +93,30 @@ fn handle_effects_key(key: KeyEvent, app: &mut App) {
             if selected == PAN_ITEM {
                 adjust_pan(app, -0.01);
             } else if selected == VOLUME_ITEM {
-                app.adjust_mixer_volume(-0.005);
+                adjust_volume(app, -0.005);
             }
         }
         KeyCode::Char('L') => {
             if selected == PAN_ITEM {
                 adjust_pan(app, 0.01);
             } else if selected == VOLUME_ITEM {
-                app.adjust_mixer_volume(0.005);
+                adjust_volume(app, 0.005);
             }
         }
         // c to center pan (when pan is selected)
         KeyCode::Char('c') => {
             if selected == PAN_ITEM {
-                let track_id = TrackId(app.mixer.selected_track);
-                app.mixer.set_pan(track_id, 0.0);
-                app.audio_sync.mark_mixer_dirty();
-                app.mark_dirty();
+                app.dispatch(AppCommand::ResetTrackPan(app.mixer.selected_track));
             }
         }
         // Enter = toggle bypass (on bypass column) or edit effect (on effect column)
         KeyCode::Enter => {
             if selected < EFFECT_SLOTS {
                 if on_bypass {
-                    app.toggle_effect_bypass();
+                    app.dispatch(AppCommand::ToggleEffectBypass {
+                        track: app.mixer.selected_track,
+                        slot: app.mixer.selected_effect_slot,
+                    });
                 } else {
                     app.open_effect_editor();
                 }
@@ -124,7 +125,10 @@ fn handle_effects_key(key: KeyEvent, app: &mut App) {
         // d = delete effect - only for effect slots, only on effect column
         KeyCode::Char('d') => {
             if selected < EFFECT_SLOTS && !on_bypass {
-                app.delete_effect();
+                app.dispatch(AppCommand::RemoveEffect {
+                    track: app.mixer.selected_track,
+                    slot: app.mixer.selected_effect_slot,
+                });
             }
         }
         _ => {}
@@ -164,16 +168,16 @@ fn handle_tracks_key(key: KeyEvent, app: &mut App) {
         }
         // j/k = ±1%, J/K = ±5%
         KeyCode::Char('j') => {
-            app.adjust_mixer_volume(-0.01);
+            adjust_volume(app, -0.01);
         }
         KeyCode::Char('J') => {
-            app.adjust_mixer_volume(-0.05);
+            adjust_volume(app, -0.05);
         }
         KeyCode::Char('k') => {
-            app.adjust_mixer_volume(0.01);
+            adjust_volume(app, 0.01);
         }
         KeyCode::Char('K') => {
-            app.adjust_mixer_volume(0.05);
+            adjust_volume(app, 0.05);
         }
         // < > for pan (±5%), { } for pan (±1%)
         KeyCode::Char('<') => {
@@ -190,36 +194,33 @@ fn handle_tracks_key(key: KeyEvent, app: &mut App) {
         }
         // c to center pan
         KeyCode::Char('c') => {
-            let track_id = TrackId(app.mixer.selected_track);
-            app.mixer.set_pan(track_id, 0.0);
-            app.audio_sync.mark_mixer_dirty();
-            app.mark_dirty();
+            app.dispatch(AppCommand::ResetTrackPan(app.mixer.selected_track));
         }
         KeyCode::Char('m') => {
             // Don't allow muting master
             if app.mixer.selected_track != 0 {
-                app.toggle_mute();
+                app.dispatch(AppCommand::ToggleTrackMute(app.mixer.selected_track));
             }
         }
         KeyCode::Char('s') => {
             // Don't allow soloing master
             if app.mixer.selected_track != 0 {
-                app.toggle_solo();
+                app.dispatch(AppCommand::ToggleTrackSolo(app.mixer.selected_track));
             }
         }
         // 0-9 for direct volume set: 0 = 100%, 1 = 10%, 2 = 20%, etc.
         KeyCode::Char('0') => {
-            let track_id = TrackId(app.mixer.selected_track);
-            app.mixer.set_volume(track_id, 1.0);
-            app.audio_sync.mark_mixer_dirty();
-            app.mark_dirty();
+            app.dispatch(AppCommand::SetTrackVolume {
+                track: app.mixer.selected_track,
+                volume: 1.0,
+            });
         }
         KeyCode::Char(c @ '1'..='9') => {
-            let track_id = TrackId(app.mixer.selected_track);
             let volume = (c as u8 - b'0') as f32 * 0.1;
-            app.mixer.set_volume(track_id, volume);
-            app.audio_sync.mark_mixer_dirty();
-            app.mark_dirty();
+            app.dispatch(AppCommand::SetTrackVolume {
+                track: app.mixer.selected_track,
+                volume,
+            });
         }
         _ => {}
     }
@@ -250,10 +251,22 @@ fn update_viewport(app: &mut App) {
 
 /// Adjust pan for the selected track
 fn adjust_pan(app: &mut App, delta: f32) {
-    let track_id = TrackId(app.mixer.selected_track);
-    let current = app.mixer.track(track_id).pan;
+    let track = app.mixer.selected_track;
+    let current = app.mixer.track(TrackId(track)).pan;
     let new_pan = (current + delta).clamp(-1.0, 1.0);
-    app.mixer.set_pan(track_id, new_pan);
-    app.audio_sync.mark_mixer_dirty();
-    app.mark_dirty();
+    app.dispatch(AppCommand::SetTrackPan {
+        track,
+        pan: new_pan,
+    });
+}
+
+/// Adjust volume for the selected track
+fn adjust_volume(app: &mut App, delta: f32) {
+    let track = app.mixer.selected_track;
+    let current = app.mixer.track(TrackId(track)).volume;
+    let new_volume = (current + delta).clamp(0.0, 1.0);
+    app.dispatch(AppCommand::SetTrackVolume {
+        track,
+        volume: new_volume,
+    });
 }
