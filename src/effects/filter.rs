@@ -273,4 +273,36 @@ mod tests {
             "Rapid changes caused NaN"
         );
     }
+
+    #[test]
+    fn filter_does_not_hard_clip_resonant_output() {
+        // High resonance filter excited at cutoff frequency should produce
+        // output that exceeds ±10.0 naturally - verify no hard clipping
+        let mut filter = FilterEffect::new(44100.0);
+        filter.set_param(EffectParamId::FilterCutoff, 1000.0);
+        filter.set_param(EffectParamId::FilterResonance, 0.95);
+
+        // Generate sine wave at cutoff frequency to excite resonance
+        let num_samples = 4410; // 100ms at 44.1kHz
+        let mut left: Vec<f32> = (0..num_samples)
+            .map(|i| (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 44100.0).sin())
+            .collect();
+        let mut right = left.clone();
+
+        filter.process(&mut left, &mut right);
+
+        let max_val = left
+            .iter()
+            .chain(right.iter())
+            .map(|x| x.abs())
+            .fold(0.0f32, f32::max);
+
+        // With high resonance, output should exceed 10.0 naturally
+        // If it's exactly 10.0, that indicates hard clipping
+        assert!(
+            max_val > 10.0,
+            "Filter output appears hard-clipped at 10.0 (max was {})",
+            max_val
+        );
+    }
 }
