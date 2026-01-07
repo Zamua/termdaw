@@ -39,13 +39,14 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     }
 
     // Configure vim for playlist: rows = patterns, cols = 17 (mute + 16 bars)
-    app.vim_playlist
+    app.vim
+        .playlist
         .update_dimensions(pattern_count.max(1), NUM_BARS + 1);
     let playlist_zones = vim::GridSemantics::with_zones(vec![
         vim::Zone::new(0, 0),                                     // Mute column
         vim::Zone::new(1, NUM_BARS).main().with_word_interval(4), // Bars
     ]);
-    app.vim_playlist.set_grid_semantics(playlist_zones);
+    app.vim.playlist.set_grid_semantics(playlist_zones);
 
     // Convert key to char for vim
     let Some((ch, ctrl)) = key_to_vim_char(key) else {
@@ -56,7 +57,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     let cursor = vim::Position::new(app.playlist.row, app.playlist.bar);
 
     // Let vim process the key
-    let actions = app.vim_playlist.process_key(ch, ctrl, cursor);
+    let actions = app.vim.playlist.process_key(ch, ctrl, cursor);
 
     // Execute returned actions
     for action in actions {
@@ -90,12 +91,12 @@ fn execute_playlist_vim_action(action: VimAction, app: &mut App) {
 
         VimAction::Yank(range) => {
             let data = get_playlist_data(app, &range);
-            app.vim_playlist.store_yank(data, range.range_type);
+            app.vim.playlist.store_yank(data, range.range_type);
         }
 
         VimAction::Delete(range) => {
             let data = get_playlist_data(app, &range);
-            app.vim_playlist.store_delete(data, range.range_type);
+            app.vim.playlist.store_delete(data, range.range_type);
             delete_playlist_data(app, &range);
             app.mark_dirty();
         }
@@ -267,7 +268,7 @@ fn paste_playlist_data(app: &mut App) {
     let cursor_bar = app.playlist.bar.saturating_sub(1); // cursor_bar 1-16 -> bar 0-15
 
     // Clone register data to avoid borrow issues
-    let paste_data = app.vim_playlist.get_register().cloned();
+    let paste_data = app.vim.playlist.get_register().cloned();
 
     if let Some(register) = paste_data {
         for yanked in &register.data {
@@ -298,9 +299,9 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                 let pattern_count = get_playlist_pattern_count(app);
 
                 // Exit visual mode if active
-                if app.vim_playlist.is_visual() {
+                if app.vim.playlist.is_visual() {
                     let cursor = vim::Position::new(app.playlist.row, app.playlist.bar);
-                    let actions = app.vim_playlist.process_key('\x1b', false, cursor);
+                    let actions = app.vim.playlist.process_key('\x1b', false, cursor);
                     for action in actions {
                         execute_playlist_vim_action(action, app);
                     }
@@ -339,7 +340,7 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
 
                     // Enter visual block mode
                     let cursor = vim::Position::new(row, bar_col);
-                    let actions = app.vim_playlist.process_key('v', true, cursor); // Ctrl+v for block
+                    let actions = app.vim.playlist.process_key('v', true, cursor); // Ctrl+v for block
                     for action in actions {
                         execute_playlist_vim_action(action, app);
                     }
@@ -349,7 +350,7 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
 
         MouseAction::DragMove { x, y, .. } => {
             // Extend selection
-            if app.vim_playlist.is_visual() {
+            if app.vim.playlist.is_visual() {
                 if let Some((row, bar_col)) = app.screen_areas.playlist_cell_at(*x, *y) {
                     let pattern_count = get_playlist_pattern_count(app);
                     app.playlist.row = row.min(pattern_count.saturating_sub(1));

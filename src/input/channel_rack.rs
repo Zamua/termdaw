@@ -193,7 +193,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         KeyCode::Left => {
             let vim_col: VimCol = app.channel_rack.col.into();
             let cursor = Position::new(app.channel_rack.channel, vim_col.0);
-            let actions = app.vim_channel_rack.process_key('h', false, cursor);
+            let actions = app.vim.channel_rack.process_key('h', false, cursor);
             for action in actions {
                 execute_vim_action(action, app);
             }
@@ -202,7 +202,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         KeyCode::Right => {
             let vim_col: VimCol = app.channel_rack.col.into();
             let cursor = Position::new(app.channel_rack.channel, vim_col.0);
-            let actions = app.vim_channel_rack.process_key('l', false, cursor);
+            let actions = app.vim.channel_rack.process_key('l', false, cursor);
             for action in actions {
                 execute_vim_action(action, app);
             }
@@ -221,7 +221,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     let cursor = Position::new(app.channel_rack.channel, vim_col.0);
 
     // Let vim process the key
-    let actions = app.vim_channel_rack.process_key(ch, ctrl, cursor);
+    let actions = app.vim.channel_rack.process_key(ch, ctrl, cursor);
 
     // Execute each action
     for action in actions {
@@ -269,13 +269,13 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
 
         VimAction::Yank(range) => {
             let data = get_pattern_data(app, &range);
-            app.vim_channel_rack.store_yank(data, range.range_type);
+            app.vim.channel_rack.store_yank(data, range.range_type);
         }
 
         VimAction::Delete(range) => {
             // Store deleted data in register 1 (and shift history) before deleting
             let data = get_pattern_data(app, &range);
-            app.vim_channel_rack.store_delete(data, range.range_type);
+            app.vim.channel_rack.store_delete(data, range.range_type);
             delete_pattern_data(app, &range);
             app.mark_dirty();
         }
@@ -447,7 +447,7 @@ fn paste_at_cursor(app: &mut App, before: bool) {
     let cursor_col = app.cursor_step(); // Use method to get step index
 
     // Clone register data to avoid borrow issues
-    let paste_data = app.vim_channel_rack.get_register().cloned();
+    let paste_data = app.vim.channel_rack.get_register().cloned();
 
     if let Some(register) = paste_data {
         // Compute dimensions from data
@@ -506,10 +506,10 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
             // Look up which cell was clicked
             if let Some((row, vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
                 // Exit visual mode if active
-                if app.vim_channel_rack.is_visual() {
+                if app.vim.channel_rack.is_visual() {
                     let vim_col_current: VimCol = app.channel_rack.col.into();
                     let cursor = Position::new(app.channel_rack.channel, vim_col_current.0);
-                    let actions = app.vim_channel_rack.process_key('\x1b', false, cursor);
+                    let actions = app.vim.channel_rack.process_key('\x1b', false, cursor);
                     for action in actions {
                         execute_vim_action(action, app);
                     }
@@ -571,7 +571,7 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
 
                     // Enter visual block mode
                     let cursor = Position::new(row, vim_col);
-                    let actions = app.vim_channel_rack.process_key('v', true, cursor); // Ctrl+v for block
+                    let actions = app.vim.channel_rack.process_key('v', true, cursor); // Ctrl+v for block
                     for action in actions {
                         execute_vim_action(action, app);
                     }
@@ -581,7 +581,7 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
 
         MouseAction::DragMove { x, y, .. } => {
             // Extend selection
-            if app.vim_channel_rack.is_visual() {
+            if app.vim.channel_rack.is_visual() {
                 if let Some((row, vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
                     // Move cursor to extend selection
                     app.channel_rack.channel = row.min(98);

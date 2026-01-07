@@ -1313,6 +1313,46 @@ impl<T: Clone> VimState<T> {
 }
 
 // ============================================================================
+// VimStates - Aggregated vim state for all views
+// ============================================================================
+
+use crate::sequencer::{YankedNote, YankedPlacement};
+
+/// Aggregated vim state for all grid-based views
+#[derive(Debug, Clone)]
+pub struct VimStates {
+    /// Vim state for channel rack step grid
+    pub channel_rack: VimState<Vec<Vec<bool>>>,
+    /// Vim state for piano roll
+    pub piano_roll: VimState<Vec<YankedNote>>,
+    /// Vim state for playlist
+    pub playlist: VimState<Vec<YankedPlacement>>,
+}
+
+impl VimStates {
+    /// Create new vim states with the given dimensions and semantics
+    pub fn new(
+        channel_rack_rows: usize,
+        channel_rack_cols: usize,
+        channel_rack_semantics: GridSemantics,
+        piano_roll_rows: usize,
+        piano_roll_cols: usize,
+        playlist_rows: usize,
+        playlist_cols: usize,
+    ) -> Self {
+        Self {
+            channel_rack: VimState::with_grid_semantics(
+                channel_rack_rows,
+                channel_rack_cols,
+                channel_rack_semantics,
+            ),
+            piano_roll: VimState::new(piano_roll_rows, piano_roll_cols),
+            playlist: VimState::new(playlist_rows, playlist_cols),
+        }
+    }
+}
+
+// ============================================================================
 // Tests - Comprehensive test suite in vim_tests.rs
 // ============================================================================
 

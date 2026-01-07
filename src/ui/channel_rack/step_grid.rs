@@ -32,7 +32,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
     // Get current visual selection (if any)
     let vim_col: crate::coords::VimCol = app.channel_rack.col.into();
     let cursor = Position::new(app.channel_rack.channel, vim_col.0);
-    let selection = app.vim_channel_rack.get_selection(cursor);
+    let selection = app.vim.channel_rack.get_selection(cursor);
 
     // Render all 99 channel slots (within viewport)
     for row_idx in 0..visible_rows {

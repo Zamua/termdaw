@@ -70,7 +70,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
     // Get current visual selection (if any)
     let cursor_row = MAX_PITCH.saturating_sub(app.piano_roll.pitch) as usize;
     let cursor = Position::new(cursor_row, app.piano_roll.step);
-    let selection = app.vim_piano_roll.get_selection(cursor);
+    let selection = app.vim.piano_roll.get_selection(cursor);
 
     // Calculate visible pitch range based on viewport
     let visible_rows = (inner.height - HEADER_ROWS) as usize;

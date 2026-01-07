@@ -78,7 +78,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     // Handle Escape to return to channel rack (if not placing a note and not in visual mode)
     if key.code == KeyCode::Esc
         && app.piano_roll.placing_note.is_none()
-        && !app.vim_piano_roll.is_visual()
+        && !app.vim.piano_roll.is_visual()
     {
         app.set_view_mode(ViewMode::ChannelRack);
         return;
@@ -126,11 +126,12 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     let cursor = vim::Position::new(cursor_row, app.piano_roll.step);
 
     // Update vim dimensions for current pitch range
-    app.vim_piano_roll
+    app.vim
+        .piano_roll
         .update_dimensions(PIANO_PITCH_RANGE, PIANO_NUM_STEPS);
 
     // Let vim process the key
-    let actions = app.vim_piano_roll.process_key(ch, ctrl, cursor);
+    let actions = app.vim.piano_roll.process_key(ch, ctrl, cursor);
 
     // Execute returned actions
     for action in actions {
@@ -158,12 +159,12 @@ fn execute_piano_roll_vim_action(action: VimAction, app: &mut App) {
 
         VimAction::Yank(range) => {
             let data = get_piano_roll_data(app, &range);
-            app.vim_piano_roll.store_yank(data, range.range_type);
+            app.vim.piano_roll.store_yank(data, range.range_type);
         }
 
         VimAction::Delete(range) => {
             let data = get_piano_roll_data(app, &range);
-            app.vim_piano_roll.store_delete(data, range.range_type);
+            app.vim.piano_roll.store_delete(data, range.range_type);
             delete_piano_roll_data(app, &range);
             app.mark_dirty();
         }
@@ -471,7 +472,7 @@ fn paste_piano_roll_data(app: &mut App) {
     let cursor_step = app.piano_roll.step;
 
     // Clone register data to avoid borrow issues
-    let paste_data = app.vim_piano_roll.get_register().cloned();
+    let paste_data = app.vim.piano_roll.get_register().cloned();
 
     if let Some(register) = paste_data {
         if let Some(channel) = app.channels.get_mut(channel_idx) {
@@ -507,10 +508,10 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
             // Look up which cell was clicked
             if let Some((vim_row, step)) = app.screen_areas.piano_roll_cell_at(*x, *y) {
                 // Exit visual mode if active
-                if app.vim_piano_roll.is_visual() {
+                if app.vim.piano_roll.is_visual() {
                     let cursor_row = pitch_to_row(app.piano_roll.pitch);
                     let cursor = vim::Position::new(cursor_row, app.piano_roll.step);
-                    let actions = app.vim_piano_roll.process_key('\x1b', false, cursor);
+                    let actions = app.vim.piano_roll.process_key('\x1b', false, cursor);
                     for action in actions {
                         execute_piano_roll_vim_action(action, app);
                     }

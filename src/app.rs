@@ -98,15 +98,13 @@ use crate::effects::{EffectSlot, EffectType, EFFECT_SLOTS};
 use crate::history::{GlobalJumplist, History, JumpPosition};
 use crate::input::context::{PianoRollContext, PlaylistContext, StepGridContext};
 use crate::input::mouse::MouseState;
-use crate::input::vim::{GridSemantics, VimState, Zone};
+use crate::input::vim::{GridSemantics, VimStates, Zone};
 use crate::mixer::{Mixer, TrackId};
 use crate::playback::{PlaybackEvent, PlaybackState};
 use crate::plugin_host::params::build_init_params;
 use crate::plugin_host::PluginHost;
 use crate::project::{self, ProjectFile};
-use crate::sequencer::{
-    default_channels, Channel, ChannelSource, Note, Pattern, YankedNote, YankedPlacement,
-};
+use crate::sequencer::{default_channels, Channel, ChannelSource, Note, Pattern};
 use crate::ui::areas::ScreenAreas;
 use crate::ui::context_menu::ContextMenu;
 use crate::ui::plugin_editor::PluginEditorState;
@@ -166,10 +164,8 @@ pub struct App {
     /// Currently selected pattern
     pub current_pattern: usize,
 
-    /// Vim state machines - one per panel type
-    pub vim_channel_rack: VimState<Vec<Vec<bool>>>,
-    pub vim_piano_roll: VimState<Vec<YankedNote>>,
-    pub vim_playlist: VimState<Vec<YankedPlacement>>,
+    /// Vim state machines for grid-based views
+    pub vim: VimStates,
 
     /// Audio handle for playback
     pub audio: AudioHandle,
@@ -298,11 +294,16 @@ impl App {
             channels,
             patterns,
             current_pattern,
-            // Separate vim instances per panel type
-            // 99 channel slots, 19 columns (3 metadata + 16 steps)
-            vim_channel_rack: VimState::with_grid_semantics(99, 19, channel_rack_zones),
-            vim_piano_roll: VimState::new(49, 16), // 49 pitches (C2-C6), 16 steps
-            vim_playlist: VimState::new(num_channels, 17), // rows = patterns, 16 bars + mute col
+            // Vim state machines for all grid views
+            vim: VimStates::new(
+                99,
+                19,
+                channel_rack_zones, // 99 channel slots, 19 cols (3 metadata + 16 steps)
+                49,
+                16, // Piano roll: 49 pitches (C2-C6), 16 steps
+                num_channels,
+                17, // Playlist: rows = patterns, 16 bars + mute col
+            ),
             audio,
             browser: BrowserState::new(samples_path),
             command_picker: CommandPicker::new(),

@@ -70,7 +70,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Get current visual selection (if any)
     let cursor = Position::new(app.playlist.row, app.playlist.bar);
-    let selection = app.vim_playlist.get_selection(cursor);
+    let selection = app.vim.playlist.get_selection(cursor);
 
     // Calculate visible pattern range based on viewport
     let visible_rows = (inner.height - HEADER_ROWS) as usize;
