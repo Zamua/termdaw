@@ -72,13 +72,17 @@ impl FilterEffect {
 
     /// Update filter coefficients after parameter change
     fn update_coefficients(&mut self) {
-        // Clamp cutoff to valid range
-        let cutoff = self.cutoff.clamp(20.0, self.sample_rate * 0.49);
+        // Clamp cutoff to valid range (0.4 * Nyquist for stability margin)
+        let cutoff = self.cutoff.clamp(20.0, self.sample_rate * 0.4);
 
-        // g = tan(pi * fc / fs) approximated as 2 * sin(pi * fc / fs) for stability
-        // Using the approximation for the digital SVF
+        // g = tan(pi * fc / fs)
         let omega = std::f32::consts::PI * cutoff / self.sample_rate;
         self.g = omega.tan();
+
+        // Clamp g to prevent instability at high cutoff
+        if !self.g.is_finite() || self.g > 10.0 {
+            self.g = 10.0;
+        }
 
         // k = 1/Q, where Q ranges from 0.5 (no resonance) to ~20 (high resonance)
         // Map resonance 0-1 to Q 0.5-20
@@ -95,8 +99,21 @@ impl FilterEffect {
         k: f32,
         mode: FilterMode,
     ) -> f32 {
+        // Check for corrupted state and reset if needed
+        if !state.band.is_finite() {
+            state.band = 0.0;
+        }
+        if !state.low.is_finite() {
+            state.low = 0.0;
+        }
+
         // SVF equations (Chamberlin topology, optimized)
-        let high = (input - k * state.band - state.low) / (1.0 + k * g + g * g);
+        let denom = 1.0 + k * g + g * g;
+        if denom < 0.001 {
+            return input; // Bypass filter if unstable
+        }
+
+        let high = (input - k * state.band - state.low) / denom;
         let band = g * high + state.band;
         let low = g * band + state.low;
 
@@ -104,12 +121,13 @@ impl FilterEffect {
         state.band = band + g * high;
         state.low = low + g * band;
 
-        // Select output based on mode
-        match mode {
+        // Select output based on mode and clamp to prevent extreme values
+        let output = match mode {
             FilterMode::LowPass => low,
             FilterMode::HighPass => high,
             FilterMode::BandPass => band,
-        }
+        };
+        output.clamp(-10.0, 10.0)
     }
 }
 
