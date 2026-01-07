@@ -121,13 +121,19 @@ impl FilterEffect {
         state.band = band + g * high;
         state.low = low + g * band;
 
-        // Select output based on mode and clamp to prevent extreme values
+        // Select output based on mode
         let output = match mode {
             FilterMode::LowPass => low,
             FilterMode::HighPass => high,
             FilterMode::BandPass => band,
         };
-        output.clamp(-10.0, 10.0)
+
+        // Soft limit at high threshold to catch infinity without audible clipping
+        if output.is_finite() {
+            output.clamp(-100.0, 100.0)
+        } else {
+            0.0
+        }
     }
 }
 
@@ -228,8 +234,8 @@ mod tests {
             .map(|x| x.abs())
             .fold(0.0f32, f32::max);
         assert!(
-            max_val < 100.0,
-            "Output exceeds reasonable bounds: {}",
+            max_val <= 100.0,
+            "Output exceeds safety bounds: {}",
             max_val
         );
     }
@@ -303,6 +309,40 @@ mod tests {
             max_val > 10.0,
             "Filter output appears hard-clipped at 10.0 (max was {})",
             max_val
+        );
+    }
+
+    #[test]
+    fn filter_output_is_smooth_during_cutoff_sweep() {
+        // Sweeping cutoff should produce smooth output without sudden jumps
+        let mut filter = FilterEffect::new(44100.0);
+        filter.set_param(EffectParamId::FilterResonance, 0.5);
+
+        // Generate a steady tone
+        let mut left: Vec<f32> = (0..441)
+            .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 44100.0).sin())
+            .collect();
+        let mut right = left.clone();
+
+        // Sweep cutoff from 200 to 2000 Hz while processing
+        let mut max_delta = 0.0f32;
+        for cutoff in (200..2000).step_by(100) {
+            filter.set_param(EffectParamId::FilterCutoff, cutoff as f32);
+            filter.process(&mut left, &mut right);
+
+            // Check for discontinuities (sudden jumps between consecutive samples)
+            for i in 1..left.len() {
+                let delta = (left[i] - left[i - 1]).abs();
+                max_delta = max_delta.max(delta);
+            }
+        }
+
+        // Max sample-to-sample change should be reasonable (< 0.5 for smooth audio)
+        // Large jumps indicate distortion or instability
+        assert!(
+            max_delta < 0.5,
+            "Filter output has discontinuities during cutoff sweep (max delta: {})",
+            max_delta
         );
     }
 }
