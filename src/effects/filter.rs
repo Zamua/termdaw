@@ -169,3 +169,90 @@ impl Effect for FilterEffect {
         EffectType::Filter
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_produces_finite_output_at_max_cutoff() {
+        let mut filter = FilterEffect::new(44100.0);
+        filter.set_param(EffectParamId::FilterCutoff, 20000.0);
+        filter.set_param(EffectParamId::FilterResonance, 1.0);
+
+        let mut left = vec![0.5; 1024];
+        let mut right = vec![0.5; 1024];
+        filter.process(&mut left, &mut right);
+
+        assert!(
+            left.iter().all(|&x| x.is_finite()),
+            "Left channel has NaN/infinity"
+        );
+        assert!(
+            right.iter().all(|&x| x.is_finite()),
+            "Right channel has NaN/infinity"
+        );
+    }
+
+    #[test]
+    fn filter_output_stays_bounded_at_extreme_settings() {
+        let mut filter = FilterEffect::new(44100.0);
+        filter.set_param(EffectParamId::FilterCutoff, 20000.0);
+        filter.set_param(EffectParamId::FilterResonance, 1.0);
+
+        let mut left = vec![1.0; 1024];
+        let mut right = vec![1.0; 1024];
+        filter.process(&mut left, &mut right);
+
+        let max_val = left
+            .iter()
+            .chain(right.iter())
+            .map(|x| x.abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_val < 100.0,
+            "Output exceeds reasonable bounds: {}",
+            max_val
+        );
+    }
+
+    #[test]
+    fn filter_recovers_from_near_nyquist_cutoff() {
+        let mut filter = FilterEffect::new(44100.0);
+
+        // Push to extreme
+        filter.set_param(EffectParamId::FilterCutoff, 22000.0);
+        filter.set_param(EffectParamId::FilterResonance, 1.0);
+        let mut left = vec![0.5; 256];
+        let mut right = vec![0.5; 256];
+        filter.process(&mut left, &mut right);
+
+        // Return to normal
+        filter.set_param(EffectParamId::FilterCutoff, 1000.0);
+        let mut left = vec![0.5; 256];
+        let mut right = vec![0.5; 256];
+        filter.process(&mut left, &mut right);
+
+        assert!(
+            left.iter().all(|&x| x.is_finite()),
+            "Filter state corrupted after extreme cutoff"
+        );
+    }
+
+    #[test]
+    fn filter_handles_rapid_cutoff_changes() {
+        let mut filter = FilterEffect::new(44100.0);
+        let mut left = vec![0.5; 64];
+        let mut right = vec![0.5; 64];
+
+        for cutoff in (20..20000).step_by(999) {
+            filter.set_param(EffectParamId::FilterCutoff, cutoff as f32);
+            filter.process(&mut left, &mut right);
+        }
+
+        assert!(
+            left.iter().all(|&x| x.is_finite()),
+            "Rapid changes caused NaN"
+        );
+    }
+}
