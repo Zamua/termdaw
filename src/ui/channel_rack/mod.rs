@@ -10,6 +10,7 @@
 //! for the selected channel, while other channels are greyed out.
 
 mod piano_roll;
+pub mod piano_roll_view_model;
 mod step_grid;
 pub mod view_model;
 

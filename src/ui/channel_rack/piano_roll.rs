@@ -13,8 +13,8 @@ use ratatui::{
 
 use crate::app::App;
 use crate::input::vim::Position;
-use crate::mixer::TrackId;
 
+use super::piano_roll_view_model::{ChannelSidebarView, PianoRollViewModel};
 use super::{render_header, HEADER_ROWS, MUTE_WIDTH, NOTE_WIDTH, SAMPLE_WIDTH, TRACK_WIDTH};
 
 // ============================================================================
@@ -23,29 +23,6 @@ use super::{render_header, HEADER_ROWS, MUTE_WIDTH, NOTE_WIDTH, SAMPLE_WIDTH, TR
 
 /// Minimum visible pitch (C2)
 const MIN_PITCH: u8 = 36;
-/// Maximum visible pitch (C6)
-const MAX_PITCH: u8 = 84;
-
-/// Pitch names for each semitone
-const PITCH_NAMES: [&str; 12] = [
-    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-];
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/// Get the display name for a pitch (e.g., "C4", "F#3")
-fn get_pitch_name(pitch: u8) -> String {
-    let note = PITCH_NAMES[(pitch % 12) as usize];
-    let octave = pitch / 12;
-    format!("{}{}", note, octave)
-}
-
-/// Check if a pitch is a black key
-fn is_black_key(pitch: u8) -> bool {
-    matches!(pitch % 12, 1 | 3 | 6 | 8 | 10)
-}
 
 // ============================================================================
 // Rendering
@@ -56,27 +33,16 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
     // Render header rows (with piano roll mode headers)
     render_header(frame, inner, app, true);
 
-    let selected_channel = app.cursors.channel_rack.channel;
-    let pattern_id = app.current_pattern;
-
-    // Get notes from channel's pattern data for selected channel
-    let notes: Vec<crate::sequencer::Note> = app
-        .channels
-        .get(selected_channel)
-        .and_then(|c| c.get_pattern(pattern_id))
-        .map(|s| s.notes.clone())
-        .unwrap_or_default();
-
-    // Get current visual selection (if any)
-    let cursor_row = MAX_PITCH.saturating_sub(app.cursors.piano_roll.pitch) as usize;
-    let cursor = Position::new(cursor_row, app.cursors.piano_roll.step);
-    let selection = app.vim.piano_roll.get_selection(cursor);
-
-    // Calculate visible pitch range based on viewport
+    // Calculate visible rows and build ViewModel
     let visible_rows = (inner.height - HEADER_ROWS) as usize;
-    let pitch_viewport_top = app.cursors.piano_roll.viewport_top.min(MAX_PITCH);
-    let channel_viewport_top = app.cursors.channel_rack.viewport_top;
+    let vm = PianoRollViewModel::from_app(app, visible_rows, focused);
 
+    // Render grid using ViewModel
+    render_grid(frame, inner, &vm, visible_rows);
+}
+
+/// Render the piano roll grid from ViewModel
+fn render_grid(frame: &mut Frame, inner: Rect, vm: &PianoRollViewModel, visible_rows: usize) {
     // Render pitch rows (from high to low)
     for row_idx in 0..visible_rows {
         let y = inner.y + HEADER_ROWS + row_idx as u16;
@@ -85,69 +51,52 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
         }
 
         // Calculate pitch for this row (high pitches at top)
-        let pitch = pitch_viewport_top.saturating_sub(row_idx as u8);
+        let pitch = vm.pitch_viewport_top.saturating_sub(row_idx as u8);
         if pitch < MIN_PITCH {
             break;
         }
 
-        render_row(
-            frame,
-            inner,
-            app,
-            y,
-            pitch,
-            row_idx,
-            &notes,
-            focused,
-            selection,
-            selected_channel,
-            channel_viewport_top,
-        );
+        // Get sidebar channel for this row
+        let sidebar = vm.sidebar_channels.get(row_idx);
+
+        render_row(frame, inner, y, pitch, row_idx, vm, sidebar);
     }
 }
 
 /// Render a single row in piano roll mode
-#[allow(clippy::too_many_arguments)]
 fn render_row(
     frame: &mut Frame,
     inner: Rect,
-    app: &App,
     y: u16,
     pitch: u8,
     row_idx: usize,
-    notes: &[crate::sequencer::Note],
-    focused: bool,
-    selection: Option<crate::input::vim::Range>,
-    selected_channel: usize,
-    viewport_top: usize,
+    vm: &PianoRollViewModel,
+    sidebar: Option<&ChannelSidebarView>,
 ) {
     let mut spans = Vec::new();
 
     // Calculate vim row for this pitch (high pitches at top = low row numbers)
-    let vim_row = MAX_PITCH.saturating_sub(pitch) as usize;
+    let vim_row = PianoRollViewModel::pitch_to_vim_row(pitch);
 
-    let is_cursor_row = focused && app.cursors.piano_roll.pitch == pitch;
-    let is_black = is_black_key(pitch);
+    let is_cursor_row = vm.is_focused && vm.cursor_pitch == pitch;
+    let is_black = PianoRollViewModel::is_black_key(pitch);
 
-    // Map this row to a slot (for displaying channel list alongside pitches)
-    let slot = viewport_top + row_idx;
-    let channel = app.get_channel_at_slot(slot);
-    let is_selected_channel = slot == selected_channel;
-
-    // Get mute/solo state from the mixer track this channel routes to
-    let track_id = channel
-        .map(|c| TrackId(c.mixer_track))
-        .unwrap_or(TrackId(1));
-    let mixer_track = app.mixer.track(track_id);
+    // Get sidebar info (if available)
+    let slot = vm.channel_viewport_top + row_idx;
+    let is_selected_channel = sidebar.map(|s| s.is_selected).unwrap_or(false);
 
     // === MUTE ZONE ===
-    let (mute_char, mute_color) = if channel.is_some() {
-        if mixer_track.solo {
-            ("S", Color::Yellow)
-        } else if mixer_track.muted {
-            ("M", Color::Red)
+    let (mute_char, mute_color) = if let Some(ch) = sidebar {
+        if ch.is_allocated {
+            if ch.is_solo {
+                ("S", Color::Yellow)
+            } else if ch.is_muted {
+                ("M", Color::Red)
+            } else {
+                ("○", Color::Green)
+            }
         } else {
-            ("○", Color::Green)
+            ("·", Color::DarkGray)
         }
     } else {
         ("·", Color::DarkGray)
@@ -163,9 +112,12 @@ fn render_row(
     ));
 
     // === TRACK ZONE ===
-    let track_num = track_id.index();
-    let track_text = if channel.is_some() {
-        format!("{:<width$}", track_num, width = TRACK_WIDTH as usize)
+    let track_text = if let Some(ch) = sidebar {
+        if ch.is_allocated {
+            format!("{:<width$}", ch.mixer_track, width = TRACK_WIDTH as usize)
+        } else {
+            format!("{:<width$}", "·", width = TRACK_WIDTH as usize)
+        }
     } else {
         format!("{:<width$}", "·", width = TRACK_WIDTH as usize)
     };
@@ -177,21 +129,12 @@ fn render_row(
     spans.push(Span::styled(track_text, track_style));
 
     // === CHANNEL NAME ZONE ===
-    // Show all channels, highlight selected one
-    let channel_display = if let Some(ch) = channel {
-        if ch.is_plugin() || ch.sample_path().is_some() {
-            format!(
-                "{:<width$}",
-                &ch.name[..ch.name.len().min(SAMPLE_WIDTH as usize - 1)],
-                width = SAMPLE_WIDTH as usize - 1
-            )
-        } else {
-            format!(
-                "{:<width$}",
-                format!("Slot {}", slot + 1),
-                width = SAMPLE_WIDTH as usize - 1
-            )
-        }
+    let channel_display = if let Some(ch) = sidebar {
+        format!(
+            "{:<width$}",
+            &ch.name[..ch.name.len().min(SAMPLE_WIDTH as usize - 1)],
+            width = SAMPLE_WIDTH as usize - 1
+        )
     } else {
         format!(
             "{:<width$}",
@@ -212,8 +155,7 @@ fn render_row(
     spans.push(Span::styled("  ", Style::default()));
 
     // === NOTE/PITCH ZONE ===
-    // Show pitch name with white/black key coloring
-    let pitch_name = get_pitch_name(pitch);
+    let pitch_name = PianoRollViewModel::pitch_name(pitch);
     let pitch_style = if is_cursor_row {
         Style::default()
             .fg(Color::Cyan)
@@ -231,35 +173,24 @@ fn render_row(
     // === STEP CELLS (piano roll notes) ===
     for step in 0..16usize {
         let is_beat = step % 4 == 0;
-        let is_cursor = is_cursor_row && app.cursors.piano_roll.step == step;
-        let is_playhead = app.is_playing() && step == app.playhead_step();
-        let is_placing_preview = app.cursors.piano_roll.placing_note.is_some_and(|start| {
-            let min = start.min(app.cursors.piano_roll.step);
-            let max = start.max(app.cursors.piano_roll.step);
-            pitch == app.cursors.piano_roll.pitch && step >= min && step <= max
-        });
+        let is_cursor = is_cursor_row && vm.cursor_step == step;
+        let is_playhead = vm.is_playing && step == vm.playhead_step;
+        let is_placing_preview = vm.is_placing_preview(pitch, step);
 
         // Check if this cell is in visual selection
         let pos = Position::new(vim_row, step);
-        let is_selected = selection.map(|r| r.contains(pos)).unwrap_or(false);
+        let is_selected = vm.selection.map(|r| r.contains(pos)).unwrap_or(false);
 
         // Check if there's a note at this position
-        let note_at = notes
-            .iter()
-            .find(|n| n.pitch == pitch && n.covers_step(step));
-        let is_note_start = notes
-            .iter()
-            .any(|n| n.pitch == pitch && n.start_step == step);
+        let has_note = vm.note_at(pitch, step).is_some();
+        let is_note_start = vm.note_starts_at(pitch, step);
 
         // Separator
         let sep = if is_beat { "┃" } else { "│" };
         spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
 
-        // Determine if there's a note/content at this position
-        let has_note = note_at.is_some();
-
         // Special handling for placement mode cursor
-        let is_placement_mode = app.cursors.piano_roll.placing_note.is_some();
+        let is_placement_mode = vm.placing_note_start.is_some();
 
         // Determine cell style and content
         let (cell, cell_style) = if is_cursor {
