@@ -38,14 +38,14 @@ const VOLUME_ITEM: usize = EFFECT_SLOTS + 1; // 9
 
 /// Render the mixer panel
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    let focused = app.mode.current_panel() == Panel::Mixer;
+    let focused = app.ui.mode.current_panel() == Panel::Mixer;
 
     let inner = render_panel_frame(frame, area, "Mixer", Panel::Mixer, app);
 
     // Add close button in top-right corner (inside border)
     let close_x = area.x + area.width - 4;
     let close_rect = Rect::new(close_x, area.y, 3, 1);
-    app.screen_areas.register(AreaId::MixerClose, close_rect);
+    app.ui.screen_areas.register(AreaId::MixerClose, close_rect);
 
     let close_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
     let close_btn = Paragraph::new(Line::from(Span::styled(" × ", close_style)));

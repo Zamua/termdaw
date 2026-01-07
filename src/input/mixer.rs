@@ -107,7 +107,7 @@ fn handle_effects_key(key: KeyEvent, app: &mut App) {
             if selected == PAN_ITEM {
                 let track_id = TrackId(app.mixer.selected_track);
                 app.mixer.set_pan(track_id, 0.0);
-                app.sync_mixer_to_audio();
+                app.audio_sync.mark_mixer_dirty();
                 app.mark_dirty();
             }
         }
@@ -192,7 +192,7 @@ fn handle_tracks_key(key: KeyEvent, app: &mut App) {
         KeyCode::Char('c') => {
             let track_id = TrackId(app.mixer.selected_track);
             app.mixer.set_pan(track_id, 0.0);
-            app.sync_mixer_to_audio();
+            app.audio_sync.mark_mixer_dirty();
             app.mark_dirty();
         }
         KeyCode::Char('m') => {
@@ -211,14 +211,14 @@ fn handle_tracks_key(key: KeyEvent, app: &mut App) {
         KeyCode::Char('0') => {
             let track_id = TrackId(app.mixer.selected_track);
             app.mixer.set_volume(track_id, 1.0);
-            app.sync_mixer_to_audio();
+            app.audio_sync.mark_mixer_dirty();
             app.mark_dirty();
         }
         KeyCode::Char(c @ '1'..='9') => {
             let track_id = TrackId(app.mixer.selected_track);
             let volume = (c as u8 - b'0') as f32 * 0.1;
             app.mixer.set_volume(track_id, volume);
-            app.sync_mixer_to_audio();
+            app.audio_sync.mark_mixer_dirty();
             app.mark_dirty();
         }
         _ => {}
@@ -254,6 +254,6 @@ fn adjust_pan(app: &mut App, delta: f32) {
     let current = app.mixer.track(track_id).pan;
     let new_pan = (current + delta).clamp(-1.0, 1.0);
     app.mixer.set_pan(track_id, new_pan);
-    app.sync_mixer_to_audio();
+    app.audio_sync.mark_mixer_dirty();
     app.mark_dirty();
 }

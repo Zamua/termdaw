@@ -37,7 +37,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .split(inner);
 
     // Register waveform area
-    app.screen_areas
+    app.ui
+        .screen_areas
         .register(AreaId::TransportWaveform, chunks[0]);
 
     // Render waveform using Kitty graphics (direct to stdout)
@@ -71,12 +72,13 @@ fn render_transport_info(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Play/Stop area: "▶ Playing" or "■ Stopped" = ~10 chars
     let play_stop_rect = Rect::new(info_x, info_y, 10, 1);
-    app.screen_areas
+    app.ui
+        .screen_areas
         .register(AreaId::TransportPlayStop, play_stop_rect);
 
     // BPM area: starts after play/stop, "  XXX BPM" = ~10 chars
     let bpm_rect = Rect::new(info_x + 10, info_y, 10, 1);
-    app.screen_areas.register(AreaId::TransportBpm, bpm_rect);
+    app.ui.screen_areas.register(AreaId::TransportBpm, bpm_rect);
 
     // Play/Stop indicator
     let play_indicator = if app.is_playing() {
@@ -108,10 +110,11 @@ fn render_transport_info(frame: &mut Frame, area: Rect, app: &mut App) {
 /// Render browser toggle button
 fn render_browser_toggle(frame: &mut Frame, area: Rect, app: &mut App) {
     let browser_rect = Rect::new(area.x, area.y, 3, 1);
-    app.screen_areas
+    app.ui
+        .screen_areas
         .register(AreaId::TransportBrowserToggle, browser_rect);
 
-    let style = if app.show_browser {
+    let style = if app.ui.show_browser {
         Style::default()
             .fg(Color::Black)
             .bg(Color::Cyan)
@@ -128,10 +131,11 @@ fn render_browser_toggle(frame: &mut Frame, area: Rect, app: &mut App) {
 /// Render mixer toggle button
 fn render_mixer_toggle(frame: &mut Frame, area: Rect, app: &mut App) {
     let mixer_rect = Rect::new(area.x, area.y, 5, 1);
-    app.screen_areas
+    app.ui
+        .screen_areas
         .register(AreaId::TransportMixerToggle, mixer_rect);
 
-    let style = if app.show_mixer {
+    let style = if app.ui.show_mixer {
         Style::default()
             .fg(Color::Black)
             .bg(Color::Cyan)

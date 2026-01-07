@@ -8,8 +8,10 @@ use crossbeam_channel::{Receiver, Sender};
 
 #[allow(dead_code)]
 mod host;
+pub mod loader;
 pub mod params;
 
+pub use loader::{ClapPluginLoader, LoadedPlugin, PluginLoadError, PluginLoader};
 pub use params::PluginParamId;
 
 #[allow(unused_imports)]

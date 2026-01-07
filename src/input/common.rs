@@ -32,13 +32,13 @@ pub fn key_to_vim_char(key: KeyEvent) -> Option<(char, bool)> {
 
 /// Send the currently selected parameter to the plugin and save to channel
 pub fn send_param_to_plugin(app: &mut App) {
-    let channel_idx = app.plugin_editor.channel_idx;
-    if let Some(param) = app.plugin_editor.selected_param() {
+    let channel_idx = app.ui.plugin_editor.channel_idx;
+    if let Some(param) = app.ui.plugin_editor.selected_param() {
         let param_value = param.value;
 
         // Get the param ID from the registry
         let param_id = PluginParamId::ALL
-            .get(app.plugin_editor.selected_param)
+            .get(app.ui.plugin_editor.selected_param)
             .copied();
 
         if let Some(param_id) = param_id {
@@ -90,11 +90,11 @@ pub fn execute_command(cmd: Command, app: &mut App) -> bool {
             false
         }
         Command::SetTempo => {
-            app.command_picker.start_tempo_input(app.transport.bpm);
+            app.ui.command_picker.start_tempo_input(app.transport.bpm);
             false
         }
         Command::Quit => {
-            app.should_quit = true;
+            app.ui.should_quit = true;
             true
         }
     }

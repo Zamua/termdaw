@@ -51,20 +51,20 @@ pub const HEADER_ROWS: u16 = 3;
 /// Render the channel rack (or channel rack + piano roll in piano roll mode)
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // Determine if we're in piano roll mode
-    let in_piano_roll_mode = matches!(app.view_mode, ViewMode::PianoRoll);
+    let in_piano_roll_mode = matches!(app.ui.view_mode, ViewMode::PianoRoll);
 
     // Determine focus based on mode
     let focused = if in_piano_roll_mode {
-        app.mode.current_panel() == Panel::PianoRoll
+        app.ui.mode.current_panel() == Panel::PianoRoll
     } else {
-        app.mode.current_panel() == Panel::ChannelRack
+        app.ui.mode.current_panel() == Panel::ChannelRack
     };
 
     // Title changes based on mode (empty for channel rack, channel name for piano roll)
     let title = if in_piano_roll_mode {
         let channel_name = app
             .channels
-            .get(app.cursors.channel_rack.channel)
+            .get(app.ui.cursors.channel_rack.channel)
             .map(|c| c.name.as_str())
             .unwrap_or("Channel 1");
         channel_name.to_string()
@@ -89,10 +89,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     );
 
     if in_piano_roll_mode {
-        app.screen_areas.register(AreaId::PianoRollGrid, grid_area);
+        app.ui
+            .screen_areas
+            .register(AreaId::PianoRollGrid, grid_area);
         piano_roll::render(frame, inner, app, focused);
     } else {
-        app.screen_areas
+        app.ui
+            .screen_areas
             .register(AreaId::ChannelRackStepsGrid, grid_area);
         step_grid::render(frame, inner, app, focused);
     }
@@ -105,9 +108,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 /// Render the header rows (pattern hint + column headers)
 pub fn render_header(frame: &mut Frame, inner: Rect, app: &mut App, piano_roll_mode: bool) {
     let focused = if piano_roll_mode {
-        app.mode.current_panel() == Panel::PianoRoll
+        app.ui.mode.current_panel() == Panel::PianoRoll
     } else {
-        app.mode.current_panel() == Panel::ChannelRack
+        app.ui.mode.current_panel() == Panel::ChannelRack
     };
 
     // Row 1: Pattern selector or piano roll hint
@@ -122,9 +125,11 @@ pub fn render_header(frame: &mut Frame, inner: Rect, app: &mut App, piano_roll_m
         // Text: "< " (0-1) + "P01" (2-4) + " >" (5-6)
         let prev_rect = Rect::new(inner.x, inner.y, 3, 1); // Covers "< " and "P"
         let next_rect = Rect::new(inner.x + 4, inner.y, 3, 1); // Covers "1 >"
-        app.screen_areas
+        app.ui
+            .screen_areas
             .register(AreaId::ChannelRackPatternPrev, prev_rect);
-        app.screen_areas
+        app.ui
+            .screen_areas
             .register(AreaId::ChannelRackPatternNext, next_rect);
 
         let pattern_num = format!("P{:02}", app.current_pattern + 1);
@@ -177,11 +182,11 @@ pub fn render_header(frame: &mut Frame, inner: Rect, app: &mut App, piano_roll_m
         let is_beat = step % 4 == 0;
         let is_playhead = app.is_playing() && step as usize == app.playhead_step();
         let is_cursor_col = if piano_roll_mode {
-            focused && app.cursors.piano_roll.step == step as usize
+            focused && app.ui.cursors.piano_roll.step == step as usize
         } else {
             focused
-                && app.cursors.channel_rack.col.0 == step
-                && app.cursors.channel_rack.col.is_step_zone()
+                && app.ui.cursors.channel_rack.col.0 == step
+                && app.ui.cursors.channel_rack.col.is_step_zone()
         };
 
         let color = if is_playhead {

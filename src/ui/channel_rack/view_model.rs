@@ -61,9 +61,9 @@ pub struct ChannelRackViewModel {
 impl ChannelRackViewModel {
     /// Build view model from App state
     pub fn from_app(app: &App, visible_rows: usize, focused: bool) -> Self {
-        let viewport_top = app.cursors.channel_rack.viewport_top;
-        let cursor_row = app.cursors.channel_rack.channel;
-        let cursor_col = app.cursors.channel_rack.col;
+        let viewport_top = app.ui.cursors.channel_rack.viewport_top;
+        let cursor_row = app.ui.cursors.channel_rack.channel;
+        let cursor_col = app.ui.cursors.channel_rack.col;
         let current_pattern = app.current_pattern;
         let is_playing = app.is_playing();
         let playhead_step = app.playhead_step();
@@ -71,7 +71,7 @@ impl ChannelRackViewModel {
         // Compute visual selection
         let vim_col: crate::coords::VimCol = cursor_col.into();
         let cursor_pos = Position::new(cursor_row, vim_col.0);
-        let selection = app.vim.channel_rack.get_selection(cursor_pos);
+        let selection = app.ui.vim.channel_rack.get_selection(cursor_pos);
 
         // Build visible rows
         let mut rows = Vec::with_capacity(visible_rows);
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn test_view_model_respects_viewport() {
         let (mut app, _temp) = create_test_app();
-        app.cursors.channel_rack.viewport_top = 5;
+        app.ui.cursors.channel_rack.viewport_top = 5;
         let vm = ChannelRackViewModel::from_app(&app, 10, true);
         assert_eq!(vm.viewport_top, 5);
         assert_eq!(vm.rows[0].slot, 5);
@@ -195,7 +195,7 @@ mod tests {
     fn test_unallocated_slot_has_default_name() {
         let (mut app, _temp) = create_test_app();
         // Slot 50 should be unallocated in test app
-        app.cursors.channel_rack.viewport_top = 50;
+        app.ui.cursors.channel_rack.viewport_top = 50;
         let vm = ChannelRackViewModel::from_app(&app, 1, true);
         assert!(!vm.rows[0].is_allocated);
         assert_eq!(vm.rows[0].name, "Slot 51");

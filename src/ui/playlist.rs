@@ -43,7 +43,7 @@ fn pattern_has_data(app: &App, pattern: &Pattern) -> bool {
 
 /// Render the playlist
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    let focused = app.mode.current_panel() == Panel::Playlist;
+    let focused = app.ui.mode.current_panel() == Panel::Playlist;
     // No title needed (tab already says "Playlist")
     let inner = render_panel_frame(frame, area, "", Panel::Playlist, app);
 
@@ -69,12 +69,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     };
 
     // Get current visual selection (if any)
-    let cursor = Position::new(app.cursors.playlist.row, app.cursors.playlist.bar);
-    let selection = app.vim.playlist.get_selection(cursor);
+    let cursor = Position::new(app.ui.cursors.playlist.row, app.ui.cursors.playlist.bar);
+    let selection = app.ui.vim.playlist.get_selection(cursor);
 
     // Calculate visible pattern range based on viewport
     let visible_rows = (inner.height - HEADER_ROWS) as usize;
-    let viewport_top = app.cursors.playlist.viewport_top;
+    let viewport_top = app.ui.cursors.playlist.viewport_top;
 
     // Render pattern rows
     for row_idx in 0..visible_rows {
@@ -104,7 +104,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
 /// Render the header rows (bar numbers + separator)
 fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
-    let focused = app.mode.current_panel() == Panel::Playlist;
+    let focused = app.ui.mode.current_panel() == Panel::Playlist;
 
     // Row 1: Bar number headers
     let mut spans = Vec::new();
@@ -126,7 +126,7 @@ fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
         let bar_num = bar + 1;
         let is_beat = bar % 4 == 0;
         let is_playhead = app.is_playing_arrangement() && bar == app.arrangement_bar();
-        let is_cursor_col = focused && app.cursors.playlist.bar == bar;
+        let is_cursor_col = focused && app.ui.cursors.playlist.bar == bar;
 
         let color = if is_playhead {
             Color::Green
@@ -198,7 +198,7 @@ fn render_pattern_row(
     let zone_bg = colors::bg::COL_A;
 
     // Pattern name
-    let is_cursor_row = focused && app.cursors.playlist.row == row_idx;
+    let is_cursor_row = focused && app.ui.cursors.playlist.row == row_idx;
     let pattern_style = if is_cursor_row {
         Style::default()
             .fg(Color::Cyan)
@@ -235,7 +235,7 @@ fn render_pattern_row(
         ("○", Color::Green)
     };
 
-    let is_mute_cursor = is_cursor_row && app.cursors.playlist.bar == 0;
+    let is_mute_cursor = is_cursor_row && app.ui.cursors.playlist.bar == 0;
     let mute_style = if is_mute_cursor {
         Style::default()
             .fg(colors::fg::CURSOR_CONTENT)
@@ -253,8 +253,9 @@ fn render_pattern_row(
     // Bar cells
     for bar in 0..NUM_BARS {
         let is_beat = bar % 4 == 0;
-        let is_cursor =
-            focused && app.cursors.playlist.row == row_idx && app.cursors.playlist.bar == bar + 1;
+        let is_cursor = focused
+            && app.ui.cursors.playlist.row == row_idx
+            && app.ui.cursors.playlist.bar == bar + 1;
         let is_playhead = app.is_playing_arrangement() && bar == app.arrangement_bar();
 
         // Check if this cell is in visual selection (bar + 1 because bar 0 is mute column)

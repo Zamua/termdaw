@@ -14,7 +14,7 @@ use crate::mode::AppMode;
 
 /// Render effect-related modals
 pub fn render(frame: &mut Frame, app: &App) {
-    match &app.mode {
+    match &app.ui.mode {
         AppMode::EffectPicker { .. } => render_effect_picker(frame, app),
         AppMode::EffectEditor {
             track_idx,
@@ -52,7 +52,7 @@ fn render_effect_picker(frame: &mut Frame, app: &App) {
     frame.render_widget(block, modal_area);
 
     // Get effect picker selection (stored in app state)
-    let selected = app.effect_picker_selection;
+    let selected = app.ui.effect_picker_selection;
 
     // Effect types list
     let effect_types = EffectType::all();

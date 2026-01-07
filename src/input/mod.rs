@@ -31,12 +31,12 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
     // Handle key release events - only specific keys need release handling
     if key.kind == KeyEventKind::Release {
         // Only handle 's' release for stopping plugin preview
-        if key.code == KeyCode::Char('s') && app.is_previewing {
-            if let Some(channel) = app.preview_channel {
+        if key.code == KeyCode::Char('s') && app.ui.is_previewing {
+            if let Some(channel) = app.ui.preview_channel {
                 app.stop_preview(channel);
             }
             // Trigger the release phase of the envelope animation
-            app.plugin_editor.stop_preview_animation();
+            app.ui.plugin_editor.stop_preview_animation();
         }
         // Ignore all other release events
         return false;
@@ -67,32 +67,32 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
     // From here on, we only handle Press events
 
     // Handle input mode first (tempo entry, etc.)
-    if app.command_picker.input.active {
+    if app.ui.command_picker.input.active {
         return handle_input_mode_key(key, app);
     }
 
     // Handle context menu (if visible)
-    if app.context_menu.visible {
+    if app.ui.context_menu.visible {
         return handle_context_menu_key(key, app);
     }
 
     // Handle command picker (if visible)
-    if app.command_picker.visible {
+    if app.ui.command_picker.visible {
         return handle_command_picker_key(key, app);
     }
 
     // Handle plugin editor modal (if visible)
-    if app.plugin_editor.visible {
+    if app.ui.plugin_editor.visible {
         return handle_plugin_editor_key(key, app);
     }
 
     // Handle effect picker modal
-    if app.mode.is_effect_picker() {
+    if app.ui.mode.is_effect_picker() {
         return handle_effect_picker_key(key, app);
     }
 
     // Handle effect editor modal
-    if app.mode.is_effect_editor() {
+    if app.ui.mode.is_effect_editor() {
         return handle_effect_editor_key(key, app);
     }
 
@@ -108,12 +108,12 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
 
         // Space to show command picker
         (KeyCode::Char(' '), false) => {
-            app.command_picker.show();
+            app.ui.command_picker.show();
             return false;
         }
 
         // Undo (u in normal mode)
-        (KeyCode::Char('u'), false) if app.mode.is_normal() => {
+        (KeyCode::Char('u'), false) if app.ui.mode.is_normal() => {
             // Take history out temporarily to avoid borrow conflict
             let mut history = std::mem::take(&mut app.history);
             history.undo(app);
@@ -122,7 +122,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
         }
 
         // Redo (Ctrl+R)
-        (KeyCode::Char('r'), true) if app.mode.is_normal() => {
+        (KeyCode::Char('r'), true) if app.ui.mode.is_normal() => {
             // Take history out temporarily to avoid borrow conflict
             let mut history = std::mem::take(&mut app.history);
             history.redo(app);
@@ -133,7 +133,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
         // Jump back (Ctrl+O)
         (KeyCode::Char('o'), true) => {
             let current = app.current_jump_position();
-            if let Some(pos) = app.global_jumplist.go_back(current) {
+            if let Some(pos) = app.ui.global_jumplist.go_back(current) {
                 app.goto_jump_position(&pos);
             }
             return false;
@@ -141,7 +141,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
 
         // Jump forward (Ctrl+I)
         (KeyCode::Char('i'), true) => {
-            if let Some(pos) = app.global_jumplist.go_forward() {
+            if let Some(pos) = app.ui.global_jumplist.go_forward() {
                 app.goto_jump_position(&pos);
             }
             return false;
@@ -151,7 +151,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
     }
 
     // Panel-specific keybindings
-    match app.mode.current_panel() {
+    match app.ui.mode.current_panel() {
         Panel::ChannelRack => channel_rack::handle_key(key, app),
         Panel::Browser => browser::handle_key(key, app),
         Panel::Mixer => mixer::handle_key(key, app),
@@ -167,16 +167,16 @@ fn handle_input_mode_key(key: KeyEvent, app: &mut App) -> bool {
     match key.code {
         // Escape cancels input
         KeyCode::Esc => {
-            app.command_picker.cancel_input();
+            app.ui.command_picker.cancel_input();
             false
         }
         // Enter confirms input
         KeyCode::Enter => {
-            if let Some(bpm) = app.command_picker.get_tempo_value() {
+            if let Some(bpm) = app.ui.command_picker.get_tempo_value() {
                 app.transport.bpm = bpm.clamp(20.0, 999.0);
                 app.mark_dirty();
             }
-            app.command_picker.cancel_input();
+            app.ui.command_picker.cancel_input();
             false
         }
         // For tempo input, only allow digits and decimal point
@@ -186,11 +186,12 @@ fn handle_input_mode_key(key: KeyEvent, app: &mut App) -> bool {
         // Let tui-input handle the rest (digits, backspace, delete, arrows, etc.)
         _ => {
             // Limit input length for tempo
-            if app.command_picker.input.input.value().len() < 6
+            if app.ui.command_picker.input.input.value().len() < 6
                 || key.code == KeyCode::Backspace
                 || key.code == KeyCode::Delete
             {
-                app.command_picker
+                app.ui
+                    .command_picker
                     .input
                     .input
                     .handle_event(&Event::Key(key));
@@ -205,23 +206,23 @@ fn handle_command_picker_key(key: KeyEvent, app: &mut App) -> bool {
     match key.code {
         // Escape closes picker
         KeyCode::Esc => {
-            app.command_picker.hide();
+            app.ui.command_picker.hide();
             false
         }
         // Any other key - try to find and execute a command
         KeyCode::Char(c) => {
-            if let Some(cmd) = app.command_picker.find_command(c) {
-                app.command_picker.hide();
+            if let Some(cmd) = app.ui.command_picker.find_command(c) {
+                app.ui.command_picker.hide();
                 common::execute_command(cmd, app)
             } else {
                 // Unknown key - just close picker
-                app.command_picker.hide();
+                app.ui.command_picker.hide();
                 false
             }
         }
         _ => {
             // Other keys close picker
-            app.command_picker.hide();
+            app.ui.command_picker.hide();
             false
         }
     }
@@ -232,45 +233,45 @@ fn handle_plugin_editor_key(key: KeyEvent, app: &mut App) -> bool {
     match key.code {
         // Escape closes editor
         KeyCode::Esc => {
-            app.plugin_editor.close();
+            app.ui.plugin_editor.close();
             false
         }
         // 's' to preview the synth sound
         KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if !app.is_previewing {
-                app.start_preview(app.plugin_editor.channel_idx);
-                app.plugin_editor.start_preview_animation();
+            if !app.ui.is_previewing {
+                app.start_preview(app.ui.plugin_editor.channel_idx);
+                app.ui.plugin_editor.start_preview_animation();
             }
             false
         }
         // Navigation: j/k or down/up
         KeyCode::Char('j') | KeyCode::Down => {
-            app.plugin_editor.select_next();
+            app.ui.plugin_editor.select_next();
             false
         }
         KeyCode::Char('k') | KeyCode::Up => {
-            app.plugin_editor.select_prev();
+            app.ui.plugin_editor.select_prev();
             false
         }
         // Adjust value: h/l or left/right
         KeyCode::Char('h') | KeyCode::Left => {
-            app.plugin_editor.adjust_value(-1.0);
+            app.ui.plugin_editor.adjust_value(-1.0);
             common::send_param_to_plugin(app);
             false
         }
         KeyCode::Char('l') | KeyCode::Right => {
-            app.plugin_editor.adjust_value(1.0);
+            app.ui.plugin_editor.adjust_value(1.0);
             common::send_param_to_plugin(app);
             false
         }
         // Fine adjust with shift
         KeyCode::Char('H') => {
-            app.plugin_editor.adjust_value(-0.1);
+            app.ui.plugin_editor.adjust_value(-0.1);
             common::send_param_to_plugin(app);
             false
         }
         KeyCode::Char('L') => {
-            app.plugin_editor.adjust_value(0.1);
+            app.ui.plugin_editor.adjust_value(0.1);
             common::send_param_to_plugin(app);
             false
         }
@@ -283,31 +284,31 @@ fn handle_context_menu_key(key: KeyEvent, app: &mut App) -> bool {
     match key.code {
         // Escape closes menu
         KeyCode::Esc => {
-            app.context_menu.hide();
+            app.ui.context_menu.hide();
             false
         }
         // j/Down moves selection down
         KeyCode::Char('j') | KeyCode::Down => {
-            app.context_menu.select_next();
+            app.ui.context_menu.select_next();
             false
         }
         // k/Up moves selection up
         KeyCode::Char('k') | KeyCode::Up => {
-            app.context_menu.select_prev();
+            app.ui.context_menu.select_prev();
             false
         }
         // Enter executes selected action
         KeyCode::Enter => {
-            if let Some(action) = app.context_menu.get_selected_action() {
-                let context = app.context_menu.context;
-                app.context_menu.hide();
+            if let Some(action) = app.ui.context_menu.get_selected_action() {
+                let context = app.ui.context_menu.context;
+                app.ui.context_menu.hide();
                 execute_context_menu_action(action, context, app);
             }
             false
         }
         // Any other key closes menu
         _ => {
-            app.context_menu.hide();
+            app.ui.context_menu.hide();
             false
         }
     }
@@ -320,32 +321,32 @@ fn handle_effect_picker_key(key: KeyEvent, app: &mut App) -> bool {
     match key.code {
         // Escape closes picker
         KeyCode::Esc => {
-            app.mode.close_modal();
+            app.ui.mode.close_modal();
             false
         }
         // Navigate up/down
         KeyCode::Char('j') | KeyCode::Down => {
             let effect_count = EffectType::all().len();
-            if app.effect_picker_selection < effect_count - 1 {
-                app.effect_picker_selection += 1;
+            if app.ui.effect_picker_selection < effect_count - 1 {
+                app.ui.effect_picker_selection += 1;
             }
             false
         }
         KeyCode::Char('k') | KeyCode::Up => {
-            if app.effect_picker_selection > 0 {
-                app.effect_picker_selection -= 1;
+            if app.ui.effect_picker_selection > 0 {
+                app.ui.effect_picker_selection -= 1;
             }
             false
         }
         // Enter to add the selected effect
         KeyCode::Enter => {
             let effect_types = EffectType::all();
-            if app.effect_picker_selection < effect_types.len() {
-                let effect_type = effect_types[app.effect_picker_selection];
+            if app.ui.effect_picker_selection < effect_types.len() {
+                let effect_type = effect_types[app.ui.effect_picker_selection];
                 app.add_effect(effect_type);
             }
-            app.effect_picker_selection = 0;
-            app.mode.close_modal();
+            app.ui.effect_picker_selection = 0;
+            app.ui.mode.close_modal();
             false
         }
         _ => false,
@@ -358,7 +359,7 @@ fn handle_effect_editor_key(key: KeyEvent, app: &mut App) -> bool {
     use crate::mode::AppMode;
 
     // Get current track/slot/param from mode
-    let (track_idx, slot_idx, selected_param) = match &app.mode {
+    let (track_idx, slot_idx, selected_param) = match &app.ui.mode {
         AppMode::EffectEditor {
             track_idx,
             slot_idx,
@@ -372,7 +373,7 @@ fn handle_effect_editor_key(key: KeyEvent, app: &mut App) -> bool {
     let effect_slot = match &app.mixer.tracks[track_idx].effects[slot_idx] {
         Some(slot) => slot.clone(),
         None => {
-            app.mode.close_modal();
+            app.ui.mode.close_modal();
             return false;
         }
     };
@@ -382,7 +383,7 @@ fn handle_effect_editor_key(key: KeyEvent, app: &mut App) -> bool {
     match key.code {
         // Escape closes editor
         KeyCode::Esc => {
-            app.mode.close_modal();
+            app.ui.mode.close_modal();
             false
         }
         // Navigate up/down
@@ -391,7 +392,7 @@ fn handle_effect_editor_key(key: KeyEvent, app: &mut App) -> bool {
                 if let AppMode::EffectEditor {
                     selected_param: ref mut p,
                     ..
-                } = app.mode
+                } = app.ui.mode
                 {
                     *p += 1;
                 }
@@ -403,7 +404,7 @@ fn handle_effect_editor_key(key: KeyEvent, app: &mut App) -> bool {
                 if let AppMode::EffectEditor {
                     selected_param: ref mut p,
                     ..
-                } = app.mode
+                } = app.ui.mode
                 {
                     *p -= 1;
                 }
@@ -466,31 +467,31 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
     use mouse::MouseAction;
 
     // 1. Process event through MouseState to get high-level actions
-    let actions = app.mouse.process_event(event);
+    let actions = app.ui.mouse.process_event(event);
 
     // 2. For each action, determine target and delegate
     for action in actions {
         let (x, y) = action.position();
 
         // Handle context menu first (rendered on top of everything)
-        if app.context_menu.visible {
+        if app.ui.context_menu.visible {
             handle_context_menu_mouse(&action, app);
             continue;
         }
 
         // Handle modals (they're on top of regular content)
-        if app.command_picker.visible {
+        if app.ui.command_picker.visible {
             handle_command_picker_mouse(&action, app);
             continue;
         }
 
-        if app.plugin_editor.visible {
+        if app.ui.plugin_editor.visible {
             handle_plugin_editor_mouse(&action, app);
             continue;
         }
 
         // 3. Hit test to find which area/component
-        let area = app.screen_areas.hit_test(x, y);
+        let area = app.ui.screen_areas.hit_test(x, y);
 
         // Focus the panel if clicking a focusable area
         if matches!(&action, MouseAction::Click { .. }) {
@@ -509,19 +510,19 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
             }
             Some(AreaId::TransportBpm) => {
                 if matches!(action, MouseAction::Click { .. }) {
-                    app.command_picker.start_tempo_input(app.transport.bpm);
+                    app.ui.command_picker.start_tempo_input(app.transport.bpm);
                 }
             }
 
             // View switcher buttons
             Some(AreaId::TransportViewChannelRack) => {
                 if matches!(action, MouseAction::Click { .. }) {
-                    app.view_mode = crate::mode::ViewMode::ChannelRack;
+                    app.ui.view_mode = crate::mode::ViewMode::ChannelRack;
                 }
             }
             Some(AreaId::TransportViewPlaylist) => {
                 if matches!(action, MouseAction::Click { .. }) {
-                    app.view_mode = crate::mode::ViewMode::Playlist;
+                    app.ui.view_mode = crate::mode::ViewMode::Playlist;
                 }
             }
 
@@ -553,35 +554,39 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
             // Browser toggle
             Some(AreaId::TransportBrowserToggle) => {
                 if matches!(action, MouseAction::Click { .. }) {
-                    app.show_browser = !app.show_browser;
+                    app.ui.show_browser = !app.ui.show_browser;
                 }
             }
 
             // Mixer toggle
             Some(AreaId::TransportMixerToggle) => {
                 if matches!(action, MouseAction::Click { .. }) {
-                    app.show_mixer = !app.show_mixer;
+                    app.ui.show_mixer = !app.ui.show_mixer;
                 }
             }
 
             // Browser
             Some(AreaId::BrowserClose) => {
                 if matches!(action, MouseAction::Click { .. }) {
-                    app.show_browser = false;
+                    app.ui.show_browser = false;
                     // Return focus to main view
-                    match app.view_mode {
+                    match app.ui.view_mode {
                         crate::mode::ViewMode::ChannelRack => {
-                            app.mode.switch_panel(Panel::ChannelRack)
+                            app.ui.mode.switch_panel(Panel::ChannelRack)
                         }
-                        crate::mode::ViewMode::PianoRoll => app.mode.switch_panel(Panel::PianoRoll),
-                        crate::mode::ViewMode::Playlist => app.mode.switch_panel(Panel::Playlist),
+                        crate::mode::ViewMode::PianoRoll => {
+                            app.ui.mode.switch_panel(Panel::PianoRoll)
+                        }
+                        crate::mode::ViewMode::Playlist => {
+                            app.ui.mode.switch_panel(Panel::Playlist)
+                        }
                     }
                 }
             }
             Some(AreaId::BrowserTabs) => {
                 if matches!(action, MouseAction::Click { .. }) {
                     // Toggle between Samples and Plugins
-                    app.browser.toggle_mode();
+                    app.ui.browser.toggle_mode();
                 }
             }
             Some(AreaId::Browser) | Some(AreaId::BrowserContent) => {
@@ -623,7 +628,7 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
             // Mixer
             Some(AreaId::MixerClose) => {
                 if matches!(action, MouseAction::Click { .. }) {
-                    app.show_mixer = false;
+                    app.ui.show_mixer = false;
                 }
             }
             Some(AreaId::Mixer) | Some(AreaId::MixerChannelStrip) => {
@@ -633,7 +638,7 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
             // Main view (fallback for general area clicks)
             Some(AreaId::MainView) | Some(AreaId::MainViewGrid) => {
                 // Delegate based on current view mode
-                match app.view_mode {
+                match app.ui.view_mode {
                     crate::mode::ViewMode::ChannelRack => {
                         channel_rack::handle_mouse_action(&action, app);
                     }
@@ -669,7 +674,7 @@ fn focus_panel_for_area(area_id: &crate::ui::areas::AreaId, app: &mut App) {
         }
         AreaId::MainView | AreaId::MainViewGrid => {
             // Use current view mode
-            match app.view_mode {
+            match app.ui.view_mode {
                 crate::mode::ViewMode::ChannelRack => Some(Panel::ChannelRack),
                 crate::mode::ViewMode::PianoRoll => Some(Panel::PianoRoll),
                 crate::mode::ViewMode::Playlist => Some(Panel::Playlist),
@@ -679,7 +684,7 @@ fn focus_panel_for_area(area_id: &crate::ui::areas::AreaId, app: &mut App) {
     };
 
     if let Some(p) = panel {
-        app.mode.switch_panel(p);
+        app.ui.mode.switch_panel(p);
     }
 }
 
@@ -690,6 +695,7 @@ fn handle_command_picker_mouse(action: &mouse::MouseAction, app: &mut App) {
     if let MouseAction::Click { x, y, .. } = action {
         // Check if click is inside command picker
         if let Some(picker_rect) = app
+            .ui
             .screen_areas
             .get(crate::ui::areas::AreaId::CommandPicker)
         {
@@ -699,21 +705,21 @@ fn handle_command_picker_mouse(action: &mouse::MouseAction, app: &mut App) {
                 || *y >= picker_rect.y + picker_rect.height
             {
                 // Click outside - dismiss
-                app.command_picker.hide();
+                app.ui.command_picker.hide();
                 return;
             }
 
             // Check if clicking on a command item
-            if let Some(idx) = app.screen_areas.command_item_at(*x, *y) {
+            if let Some(idx) = app.ui.screen_areas.command_item_at(*x, *y) {
                 // Execute the command at this index
-                if let Some(cmd) = app.command_picker.get_command_at(idx) {
-                    app.command_picker.hide();
+                if let Some(cmd) = app.ui.command_picker.get_command_at(idx) {
+                    app.ui.command_picker.hide();
                     common::execute_command(cmd, app);
                 }
             }
         } else {
             // No picker rect registered, just dismiss
-            app.command_picker.hide();
+            app.ui.command_picker.hide();
         }
     }
 }
@@ -725,7 +731,10 @@ fn handle_plugin_editor_mouse(action: &mouse::MouseAction, app: &mut App) {
     match action {
         MouseAction::Click { x, y, .. } => {
             // Check if click is inside plugin editor
-            if let Some(editor_rect) = app.screen_areas.get(crate::ui::areas::AreaId::PluginEditor)
+            if let Some(editor_rect) = app
+                .ui
+                .screen_areas
+                .get(crate::ui::areas::AreaId::PluginEditor)
             {
                 if *x < editor_rect.x
                     || *x >= editor_rect.x + editor_rect.width
@@ -733,45 +742,46 @@ fn handle_plugin_editor_mouse(action: &mouse::MouseAction, app: &mut App) {
                     || *y >= editor_rect.y + editor_rect.height
                 {
                     // Click outside - dismiss
-                    app.plugin_editor.close();
+                    app.ui.plugin_editor.close();
                     return;
                 }
 
                 // Check if clicking on a parameter
-                if let Some(idx) = app.screen_areas.plugin_param_at(*x, *y) {
-                    app.plugin_editor.selected_param = idx;
+                if let Some(idx) = app.ui.screen_areas.plugin_param_at(*x, *y) {
+                    app.ui.plugin_editor.selected_param = idx;
                 }
             } else {
-                app.plugin_editor.close();
+                app.ui.plugin_editor.close();
             }
         }
         MouseAction::DragStart { x, y, .. } => {
             // Check if starting drag on a parameter slider
-            if let Some(idx) = app.screen_areas.plugin_param_at(*x, *y) {
-                app.plugin_editor.selected_param = idx;
+            if let Some(idx) = app.ui.screen_areas.plugin_param_at(*x, *y) {
+                app.ui.plugin_editor.selected_param = idx;
                 // Store drag start for later calculation
             }
         }
         MouseAction::DragMove { start_x, x, .. } => {
             // Adjust parameter value based on horizontal drag distance
             if let Some(param_rect) = app
+                .ui
                 .screen_areas
                 .plugin_editor_params
-                .get(app.plugin_editor.selected_param)
+                .get(app.ui.plugin_editor.selected_param)
             {
                 let delta_x = (*x as f32 - *start_x as f32) / param_rect.width as f32;
                 // Scale delta to parameter range
                 let delta_value = delta_x * 100.0; // Assuming 0-100 range
-                app.plugin_editor.adjust_value(delta_value);
+                app.ui.plugin_editor.adjust_value(delta_value);
                 common::send_param_to_plugin(app);
             }
         }
         MouseAction::Scroll { delta, .. } => {
             // Scroll adjusts selected parameter
             if *delta < 0 {
-                app.plugin_editor.adjust_value(1.0);
+                app.ui.plugin_editor.adjust_value(1.0);
             } else {
-                app.plugin_editor.adjust_value(-1.0);
+                app.ui.plugin_editor.adjust_value(-1.0);
             }
             common::send_param_to_plugin(app);
         }
@@ -787,18 +797,18 @@ fn handle_context_menu_mouse(action: &mouse::MouseAction, app: &mut App) {
     match action {
         MouseAction::Click { x, y, .. } => {
             // Check if click is inside context menu
-            if let Some(menu_rect) = app.screen_areas.get(AreaId::ContextMenu) {
+            if let Some(menu_rect) = app.ui.screen_areas.get(AreaId::ContextMenu) {
                 if *x >= menu_rect.x
                     && *x < menu_rect.x + menu_rect.width
                     && *y >= menu_rect.y
                     && *y < menu_rect.y + menu_rect.height
                 {
                     // Click inside menu - check if on an item
-                    if let Some(idx) = app.context_menu.item_at(*x, *y, menu_rect) {
-                        app.context_menu.selected = idx;
-                        if let Some(action) = app.context_menu.get_selected_action() {
-                            let context = app.context_menu.context;
-                            app.context_menu.hide();
+                    if let Some(idx) = app.ui.context_menu.item_at(*x, *y, menu_rect) {
+                        app.ui.context_menu.selected = idx;
+                        if let Some(action) = app.ui.context_menu.get_selected_action() {
+                            let context = app.ui.context_menu.context;
+                            app.ui.context_menu.hide();
                             execute_context_menu_action(action, context, app);
                         }
                     }
@@ -806,11 +816,11 @@ fn handle_context_menu_mouse(action: &mouse::MouseAction, app: &mut App) {
                 }
             }
             // Click outside - dismiss
-            app.context_menu.hide();
+            app.ui.context_menu.hide();
         }
         MouseAction::RightClick { .. } => {
             // Right-click while menu is open just dismisses it
-            app.context_menu.hide();
+            app.ui.context_menu.hide();
         }
         _ => {}
     }
@@ -842,7 +852,7 @@ fn execute_context_menu_action(
                     let track_id = crate::mixer::TrackId(ch.mixer_track);
                     let track = app.mixer.track_mut(track_id);
                     track.muted = !track.muted;
-                    app.sync_mixer_to_audio();
+                    app.audio_sync.mark_mixer_dirty();
                     app.mark_dirty();
                 }
             }
@@ -854,7 +864,7 @@ fn execute_context_menu_action(
                     let track_id = crate::mixer::TrackId(ch.mixer_track);
                     let track = app.mixer.track_mut(track_id);
                     track.solo = !track.solo;
-                    app.sync_mixer_to_audio();
+                    app.audio_sync.mark_mixer_dirty();
                     app.mark_dirty();
                 }
             }
@@ -882,28 +892,28 @@ fn execute_context_menu_action(
         ContextMenuAction::AssignSample => {
             // Start selection mode and switch to browser - record position for Ctrl+O
             let current = app.current_jump_position();
-            app.global_jumplist.push(current);
+            app.ui.global_jumplist.push(current);
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                app.browser.start_selection(channel);
+                app.ui.browser.start_selection(channel);
             }
-            app.mode.switch_panel(Panel::Browser);
-            app.show_browser = true;
+            app.ui.mode.switch_panel(Panel::Browser);
+            app.ui.show_browser = true;
         }
         ContextMenuAction::AssignPlugin => {
             // Start plugin selection mode and switch to browser - record position for Ctrl+O
             let current = app.current_jump_position();
-            app.global_jumplist.push(current);
+            app.ui.global_jumplist.push(current);
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                app.browser.start_selection(channel);
-                app.browser.mode = crate::browser::BrowserMode::Plugins;
+                app.ui.browser.start_selection(channel);
+                app.ui.browser.mode = crate::browser::BrowserMode::Plugins;
             }
-            app.mode.switch_panel(Panel::Browser);
-            app.show_browser = true;
+            app.ui.mode.switch_panel(Panel::Browser);
+            app.ui.show_browser = true;
         }
         ContextMenuAction::OpenPianoRoll => {
             // Switch to piano roll view for the channel - use set_view_mode for jumplist
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                app.cursors.channel_rack.channel = channel;
+                app.ui.cursors.channel_rack.channel = channel;
             }
             app.set_view_mode(crate::mode::ViewMode::PianoRoll);
         }
@@ -911,7 +921,7 @@ fn execute_context_menu_action(
         // Piano Roll actions
         ContextMenuAction::DeleteNote => {
             if let Some(MenuContext::PianoRoll { pitch, step }) = context {
-                let channel_idx = app.cursors.channel_rack.channel;
+                let channel_idx = app.ui.cursors.channel_rack.channel;
                 let pattern_id = app.current_pattern;
                 // Find note ID first, then delete
                 let note_id = app
@@ -941,10 +951,11 @@ fn execute_context_menu_action(
         // Playlist actions
         ContextMenuAction::DeletePlacement => {
             if let Some(MenuContext::Playlist { row, bar }) = context {
-                if let Some(pattern) = app.patterns.get(row) {
+                // Capture pattern.id before mutable borrow
+                let pattern_id = app.patterns.get(row).map(|p| p.id);
+                if let Some(id) = pattern_id {
                     // Remove placement at this specific bar
-                    app.arrangement
-                        .remove_placements_in_range(pattern.id, bar, bar);
+                    app.arrangement.remove_placements_in_range(id, bar, bar);
                     app.mark_dirty();
                 }
             }
@@ -954,8 +965,10 @@ fn execute_context_menu_action(
         }
         ContextMenuAction::MutePattern => {
             if let Some(MenuContext::Playlist { row, .. }) = context {
-                if let Some(pattern) = app.patterns.get(row) {
-                    app.arrangement.toggle_pattern_mute(pattern.id);
+                // Capture pattern.id before mutable borrow
+                let pattern_id = app.patterns.get(row).map(|p| p.id);
+                if let Some(id) = pattern_id {
+                    app.arrangement.toggle_pattern_mute(id);
                     app.mark_dirty();
                 }
             }
@@ -967,7 +980,7 @@ fn execute_context_menu_action(
                 // channel here is a track index
                 let track_id = crate::mixer::TrackId(channel);
                 app.mixer.set_volume(track_id, 0.8);
-                app.sync_mixer_to_audio();
+                app.audio_sync.mark_mixer_dirty();
                 app.mark_dirty();
             }
         }
@@ -976,7 +989,7 @@ fn execute_context_menu_action(
                 let track_id = crate::mixer::TrackId(channel);
                 let track = app.mixer.track_mut(track_id);
                 track.muted = !track.muted;
-                app.sync_mixer_to_audio();
+                app.audio_sync.mark_mixer_dirty();
                 app.mark_dirty();
             }
         }
@@ -985,7 +998,7 @@ fn execute_context_menu_action(
                 let track_id = crate::mixer::TrackId(channel);
                 let track = app.mixer.track_mut(track_id);
                 track.solo = !track.solo;
-                app.sync_mixer_to_audio();
+                app.audio_sync.mark_mixer_dirty();
                 app.mark_dirty();
             }
         }
@@ -993,12 +1006,12 @@ fn execute_context_menu_action(
         // Browser actions
         ContextMenuAction::PreviewFile => {
             if let Some(MenuContext::Browser { item_idx }) = context {
-                if let Some(entry) = app.browser.visible_entries.get(item_idx) {
+                if let Some(entry) = app.ui.browser.visible_entries.get(item_idx) {
                     if !entry.is_dir {
                         let full_path = app.project.samples_path().join(
                             entry
                                 .path
-                                .strip_prefix(app.browser.root_path())
+                                .strip_prefix(app.ui.browser.root_path())
                                 .unwrap_or(&entry.path),
                         );
                         // Browser previews go directly to master
@@ -1009,11 +1022,14 @@ fn execute_context_menu_action(
         }
         ContextMenuAction::AssignToChannel => {
             if let Some(MenuContext::Browser { item_idx }) = context {
-                if let Some(entry) = app.browser.visible_entries.get(item_idx).cloned() {
+                if let Some(entry) = app.ui.browser.visible_entries.get(item_idx).cloned() {
                     if !entry.is_dir {
                         if let Some(file_name) = entry.path.file_name() {
                             let sample_path = file_name.to_string_lossy().to_string();
-                            app.set_channel_sample(app.cursors.channel_rack.channel, sample_path);
+                            app.set_channel_sample(
+                                app.ui.cursors.channel_rack.channel,
+                                sample_path,
+                            );
                         }
                     }
                 }
@@ -1024,7 +1040,7 @@ fn execute_context_menu_action(
         ContextMenuAction::ResetParameter => {
             if let Some(MenuContext::PluginEditor { param_idx }) = context {
                 // Reset parameter to default value
-                if let Some(param) = app.plugin_editor.params.get_mut(param_idx) {
+                if let Some(param) = app.ui.plugin_editor.params.get_mut(param_idx) {
                     param.value = param.default;
                 }
                 common::send_param_to_plugin(app);

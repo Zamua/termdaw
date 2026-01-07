@@ -34,7 +34,7 @@ pub fn render_panel_frame(
     panel: Panel,
     app: &App,
 ) -> Rect {
-    let focused = app.mode.current_panel() == panel;
+    let focused = app.ui.mode.current_panel() == panel;
     let border_color = if focused {
         Color::Cyan
     } else {
@@ -60,7 +60,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     // Clear all screen areas from previous frame
-    app.screen_areas.clear();
+    app.ui.screen_areas.clear();
 
     // Main vertical layout: Transport | Content | Mixer? | Status
     let mut constraints = vec![
@@ -68,7 +68,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Constraint::Min(10),   // Main content area
     ];
 
-    if app.show_mixer {
+    if app.ui.show_mixer {
         constraints.push(Constraint::Length(16)); // Mixer panel
     }
 
@@ -78,7 +78,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .split(area);
 
     // Register transport area
-    app.screen_areas.register(AreaId::Transport, main_layout[0]);
+    app.ui
+        .screen_areas
+        .register(AreaId::Transport, main_layout[0]);
 
     // Transport bar
     transport::render(frame, main_layout[0], app);
@@ -87,8 +89,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     render_content_area(frame, main_layout[1], app);
 
     // Mixer (if visible)
-    if app.show_mixer {
-        app.screen_areas.register(AreaId::Mixer, main_layout[2]);
+    if app.ui.show_mixer {
+        app.ui.screen_areas.register(AreaId::Mixer, main_layout[2]);
         mixer::render(frame, main_layout[2], app);
     }
 
@@ -99,7 +101,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     plugin_editor::render(frame, app);
 
     // Context menu (rendered on top of everything else)
-    context_menu::render(frame, &app.context_menu, &mut app.screen_areas);
+    context_menu::render(frame, &app.ui.context_menu, &mut app.ui.screen_areas);
 
     // Effect picker/editor modal
     effect_editor::render(frame, app);
@@ -109,7 +111,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 fn render_content_area(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut App) {
     use areas::AreaId;
 
-    if app.show_browser {
+    if app.ui.show_browser {
         // Split horizontally: Browser | Main View
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -119,13 +121,13 @@ fn render_content_area(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut
             ])
             .split(area);
 
-        app.screen_areas.register(AreaId::Browser, chunks[0]);
+        app.ui.screen_areas.register(AreaId::Browser, chunks[0]);
         browser::render(frame, chunks[0], app);
 
-        app.screen_areas.register(AreaId::MainView, chunks[1]);
+        app.ui.screen_areas.register(AreaId::MainView, chunks[1]);
         render_main_view(frame, chunks[1], app);
     } else {
-        app.screen_areas.register(AreaId::MainView, area);
+        app.ui.screen_areas.register(AreaId::MainView, area);
         render_main_view(frame, area, app);
     }
 }
@@ -150,10 +152,12 @@ fn render_main_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut Ap
     let content = chunks[1];
 
     // Register tab bar area
-    app.screen_areas.register(AreaId::MainViewTabBar, tab_bar);
+    app.ui
+        .screen_areas
+        .register(AreaId::MainViewTabBar, tab_bar);
 
     // Piano roll is considered part of channel rack view
-    let selected_tab = match app.view_mode {
+    let selected_tab = match app.ui.view_mode {
         ViewMode::ChannelRack | ViewMode::PianoRoll => 0,
         ViewMode::Playlist => 1,
     };
@@ -171,14 +175,16 @@ fn render_main_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut Ap
         pl_text.len() as u16 + 2,
         1,
     );
-    app.screen_areas
+    app.ui
+        .screen_areas
         .register(AreaId::MainViewTabChannelRack, cr_rect);
-    app.screen_areas
+    app.ui
+        .screen_areas
         .register(AreaId::MainViewTabPlaylist, pl_rect);
 
     // Check if main view is focused (channel rack, piano roll, or playlist)
     let main_view_focused = matches!(
-        app.mode.current_panel(),
+        app.ui.mode.current_panel(),
         Panel::ChannelRack | Panel::PianoRoll | Panel::Playlist
     );
 
@@ -201,7 +207,7 @@ fn render_main_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut Ap
 
     // Render content based on view mode
     // Note: Piano roll is embedded in channel rack view (not a separate view)
-    match app.view_mode {
+    match app.ui.view_mode {
         ViewMode::ChannelRack | ViewMode::PianoRoll => channel_rack::render(frame, content, app),
         ViewMode::Playlist => playlist::render(frame, content, app),
     }

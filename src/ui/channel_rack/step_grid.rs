@@ -30,7 +30,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
     let view_model = ChannelRackViewModel::from_app(app, visible_rows, focused);
 
     // Render grid using ViewModel
-    render_grid(frame, inner, &view_model, &mut app.screen_areas);
+    render_grid(frame, inner, &view_model, &mut app.ui.screen_areas);
 }
 
 /// Render the step grid body from ViewModel

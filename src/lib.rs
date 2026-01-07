@@ -8,6 +8,7 @@
 pub mod app;
 pub mod arrangement;
 pub mod audio;
+pub mod audio_sync;
 pub mod browser;
 pub mod command_picker;
 pub mod coords;

@@ -15,13 +15,13 @@ use crate::command_picker::CommandPicker;
 /// Render the command picker overlay (or input mode)
 pub fn render(frame: &mut Frame, app: &mut App) {
     // Render input mode if active
-    if app.command_picker.input.active {
+    if app.ui.command_picker.input.active {
         render_input_mode(frame, app);
         return;
     }
 
     // Render command picker if visible
-    if !app.command_picker.visible {
+    if !app.ui.command_picker.visible {
         return;
     }
 
@@ -34,7 +34,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let popup_area = centered_rect(popup_width, popup_height, area);
 
     // Register command picker area
-    app.screen_areas.register(AreaId::CommandPicker, popup_area);
+    app.ui
+        .screen_areas
+        .register(AreaId::CommandPicker, popup_area);
 
     // Clear the area behind the popup
     frame.render_widget(Clear, popup_area);
@@ -50,7 +52,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(block, popup_area);
 
     // Render command groups and register command items
-    render_commands(frame, inner, &app.command_picker, &mut app.screen_areas);
+    render_commands(
+        frame,
+        inner,
+        &app.ui.command_picker,
+        &mut app.ui.screen_areas,
+    );
 }
 
 /// Render the command groups
@@ -126,7 +133,7 @@ fn render_input_mode(frame: &mut Frame, app: &mut App) {
 
     // Render the popup
     let block = Block::default()
-        .title(format!(" {} ", app.command_picker.input.prompt))
+        .title(format!(" {} ", app.ui.command_picker.input.prompt))
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
@@ -144,7 +151,7 @@ fn render_input_mode(frame: &mut Frame, app: &mut App) {
     };
 
     // Get scroll offset for the input
-    let input = &app.command_picker.input.input;
+    let input = &app.ui.command_picker.input.input;
     let scroll = input.visual_scroll(text_width as usize);
 
     // Render the input value

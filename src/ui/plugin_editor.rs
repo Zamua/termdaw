@@ -268,7 +268,7 @@ impl PluginEditorState {
 
 /// Render the plugin editor modal
 pub fn render(frame: &mut Frame, app: &mut App) {
-    if !app.plugin_editor.visible {
+    if !app.ui.plugin_editor.visible {
         return;
     }
 
@@ -283,7 +283,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Clear, popup_area);
 
     // Render the popup border
-    let title = format!(" {} ", app.plugin_editor.plugin_name);
+    let title = format!(" {} ", app.ui.plugin_editor.plugin_name);
     let block = Block::default()
         .title(title)
         .title_alignment(Alignment::Center)
@@ -294,7 +294,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(block, popup_area);
 
     // Render content
-    if app.plugin_editor.params.is_empty() {
+    if app.ui.plugin_editor.params.is_empty() {
         let no_params = Paragraph::new("No parameters available")
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Center);
@@ -310,7 +310,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             width: inner.width.saturating_sub(2),
             height: envelope_height.saturating_sub(1),
         };
-        render_envelope(frame, envelope_area, &mut app.plugin_editor);
+        render_envelope(frame, envelope_area, &mut app.ui.plugin_editor);
 
         // Render parameters below the envelope
         let params_area = Rect {
@@ -319,7 +319,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             width: inner.width,
             height: inner.height.saturating_sub(envelope_height + 2),
         };
-        render_params(frame, params_area, &app.plugin_editor);
+        render_params(frame, params_area, &app.ui.plugin_editor);
     }
 
     // Render help footer

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 
 use crate::arrangement::Arrangement;
+use crate::audio_sync::AudioSync;
 
 // ============================================================================
 // Extracted State Structs (Phase 1 Refactoring)
@@ -102,7 +103,7 @@ use crate::input::vim::{GridSemantics, VimStates, Zone};
 use crate::mixer::{Mixer, TrackId};
 use crate::playback::{PlaybackEvent, PlaybackState};
 use crate::plugin_host::params::build_init_params;
-use crate::plugin_host::PluginHost;
+use crate::plugin_host::{ClapPluginLoader, PluginLoader};
 use crate::project::{self, ProjectFile};
 use crate::sequencer::{default_channels, Channel, ChannelSource, Note, Pattern};
 use crate::ui::areas::ScreenAreas;
@@ -112,12 +113,60 @@ use crate::ui::plugin_editor::PluginEditorState;
 // Re-export types from mode module for external use
 pub use crate::mode::{AppMode, Panel, ViewMode};
 
-/// Main application state
-#[allow(dead_code)]
-pub struct App {
+// ============================================================================
+// Phase 3: AppState + UiState Split
+// ============================================================================
+
+/// Application domain state (business logic, audio, data)
+///
+/// Contains all state related to the music project, audio processing,
+/// and undo/redo history. This is the "model" in an MVC sense.
+pub struct AppState {
     /// Project metadata (name, path, created_at)
     pub project: ProjectState,
 
+    /// Channels (sound sources - samplers, plugins)
+    pub channels: Vec<Channel>,
+
+    /// Patterns
+    pub patterns: Vec<Pattern>,
+
+    /// Currently selected pattern
+    pub current_pattern: usize,
+
+    /// Arrangement data
+    pub arrangement: Arrangement,
+
+    /// Mixer (FL Studio-style with routing)
+    pub mixer: Mixer,
+
+    /// Audio handle for playback
+    pub audio: AudioHandle,
+
+    /// Plugin loader for loading CLAP/VST plugins
+    pub(crate) plugin_loader: Box<dyn PluginLoader>,
+
+    /// Audio sync coordinator for batched updates
+    pub audio_sync: AudioSync,
+
+    /// Transport state (playback, bpm, timing)
+    pub transport: TransportState,
+
+    /// Undo/redo history
+    pub history: History,
+
+    /// Dirty flag for auto-save
+    pub(crate) dirty: bool,
+
+    /// Last change time for debounced auto-save
+    pub(crate) last_change: Instant,
+}
+
+/// User interface state (view, interaction, navigation)
+///
+/// Contains all state related to the UI: modes, cursors, vim states,
+/// panel visibility, and modals. This is the "view" state in an MVC sense.
+pub struct UiState {
     /// Whether the app should quit
     pub should_quit: bool,
 
@@ -133,9 +182,6 @@ pub struct App {
     /// Whether the mixer panel is visible
     pub show_mixer: bool,
 
-    /// Transport state (playback, bpm, timing)
-    pub transport: TransportState,
-
     /// Terminal dimensions
     pub terminal_width: u16,
     pub terminal_height: u16,
@@ -143,26 +189,11 @@ pub struct App {
     /// Cursor states for all panels
     pub cursors: CursorStates,
 
-    /// Arrangement data
-    pub arrangement: Arrangement,
-
-    /// Mixer (FL Studio-style with routing)
-    pub mixer: Mixer,
-
-    /// Channels (sound sources - samplers, plugins)
-    pub channels: Vec<Channel>,
-
-    /// Patterns
-    pub patterns: Vec<Pattern>,
-
-    /// Currently selected pattern
-    pub current_pattern: usize,
-
     /// Vim state machines for grid-based views
     pub vim: VimStates,
 
-    /// Audio handle for playback
-    pub audio: AudioHandle,
+    /// Global cross-view jump list for Ctrl+O/Ctrl+I
+    pub global_jumplist: GlobalJumplist,
 
     /// File browser state
     pub browser: BrowserState,
@@ -185,12 +216,6 @@ pub struct App {
     /// Effect picker selection index
     pub effect_picker_selection: usize,
 
-    /// Dirty flag for auto-save
-    dirty: bool,
-
-    /// Last change time for debounced auto-save
-    last_change: Instant,
-
     /// Whether we're currently previewing a channel (for hold-to-preview)
     pub is_previewing: bool,
 
@@ -198,13 +223,70 @@ pub struct App {
     pub preview_channel: Option<usize>,
 
     /// Which note is being previewed (for plugins)
-    preview_note: Option<u8>,
+    pub(crate) preview_note: Option<u8>,
+}
 
-    /// Undo/redo history
-    pub history: History,
+/// Main application - combines domain state and UI state
+///
+/// App is a facade that provides convenient access to both `AppState` (domain data)
+/// and `UiState` (UI state). Most code should access these through the
+/// convenience accessors on App for backwards compatibility.
+#[allow(dead_code)]
+pub struct App {
+    /// Domain state (project, channels, patterns, mixer, audio)
+    pub state: AppState,
 
-    /// Global cross-view jump list for Ctrl+O/Ctrl+I
-    pub global_jumplist: GlobalJumplist,
+    /// UI state (mode, cursors, vim, panels, modals)
+    pub ui: UiState,
+}
+
+// ============================================================================
+// Convenience Accessors for Backwards Compatibility
+// ============================================================================
+
+impl App {
+    // --- AppState accessors ---
+
+    /// Project metadata
+    pub fn project(&self) -> &ProjectState {
+        &self.state.project
+    }
+
+    /// Channels (read-only)
+    pub fn channels(&self) -> &[Channel] {
+        &self.state.channels
+    }
+
+    /// Patterns (read-only)
+    pub fn patterns(&self) -> &[Pattern] {
+        &self.state.patterns
+    }
+
+    /// Mixer (read-only)
+    pub fn mixer(&self) -> &Mixer {
+        &self.state.mixer
+    }
+
+    /// Transport (read-only)
+    pub fn transport(&self) -> &TransportState {
+        &self.state.transport
+    }
+}
+
+// Legacy field accessors (for gradual migration)
+// These allow existing code to work with `app.field` syntax
+impl std::ops::Deref for App {
+    type Target = AppState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl std::ops::DerefMut for App {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
 }
 
 impl App {
@@ -270,23 +352,33 @@ impl App {
             Zone::new(3, 18).main().with_word_interval(4), // Steps
         ]);
 
-        let app = Self {
+        // Create domain state (business logic, audio, data)
+        let state = AppState {
             project,
+            channels,
+            patterns,
+            current_pattern,
+            arrangement,
+            mixer,
+            audio,
+            plugin_loader: Box::new(ClapPluginLoader),
+            audio_sync: AudioSync::new(),
+            transport: TransportState::new(bpm),
+            history: History::new(),
+            dirty: false,
+            last_change: Instant::now(),
+        };
+
+        // Create UI state (view, interaction, navigation)
+        let ui = UiState {
             should_quit: false,
             mode: AppMode::default(),
             view_mode: ViewMode::default(),
             show_browser: true,
             show_mixer: false,
-            transport: TransportState::new(bpm),
             terminal_width: 80,
             terminal_height: 24,
             cursors: CursorStates::default(),
-            arrangement,
-            mixer,
-            channels,
-            patterns,
-            current_pattern,
-            // Vim state machines for all grid views
             vim: VimStates::new(
                 99,
                 19,
@@ -296,7 +388,7 @@ impl App {
                 num_channels,
                 17, // Playlist: rows = patterns, 16 bars + mute col
             ),
-            audio,
+            global_jumplist: GlobalJumplist::new(),
             browser: BrowserState::new(samples_path),
             command_picker: CommandPicker::new(),
             plugin_editor: PluginEditorState::new(),
@@ -304,21 +396,37 @@ impl App {
             mouse: MouseState::new(),
             context_menu: ContextMenu::new(),
             effect_picker_selection: 0,
-            dirty: false,
-            last_change: Instant::now(),
             is_previewing: false,
             preview_channel: None,
             preview_note: None,
-            history: History::new(),
-            global_jumplist: GlobalJumplist::new(),
         };
+
+        let mut app = Self { state, ui };
 
         // Load plugins for plugin channels
         app.load_plugins();
 
-        // Sync initial mixer and channel routing state to audio thread
-        app.sync_mixer_to_audio();
-        app.sync_channel_routing();
+        // Mark initial mixer and routing state as dirty, then flush immediately
+        app.state.audio_sync.mark_mixer_dirty();
+        // Collect routing info first to avoid borrow conflict
+        let routing_info: Vec<_> = app
+            .state
+            .channels
+            .iter()
+            .enumerate()
+            .map(|(idx, ch)| (idx, ch.mixer_track))
+            .collect();
+        for (channel_idx, track) in routing_info {
+            app.state.audio_sync.mark_routing_dirty(channel_idx, track);
+        }
+        // Destructure to allow simultaneous borrows of different fields
+        let AppState {
+            audio_sync,
+            audio,
+            mixer,
+            ..
+        } = &mut app.state;
+        audio_sync.flush(audio, mixer);
 
         app
     }
@@ -346,22 +454,18 @@ impl App {
             if let ChannelSource::Plugin { path, .. } = &channel.source {
                 let plugin_path = plugins_path.join(path);
 
-                // Try to load and activate the plugin
-                match PluginHost::load(&plugin_path, sample_rate, buffer_size) {
-                    Ok(mut host) => match host.activate() {
-                        Ok(processor) => {
-                            // Build initial state with volume from mixer and params from channel
-                            let init_state = self.build_plugin_init_state(channel_idx, channel);
-                            // Send the activated processor with initial state
-                            self.audio.send_plugin(channel_idx, processor, init_state);
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "Failed to activate plugin for channel {}: {}",
-                                channel_idx, e
-                            );
-                        }
-                    },
+                // Try to load and activate the plugin using the loader trait
+                match self
+                    .plugin_loader
+                    .load_plugin(&plugin_path, sample_rate, buffer_size)
+                {
+                    Ok(loaded) => {
+                        // Build initial state with volume from mixer and params from channel
+                        let init_state = self.build_plugin_init_state(channel_idx, channel);
+                        // Send the activated processor with initial state
+                        self.audio
+                            .send_plugin(channel_idx, loaded.processor, init_state);
+                    }
                     Err(e) => {
                         eprintln!("Failed to load plugin for channel {}: {}", channel_idx, e);
                     }
@@ -419,14 +523,24 @@ impl App {
 
     /// Called when the terminal is resized
     pub fn on_resize(&mut self, width: u16, height: u16) {
-        self.terminal_width = width;
-        self.terminal_height = height;
+        self.ui.terminal_width = width;
+        self.ui.terminal_height = height;
     }
 
     /// Called every frame to update state
     pub fn tick(&mut self, delta: Duration) {
         // Always update peak levels for mixer meters (even when not playing)
         self.update_peak_levels();
+
+        // Flush any pending audio sync changes (batched per frame)
+        // Destructure to allow simultaneous borrows of different fields
+        let AppState {
+            audio_sync,
+            audio,
+            mixer,
+            ..
+        } = &mut self.state;
+        audio_sync.flush(audio, mixer);
 
         if !self.transport.playback.is_playing() {
             return;
@@ -610,9 +724,9 @@ impl App {
             self.audio.stop_all();
         } else {
             // Start playback based on focused panel
-            if self.mode.current_panel() == Panel::Playlist {
+            if self.ui.mode.current_panel() == Panel::Playlist {
                 // Start from cursor position in playlist (col 0 is mute, so bar = col - 1)
-                let start_bar = self.cursors.playlist.bar.saturating_sub(1);
+                let start_bar = self.ui.cursors.playlist.bar.saturating_sub(1);
                 self.transport.playback.play_arrangement_from(start_bar);
             } else {
                 self.transport.playback.play_pattern();
@@ -657,8 +771,9 @@ impl App {
 
     /// Cycle to the next panel
     pub fn next_panel(&mut self) {
-        self.mode
-            .next_panel(self.show_browser, self.show_mixer, self.view_mode);
+        self.ui
+            .mode
+            .next_panel(self.ui.show_browser, self.ui.show_mixer, self.ui.view_mode);
     }
 
     /// Set the view mode and focus
@@ -667,18 +782,18 @@ impl App {
     /// enabling Ctrl+O/Ctrl+I navigation between views.
     pub fn set_view_mode(&mut self, view_mode: ViewMode) {
         // Record current position before switching (if actually changing views)
-        if self.view_mode != view_mode {
+        if self.ui.view_mode != view_mode {
             let current = self.current_jump_position();
-            self.global_jumplist.push(current);
+            self.ui.global_jumplist.push(current);
         }
 
-        self.view_mode = view_mode;
+        self.ui.view_mode = view_mode;
         let panel = match view_mode {
             ViewMode::ChannelRack => Panel::ChannelRack,
             ViewMode::PianoRoll => Panel::PianoRoll,
             ViewMode::Playlist => Panel::Playlist,
         };
-        self.mode.switch_panel(panel);
+        self.ui.mode.switch_panel(panel);
     }
 
     /// Toggle browser visibility
@@ -686,19 +801,19 @@ impl App {
     /// Records current position in jumplist when opening browser,
     /// so Ctrl+O can return to it.
     pub fn toggle_browser(&mut self) {
-        self.show_browser = !self.show_browser;
-        if self.show_browser {
+        self.ui.show_browser = !self.ui.show_browser;
+        if self.ui.show_browser {
             // Record current position before switching to browser
             let current = self.current_jump_position();
-            self.global_jumplist.push(current);
-            self.mode.switch_panel(Panel::Browser);
-        } else if self.mode.current_panel() == Panel::Browser {
-            let panel = match self.view_mode {
+            self.ui.global_jumplist.push(current);
+            self.ui.mode.switch_panel(Panel::Browser);
+        } else if self.ui.mode.current_panel() == Panel::Browser {
+            let panel = match self.ui.view_mode {
                 ViewMode::ChannelRack => Panel::ChannelRack,
                 ViewMode::PianoRoll => Panel::PianoRoll,
                 ViewMode::Playlist => Panel::Playlist,
             };
-            self.mode.switch_panel(panel);
+            self.ui.mode.switch_panel(panel);
         }
     }
 
@@ -707,41 +822,41 @@ impl App {
     /// Records current position in jumplist when opening mixer,
     /// so Ctrl+O can return to it.
     pub fn toggle_mixer(&mut self) {
-        self.show_mixer = !self.show_mixer;
-        if self.show_mixer {
+        self.ui.show_mixer = !self.ui.show_mixer;
+        if self.ui.show_mixer {
             // Record current position before switching to mixer
             let current = self.current_jump_position();
-            self.global_jumplist.push(current);
-            self.mode.switch_panel(Panel::Mixer);
-        } else if self.mode.current_panel() == Panel::Mixer {
-            let panel = match self.view_mode {
+            self.ui.global_jumplist.push(current);
+            self.ui.mode.switch_panel(Panel::Mixer);
+        } else if self.ui.mode.current_panel() == Panel::Mixer {
+            let panel = match self.ui.view_mode {
                 ViewMode::ChannelRack => Panel::ChannelRack,
                 ViewMode::PianoRoll => Panel::PianoRoll,
                 ViewMode::Playlist => Panel::Playlist,
             };
-            self.mode.switch_panel(panel);
+            self.ui.mode.switch_panel(panel);
         }
     }
 
     /// Get the current step index (0-15) from cursor column
     /// Returns 0 if in sample or mute zone
     pub fn cursor_step(&self) -> usize {
-        self.cursors.channel_rack.col.to_step_or_zero()
+        self.ui.cursors.channel_rack.col.to_step_or_zero()
     }
 
     /// Get the current zone name
     pub fn cursor_zone(&self) -> &'static str {
-        self.cursors.channel_rack.col.zone_name()
+        self.ui.cursors.channel_rack.col.zone_name()
     }
 
     /// Toggle step at cursor in channel rack (only works in steps zone)
     #[allow(dead_code)]
     pub fn toggle_step(&mut self) {
-        if !self.cursors.channel_rack.col.is_step_zone() {
+        if !self.ui.cursors.channel_rack.col.is_step_zone() {
             return; // Not in steps zone
         }
-        let channel_idx = self.cursors.channel_rack.channel;
-        let step = self.cursors.channel_rack.col.to_step_or_zero();
+        let channel_idx = self.ui.cursors.channel_rack.channel;
+        let step = self.ui.cursors.channel_rack.col.to_step_or_zero();
         let pattern_id = self.current_pattern;
         let pattern_length = self
             .patterns
@@ -767,7 +882,7 @@ impl App {
         let track_id = TrackId(self.mixer.selected_track);
         let new_volume = (self.mixer.track(track_id).volume + delta).clamp(0.0, 1.0);
         self.mixer.set_volume(track_id, new_volume);
-        self.sync_mixer_to_audio();
+        self.audio_sync.mark_mixer_dirty();
         self.mark_dirty();
     }
 
@@ -775,7 +890,7 @@ impl App {
     pub fn toggle_mute(&mut self) {
         let track_id = TrackId(self.mixer.selected_track);
         self.mixer.toggle_mute(track_id);
-        self.sync_mixer_to_audio();
+        self.audio_sync.mark_mixer_dirty();
         self.mark_dirty();
     }
 
@@ -783,7 +898,7 @@ impl App {
     pub fn toggle_solo(&mut self) {
         let track_id = TrackId(self.mixer.selected_track);
         self.mixer.toggle_solo(track_id);
-        self.sync_mixer_to_audio();
+        self.audio_sync.mark_mixer_dirty();
         self.mark_dirty();
     }
 
@@ -834,8 +949,10 @@ impl App {
             channel.source = ChannelSource::Sampler {
                 path: Some(sample_path),
             };
+            // Capture mixer_track before dropping the mutable borrow
+            let mixer_track = channel.mixer_track;
             // Re-sync routing to audio thread to ensure consistency
-            self.audio.set_generator_track(idx, channel.mixer_track);
+            self.audio.set_generator_track(idx, mixer_track);
         } else {
             // Create new channel with unique mixer track
             let mixer_track = self.find_available_mixer_track();
@@ -869,8 +986,10 @@ impl App {
                 path: plugin_path.clone(),
                 params: std::collections::HashMap::new(),
             };
+            // Capture mixer_track before dropping the mutable borrow
+            let mixer_track = channel.mixer_track;
             // Re-sync routing to audio thread to ensure consistency
-            self.audio.set_generator_track(idx, channel.mixer_track);
+            self.audio.set_generator_track(idx, mixer_track);
             idx
         } else {
             // Create new channel with unique mixer track
@@ -886,26 +1005,22 @@ impl App {
 
         self.mark_dirty();
 
-        // Load and activate the plugin
+        // Load and activate the plugin using the loader trait
         let sample_rate = self.audio.sample_rate() as f64;
         let buffer_size = 512;
         let full_plugin_path = self.project.plugins_path().join(&plugin_path);
 
-        match PluginHost::load(&full_plugin_path, sample_rate, buffer_size) {
-            Ok(mut host) => match host.activate() {
-                Ok(processor) => {
-                    // For newly assigned plugin, use default params
-                    let channel = &self.channels[channel_idx];
-                    let init_state = self.build_plugin_init_state(channel_idx, channel);
-                    self.audio.send_plugin(channel_idx, processor, init_state);
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Failed to activate plugin for channel {}: {}",
-                        channel_idx, e
-                    );
-                }
-            },
+        match self
+            .plugin_loader
+            .load_plugin(&full_plugin_path, sample_rate, buffer_size)
+        {
+            Ok(loaded) => {
+                // For newly assigned plugin, use default params
+                let channel = &self.channels[channel_idx];
+                let init_state = self.build_plugin_init_state(channel_idx, channel);
+                self.audio
+                    .send_plugin(channel_idx, loaded.processor, init_state);
+            }
             Err(e) => {
                 eprintln!("Failed to load plugin for channel {}: {}", channel_idx, e);
             }
@@ -925,16 +1040,16 @@ impl App {
                         self.audio.preview_sample(&full_path, vec_idx);
                     }
                     // Set previewing to prevent key repeat from re-triggering
-                    self.is_previewing = true;
-                    self.preview_channel = Some(vec_idx);
+                    self.ui.is_previewing = true;
+                    self.ui.preview_channel = Some(vec_idx);
                 }
                 ChannelSource::Plugin { .. } => {
                     // Play a test note (middle C) for plugin preview
                     let note = 60u8;
                     self.audio.plugin_note_on(vec_idx, note, 0.8);
-                    self.is_previewing = true;
-                    self.preview_channel = Some(vec_idx);
-                    self.preview_note = Some(note);
+                    self.ui.is_previewing = true;
+                    self.ui.preview_channel = Some(vec_idx);
+                    self.ui.preview_note = Some(note);
                 }
             }
         }
@@ -942,28 +1057,28 @@ impl App {
 
     /// Stop previewing a channel (called on key release)
     pub fn stop_preview(&mut self, channel_idx: usize) {
-        if self.is_previewing {
-            if let Some(note) = self.preview_note {
+        if self.ui.is_previewing {
+            if let Some(note) = self.ui.preview_note {
                 // Send note off to stop the preview
                 self.audio.plugin_note_off(channel_idx, note);
             }
-            self.is_previewing = false;
-            self.preview_channel = None;
-            self.preview_note = None;
+            self.ui.is_previewing = false;
+            self.ui.preview_channel = None;
+            self.ui.preview_note = None;
         }
     }
 
     /// Preview the current note in piano roll (for plugin channels)
     pub fn preview_piano_note(&mut self) {
-        let slot = self.cursors.channel_rack.channel;
+        let slot = self.ui.cursors.channel_rack.channel;
         // Find Vec index for audio engine
         if let Some(vec_idx) = self.channels.iter().position(|c| c.slot == slot) {
             if let ChannelSource::Plugin { .. } = &self.channels[vec_idx].source {
-                let note = self.cursors.piano_roll.pitch;
+                let note = self.ui.cursors.piano_roll.pitch;
                 self.audio.plugin_note_on(vec_idx, note, 0.8);
-                self.is_previewing = true;
-                self.preview_channel = Some(vec_idx);
-                self.preview_note = Some(note);
+                self.ui.is_previewing = true;
+                self.ui.preview_channel = Some(vec_idx);
+                self.ui.preview_note = Some(note);
             }
         }
     }
@@ -1000,38 +1115,6 @@ impl App {
         }
     }
 
-    /// Sync mixer state to audio thread
-    /// Called when volume, pan, mute, or solo changes
-    pub fn sync_mixer_to_audio(&self) {
-        use crate::audio::AudioMixerState;
-
-        let has_solo = self.mixer.has_solo();
-
-        let mut state = AudioMixerState {
-            track_volumes: [0.0; crate::mixer::NUM_TRACKS],
-            track_pans: [0.0; crate::mixer::NUM_TRACKS],
-            track_mutes: [false; crate::mixer::NUM_TRACKS],
-        };
-
-        for (i, track) in self.mixer.tracks.iter().enumerate() {
-            state.track_volumes[i] = track.volume;
-            state.track_pans[i] = track.pan;
-            // Effective mute considers solo state
-            state.track_mutes[i] = track.muted || (has_solo && !track.solo && i != 0);
-        }
-
-        self.audio.update_mixer_state(state);
-    }
-
-    /// Sync channel→track routing to audio thread
-    /// Called when channel routing changes
-    pub fn sync_channel_routing(&self) {
-        for (channel_idx, channel) in self.channels.iter().enumerate() {
-            self.audio
-                .set_generator_track(channel_idx, channel.mixer_track);
-        }
-    }
-
     /// Update peak levels from audio thread (call every frame)
     pub fn update_peak_levels(&mut self) {
         self.mixer.peak_levels = self.audio.get_peak_levels();
@@ -1048,9 +1131,9 @@ impl App {
         let has_effect = self.mixer.tracks[track_idx].effects[slot_idx].is_some();
 
         if has_effect {
-            self.mode.open_effect_editor(track_idx, slot_idx);
+            self.ui.mode.open_effect_editor(track_idx, slot_idx);
         } else {
-            self.mode.open_effect_picker(track_idx, slot_idx);
+            self.ui.mode.open_effect_picker(track_idx, slot_idx);
         }
     }
 
@@ -1061,8 +1144,9 @@ impl App {
 
         if let Some(ref mut slot) = self.mixer.tracks[track_idx].effects[slot_idx] {
             slot.bypassed = !slot.bypassed;
-            self.audio
-                .set_effect_enabled(track_idx, slot_idx, !slot.bypassed);
+            // Capture enabled state before dropping the mutable borrow
+            let enabled = !slot.bypassed;
+            self.audio.set_effect_enabled(track_idx, slot_idx, enabled);
             self.mark_dirty();
         }
     }
@@ -1101,7 +1185,7 @@ impl App {
             track_idx,
             slot_idx,
             ..
-        } = self.mode
+        } = self.ui.mode
         {
             if let Some(ref mut slot) = self.mixer.tracks[track_idx].effects[slot_idx] {
                 slot.set_param(param_id, value);
@@ -1143,14 +1227,14 @@ impl App {
     pub fn toggle_step_with_history(&mut self) {
         use crate::history::command::ToggleStepCmd;
 
-        if !self.cursors.channel_rack.col.is_step_zone() {
+        if !self.ui.cursors.channel_rack.col.is_step_zone() {
             return;
         }
 
         let cmd = Box::new(ToggleStepCmd::new(
             self.current_pattern,
-            self.cursors.channel_rack.channel,
-            self.cursors.channel_rack.col.to_step_or_zero(),
+            self.ui.cursors.channel_rack.channel,
+            self.ui.cursors.channel_rack.col.to_step_or_zero(),
         ));
         // Take history out temporarily to avoid borrow conflict
         let mut history = std::mem::take(&mut self.history);
@@ -1164,7 +1248,7 @@ impl App {
 
         let cmd = Box::new(AddNoteCmd::new(
             self.current_pattern,
-            self.cursors.channel_rack.channel,
+            self.ui.cursors.channel_rack.channel,
             note,
         ));
         // Take history out temporarily to avoid borrow conflict
@@ -1179,7 +1263,7 @@ impl App {
 
         let cmd = Box::new(RemoveNoteCmd::new(
             self.current_pattern,
-            self.cursors.channel_rack.channel,
+            self.ui.cursors.channel_rack.channel,
             note_id,
         ));
         // Take history out temporarily to avoid borrow conflict
@@ -1203,18 +1287,18 @@ impl App {
 
     /// Get current position for the global jump list
     pub fn current_jump_position(&self) -> JumpPosition {
-        match self.view_mode {
+        match self.ui.view_mode {
             ViewMode::ChannelRack => JumpPosition::channel_rack(
-                self.cursors.channel_rack.channel,
-                self.cursors.channel_rack.col.to_step_or_zero(),
+                self.ui.cursors.channel_rack.channel,
+                self.ui.cursors.channel_rack.col.to_step_or_zero(),
             ),
             ViewMode::PianoRoll => {
                 // Convert pitch to row (higher pitch = lower row number)
-                let pitch_row = (84 - self.cursors.piano_roll.pitch) as usize;
-                JumpPosition::piano_roll(pitch_row, self.cursors.piano_roll.step)
+                let pitch_row = (84 - self.ui.cursors.piano_roll.pitch) as usize;
+                JumpPosition::piano_roll(pitch_row, self.ui.cursors.piano_roll.step)
             }
             ViewMode::Playlist => {
-                JumpPosition::playlist(self.cursors.playlist.row, self.cursors.playlist.bar)
+                JumpPosition::playlist(self.ui.cursors.playlist.row, self.ui.cursors.playlist.bar)
             }
         }
     }
@@ -1225,7 +1309,7 @@ impl App {
     /// because we don't want to record jumps during Ctrl+O/Ctrl+I navigation.
     pub fn goto_jump_position(&mut self, pos: &JumpPosition) {
         // Switch view directly (don't call set_view_mode to avoid recording jump)
-        self.view_mode = pos.view;
+        self.ui.view_mode = pos.view;
 
         // Switch panel focus to match the view
         let panel = match pos.view {
@@ -1233,57 +1317,62 @@ impl App {
             ViewMode::PianoRoll => Panel::PianoRoll,
             ViewMode::Playlist => Panel::Playlist,
         };
-        self.mode.switch_panel(panel);
+        self.ui.mode.switch_panel(panel);
 
         // Set cursor position and scroll viewport based on view
         match pos.view {
             ViewMode::ChannelRack => {
-                self.cursors.channel_rack.channel =
+                self.ui.cursors.channel_rack.channel =
                     pos.row.min(self.channels.len().saturating_sub(1));
                 // Convert step to AppCol (step zone starts at col 3 in vim space)
-                self.cursors.channel_rack.col = AppCol::from_step(pos.col);
+                self.ui.cursors.channel_rack.col = AppCol::from_step(pos.col);
                 // Scroll viewport to keep cursor visible
                 let visible_rows = 15;
-                if self.cursors.channel_rack.channel
-                    >= self.cursors.channel_rack.viewport_top + visible_rows
+                if self.ui.cursors.channel_rack.channel
+                    >= self.ui.cursors.channel_rack.viewport_top + visible_rows
                 {
-                    self.cursors.channel_rack.viewport_top =
-                        self.cursors.channel_rack.channel - visible_rows + 1;
+                    self.ui.cursors.channel_rack.viewport_top =
+                        self.ui.cursors.channel_rack.channel - visible_rows + 1;
                 }
-                if self.cursors.channel_rack.channel < self.cursors.channel_rack.viewport_top {
-                    self.cursors.channel_rack.viewport_top = self.cursors.channel_rack.channel;
+                if self.ui.cursors.channel_rack.channel < self.ui.cursors.channel_rack.viewport_top
+                {
+                    self.ui.cursors.channel_rack.viewport_top =
+                        self.ui.cursors.channel_rack.channel;
                 }
             }
             ViewMode::PianoRoll => {
                 // Convert row back to pitch (row 0 = pitch 84, row 48 = pitch 36)
-                self.cursors.piano_roll.pitch = (84 - pos.row as i32).clamp(36, 84) as u8;
-                self.cursors.piano_roll.step = pos.col.min(15);
+                self.ui.cursors.piano_roll.pitch = (84 - pos.row as i32).clamp(36, 84) as u8;
+                self.ui.cursors.piano_roll.step = pos.col.min(15);
                 // Scroll viewport to keep cursor visible (viewport_top is highest visible pitch)
-                if self.cursors.piano_roll.pitch > self.cursors.piano_roll.viewport_top {
-                    self.cursors.piano_roll.viewport_top = self.cursors.piano_roll.pitch;
+                if self.ui.cursors.piano_roll.pitch > self.ui.cursors.piano_roll.viewport_top {
+                    self.ui.cursors.piano_roll.viewport_top = self.ui.cursors.piano_roll.pitch;
                 }
                 let visible_rows = 20u8;
-                if self.cursors.piano_roll.pitch
+                if self.ui.cursors.piano_roll.pitch
                     < self
+                        .ui
                         .cursors
                         .piano_roll
                         .viewport_top
                         .saturating_sub(visible_rows)
                 {
-                    self.cursors.piano_roll.viewport_top = self.cursors.piano_roll.pitch + 10;
+                    self.ui.cursors.piano_roll.viewport_top = self.ui.cursors.piano_roll.pitch + 10;
                 }
             }
             ViewMode::Playlist => {
-                self.cursors.playlist.row = pos.row.min(self.patterns.len().saturating_sub(1));
-                self.cursors.playlist.bar = pos.col.min(16);
+                self.ui.cursors.playlist.row = pos.row.min(self.patterns.len().saturating_sub(1));
+                self.ui.cursors.playlist.bar = pos.col.min(16);
                 // Scroll viewport to keep cursor visible
                 let visible_rows = 10;
-                if self.cursors.playlist.row >= self.cursors.playlist.viewport_top + visible_rows {
-                    self.cursors.playlist.viewport_top =
-                        self.cursors.playlist.row - visible_rows + 1;
+                if self.ui.cursors.playlist.row
+                    >= self.ui.cursors.playlist.viewport_top + visible_rows
+                {
+                    self.ui.cursors.playlist.viewport_top =
+                        self.ui.cursors.playlist.row - visible_rows + 1;
                 }
-                if self.cursors.playlist.row < self.cursors.playlist.viewport_top {
-                    self.cursors.playlist.viewport_top = self.cursors.playlist.row;
+                if self.ui.cursors.playlist.row < self.ui.cursors.playlist.viewport_top {
+                    self.ui.cursors.playlist.viewport_top = self.ui.cursors.playlist.row;
                 }
             }
         }
@@ -1327,7 +1416,7 @@ impl StepGridContext for App {
 
 impl PianoRollContext for App {
     fn notes(&self) -> &[Note] {
-        let channel = self.cursors.channel_rack.channel;
+        let channel = self.ui.cursors.channel_rack.channel;
         let pattern_id = self.current_pattern;
         self.channels
             .get(channel)
@@ -1337,7 +1426,7 @@ impl PianoRollContext for App {
     }
 
     fn add_note(&mut self, note: Note) {
-        let channel = self.cursors.channel_rack.channel;
+        let channel = self.ui.cursors.channel_rack.channel;
         let pattern_id = self.current_pattern;
         let pattern_length = self.pattern_length();
         if let Some(ch) = self.channels.get_mut(channel) {
@@ -1348,7 +1437,7 @@ impl PianoRollContext for App {
     }
 
     fn remove_note(&mut self, id: &str) -> Option<Note> {
-        let channel = self.cursors.channel_rack.channel;
+        let channel = self.ui.cursors.channel_rack.channel;
         let pattern_id = self.current_pattern;
         let pattern_length = self.pattern_length();
         let removed = if let Some(ch) = self.channels.get_mut(channel) {

@@ -387,7 +387,7 @@ fn test_regression_mixer_browser_must_record_jump() {
 /// Regression test: Mouse clicks on view tabs must record jump.
 ///
 /// BUG: Clicking on ChannelRack/Playlist tabs in the UI directly set
-/// app.view_mode without calling set_view_mode(), bypassing jumplist.
+/// app.ui.view_mode without calling set_view_mode(), bypassing jumplist.
 ///
 /// FIX: Mouse tab handlers must call set_view_mode() instead of direct assignment.
 #[test]
@@ -412,7 +412,7 @@ fn test_regression_jump_must_switch_panel_focus() {
     // 3. Set cursor position (done)
     // 4. Scroll viewport (done)
     //
-    // The fix adds: self.mode.switch_panel(panel) in goto_jump_position()
+    // The fix adds: self.ui.mode.switch_panel(panel) in goto_jump_position()
 }
 
 /// Regression test: Ctrl+O should exhaust jumplist, not loop forever.
@@ -536,10 +536,10 @@ fn test_regression_g_gg_must_record_to_global_jumplist() {
 /// Regression test: gt/gT (NextTab/PrevTab) must use set_view_mode() not direct assignment.
 ///
 /// BUG: The VimAction::NextTab and VimAction::PrevTab handlers in channel_rack.rs,
-/// piano_roll.rs, and playlist.rs were directly setting `app.view_mode = ViewMode::X`
+/// piano_roll.rs, and playlist.rs were directly setting `app.ui.view_mode = ViewMode::X`
 /// instead of calling `app.set_view_mode(ViewMode::X)`, which bypasses the jumplist push.
 ///
-/// FIX: Change all instances of `app.view_mode = ViewMode::X` to `app.set_view_mode(ViewMode::X)`
+/// FIX: Change all instances of `app.ui.view_mode = ViewMode::X` to `app.set_view_mode(ViewMode::X)`
 /// in the NextTab/PrevTab handlers.
 ///
 /// This test documents the expected behavior: when switching views, the previous position
@@ -553,7 +553,7 @@ fn test_regression_gt_command_must_record_jump() {
     // then Ctrl+O should return to channel rack.
     //
     // The fix verifies that NextTab/PrevTab handlers call set_view_mode()
-    // instead of directly assigning to app.view_mode.
+    // instead of directly assigning to app.ui.view_mode.
 
     let mut jumplist = GlobalJumplist::new();
 
@@ -581,7 +581,7 @@ fn test_regression_same_view_switch_no_duplicate() {
     // Simulate: in channel rack, "switch" to channel rack (same view)
     // This should NOT add to jumplist (the fix checks if view_mode != new_view)
     let _pos1 = JumpPosition::channel_rack(5, 10);
-    // In real code, set_view_mode checks: if self.view_mode != view_mode { push }
+    // In real code, set_view_mode checks: if self.ui.view_mode != view_mode { push }
     // Since view is the same, we don't push
 
     // Move cursor within same view

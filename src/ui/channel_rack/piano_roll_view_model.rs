@@ -93,13 +93,13 @@ pub struct PianoRollViewModel {
 impl PianoRollViewModel {
     /// Build view model from App state
     pub fn from_app(app: &App, visible_rows: usize, focused: bool) -> Self {
-        let selected_channel = app.cursors.channel_rack.channel;
+        let selected_channel = app.ui.cursors.channel_rack.channel;
         let pattern_id = app.current_pattern;
-        let channel_viewport_top = app.cursors.channel_rack.viewport_top;
-        let pitch_viewport_top = app.cursors.piano_roll.viewport_top.min(MAX_PITCH);
-        let cursor_pitch = app.cursors.piano_roll.pitch;
-        let cursor_step = app.cursors.piano_roll.step;
-        let placing_note_start = app.cursors.piano_roll.placing_note;
+        let channel_viewport_top = app.ui.cursors.channel_rack.viewport_top;
+        let pitch_viewport_top = app.ui.cursors.piano_roll.viewport_top.min(MAX_PITCH);
+        let cursor_pitch = app.ui.cursors.piano_roll.pitch;
+        let cursor_step = app.ui.cursors.piano_roll.step;
+        let placing_note_start = app.ui.cursors.piano_roll.placing_note;
         let is_playing = app.is_playing();
         let playhead_step = app.playhead_step();
 
@@ -124,7 +124,7 @@ impl PianoRollViewModel {
         // Compute visual selection
         let cursor_row = MAX_PITCH.saturating_sub(cursor_pitch) as usize;
         let cursor_pos = Position::new(cursor_row, cursor_step);
-        let selection = app.vim.piano_roll.get_selection(cursor_pos);
+        let selection = app.ui.vim.piano_roll.get_selection(cursor_pos);
 
         // Build sidebar channel data
         let sidebar_channels =

@@ -14,8 +14,8 @@ use crate::browser::BrowserMode;
 
 /// Render the browser panel
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    let focused = app.mode.current_panel() == Panel::Browser;
-    let always_highlight = app.browser.selection_mode;
+    let focused = app.ui.mode.current_panel() == Panel::Browser;
+    let always_highlight = app.ui.browser.selection_mode;
 
     // Selection mode always shows highlighted border
     let show_focused = focused || always_highlight;
@@ -38,10 +38,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .split(chunks[0]);
 
     // Register tabs area (left portion for Samples/Plugins)
-    app.screen_areas.register(AreaId::BrowserTabs, tabs_row[0]);
+    app.ui
+        .screen_areas
+        .register(AreaId::BrowserTabs, tabs_row[0]);
 
     // Register close button area
-    app.screen_areas.register(AreaId::BrowserClose, tabs_row[1]);
+    app.ui
+        .screen_areas
+        .register(AreaId::BrowserClose, tabs_row[1]);
 
     // Render mode tabs - only highlight in cyan when focused
     let tab_highlight_color = if show_focused {
@@ -50,7 +54,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         Color::White
     };
     let tabs = Tabs::new(vec!["Samples", "Plugins"])
-        .select(match app.browser.mode {
+        .select(match app.ui.browser.mode {
             BrowserMode::Samples => 0,
             BrowserMode::Plugins => 1,
         })
@@ -75,12 +79,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(content_block, chunks[1]);
 
     // Register content area
-    app.screen_areas
+    app.ui
+        .screen_areas
         .register(AreaId::BrowserContent, content_area);
 
     // Check if we have entries
-    if app.browser.visible_entries.is_empty() {
-        let msg = match app.browser.mode {
+    if app.ui.browser.visible_entries.is_empty() {
+        let msg = match app.ui.browser.mode {
             BrowserMode::Samples => "No samples found\n\nAdd .wav/.mp3/.flac files to:\nsamples/",
             BrowserMode::Plugins => "No plugins found\n\nAdd .clap files to:\nplugins/",
         };
@@ -91,8 +96,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Calculate visible range for scrolling
     let visible_height = content_area.height as usize;
-    let cursor = app.browser.cursor;
-    let total = app.browser.visible_entries.len();
+    let cursor = app.ui.browser.cursor;
+    let total = app.ui.browser.visible_entries.len();
 
     // Center the cursor when possible
     let scroll_offset = if total <= visible_height || cursor < visible_height / 2 {
@@ -103,10 +108,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         cursor.saturating_sub(visible_height / 2)
     };
 
-    let mode = app.browser.mode;
+    let mode = app.ui.browser.mode;
 
     // Clone entry data needed for rendering to avoid borrow conflicts
     let entries_to_render: Vec<_> = app
+        .ui
         .browser
         .visible_entries
         .iter()
@@ -115,7 +121,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .take(visible_height)
         .map(|(idx, entry)| {
             let is_cursor = idx == cursor;
-            let is_expanded = app.browser.expanded.contains(&entry.path);
+            let is_expanded = app.ui.browser.expanded.contains(&entry.path);
             (idx, entry.clone(), is_cursor, is_expanded)
         })
         .collect();
@@ -129,7 +135,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             1,
         );
         // visible_idx is the index in the visible list (0-based from top of view)
-        app.screen_areas.browser_items.push(item_rect);
+        app.ui.screen_areas.browser_items.push(item_rect);
         let _ = idx; // Suppress unused warning
     }
 

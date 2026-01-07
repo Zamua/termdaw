@@ -272,7 +272,7 @@ pub enum VimAction {
     PrevTab,
 
     /// Record current position in global jumplist before a jump movement (G, gg)
-    /// Component should push current position to app.global_jumplist
+    /// Component should push current position to app.ui.global_jumplist
     RecordJump,
 }
 
