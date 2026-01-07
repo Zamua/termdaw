@@ -62,7 +62,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let title = if in_piano_roll_mode {
         let channel_name = app
             .channels
-            .get(app.channel_rack.channel)
+            .get(app.cursors.channel_rack.channel)
             .map(|c| c.name.as_str())
             .unwrap_or("Channel 1");
         channel_name.to_string()
@@ -175,9 +175,11 @@ pub fn render_header(frame: &mut Frame, inner: Rect, app: &mut App, piano_roll_m
         let is_beat = step % 4 == 0;
         let is_playhead = app.is_playing() && step as usize == app.playhead_step();
         let is_cursor_col = if piano_roll_mode {
-            focused && app.piano_roll.step == step as usize
+            focused && app.cursors.piano_roll.step == step as usize
         } else {
-            focused && app.channel_rack.col.0 == step && app.channel_rack.col.is_step_zone()
+            focused
+                && app.cursors.channel_rack.col.0 == step
+                && app.cursors.channel_rack.col.is_step_zone()
         };
 
         let color = if is_playhead {

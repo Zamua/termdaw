@@ -70,3 +70,14 @@ impl Default for PlaylistCursor {
         }
     }
 }
+
+/// Aggregated cursor states for all panels
+#[derive(Debug, Clone, Default)]
+pub struct CursorStates {
+    /// Channel rack cursor and viewport
+    pub channel_rack: ChannelRackCursor,
+    /// Piano roll cursor and viewport
+    pub piano_roll: PianoRollCursor,
+    /// Playlist cursor and viewport
+    pub playlist: PlaylistCursor,
+}

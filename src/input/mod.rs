@@ -903,7 +903,7 @@ fn execute_context_menu_action(
         ContextMenuAction::OpenPianoRoll => {
             // Switch to piano roll view for the channel - use set_view_mode for jumplist
             if let Some(MenuContext::ChannelRack { channel }) = context {
-                app.channel_rack.channel = channel;
+                app.cursors.channel_rack.channel = channel;
             }
             app.set_view_mode(crate::mode::ViewMode::PianoRoll);
         }
@@ -911,7 +911,7 @@ fn execute_context_menu_action(
         // Piano Roll actions
         ContextMenuAction::DeleteNote => {
             if let Some(MenuContext::PianoRoll { pitch, step }) = context {
-                let channel_idx = app.channel_rack.channel;
+                let channel_idx = app.cursors.channel_rack.channel;
                 let pattern_id = app.current_pattern;
                 // Find note ID first, then delete
                 let note_id = app
@@ -1013,7 +1013,7 @@ fn execute_context_menu_action(
                     if !entry.is_dir {
                         if let Some(file_name) = entry.path.file_name() {
                             let sample_path = file_name.to_string_lossy().to_string();
-                            app.set_channel_sample(app.channel_rack.channel, sample_path);
+                            app.set_channel_sample(app.cursors.channel_rack.channel, sample_path);
                         }
                     }
                 }

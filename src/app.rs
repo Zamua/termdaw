@@ -93,7 +93,7 @@ use crate::audio::AudioHandle;
 use crate::browser::BrowserState;
 use crate::command_picker::CommandPicker;
 use crate::coords::AppCol;
-use crate::cursor::{ChannelRackCursor, PianoRollCursor, PlaylistCursor};
+use crate::cursor::CursorStates;
 use crate::effects::{EffectSlot, EffectType, EFFECT_SLOTS};
 use crate::history::{GlobalJumplist, History, JumpPosition};
 use crate::input::context::{PianoRollContext, PlaylistContext, StepGridContext};
@@ -140,14 +140,8 @@ pub struct App {
     pub terminal_width: u16,
     pub terminal_height: u16,
 
-    /// Channel rack cursor state
-    pub channel_rack: ChannelRackCursor,
-
-    /// Piano roll cursor state
-    pub piano_roll: PianoRollCursor,
-
-    /// Playlist cursor state
-    pub playlist: PlaylistCursor,
+    /// Cursor states for all panels
+    pub cursors: CursorStates,
 
     /// Arrangement data
     pub arrangement: Arrangement,
@@ -286,9 +280,7 @@ impl App {
             transport: TransportState::new(bpm),
             terminal_width: 80,
             terminal_height: 24,
-            channel_rack: ChannelRackCursor::default(),
-            piano_roll: PianoRollCursor::default(),
-            playlist: PlaylistCursor::default(),
+            cursors: CursorStates::default(),
             arrangement,
             mixer,
             channels,
@@ -620,7 +612,7 @@ impl App {
             // Start playback based on focused panel
             if self.mode.current_panel() == Panel::Playlist {
                 // Start from cursor position in playlist (col 0 is mute, so bar = col - 1)
-                let start_bar = self.playlist.bar.saturating_sub(1);
+                let start_bar = self.cursors.playlist.bar.saturating_sub(1);
                 self.transport.playback.play_arrangement_from(start_bar);
             } else {
                 self.transport.playback.play_pattern();
@@ -734,22 +726,22 @@ impl App {
     /// Get the current step index (0-15) from cursor column
     /// Returns 0 if in sample or mute zone
     pub fn cursor_step(&self) -> usize {
-        self.channel_rack.col.to_step_or_zero()
+        self.cursors.channel_rack.col.to_step_or_zero()
     }
 
     /// Get the current zone name
     pub fn cursor_zone(&self) -> &'static str {
-        self.channel_rack.col.zone_name()
+        self.cursors.channel_rack.col.zone_name()
     }
 
     /// Toggle step at cursor in channel rack (only works in steps zone)
     #[allow(dead_code)]
     pub fn toggle_step(&mut self) {
-        if !self.channel_rack.col.is_step_zone() {
+        if !self.cursors.channel_rack.col.is_step_zone() {
             return; // Not in steps zone
         }
-        let channel_idx = self.channel_rack.channel;
-        let step = self.channel_rack.col.to_step_or_zero();
+        let channel_idx = self.cursors.channel_rack.channel;
+        let step = self.cursors.channel_rack.col.to_step_or_zero();
         let pattern_id = self.current_pattern;
         let pattern_length = self
             .patterns
@@ -963,11 +955,11 @@ impl App {
 
     /// Preview the current note in piano roll (for plugin channels)
     pub fn preview_piano_note(&mut self) {
-        let slot = self.channel_rack.channel;
+        let slot = self.cursors.channel_rack.channel;
         // Find Vec index for audio engine
         if let Some(vec_idx) = self.channels.iter().position(|c| c.slot == slot) {
             if let ChannelSource::Plugin { .. } = &self.channels[vec_idx].source {
-                let note = self.piano_roll.pitch;
+                let note = self.cursors.piano_roll.pitch;
                 self.audio.plugin_note_on(vec_idx, note, 0.8);
                 self.is_previewing = true;
                 self.preview_channel = Some(vec_idx);
@@ -1151,14 +1143,14 @@ impl App {
     pub fn toggle_step_with_history(&mut self) {
         use crate::history::command::ToggleStepCmd;
 
-        if !self.channel_rack.col.is_step_zone() {
+        if !self.cursors.channel_rack.col.is_step_zone() {
             return;
         }
 
         let cmd = Box::new(ToggleStepCmd::new(
             self.current_pattern,
-            self.channel_rack.channel,
-            self.channel_rack.col.to_step_or_zero(),
+            self.cursors.channel_rack.channel,
+            self.cursors.channel_rack.col.to_step_or_zero(),
         ));
         // Take history out temporarily to avoid borrow conflict
         let mut history = std::mem::take(&mut self.history);
@@ -1172,7 +1164,7 @@ impl App {
 
         let cmd = Box::new(AddNoteCmd::new(
             self.current_pattern,
-            self.channel_rack.channel,
+            self.cursors.channel_rack.channel,
             note,
         ));
         // Take history out temporarily to avoid borrow conflict
@@ -1187,7 +1179,7 @@ impl App {
 
         let cmd = Box::new(RemoveNoteCmd::new(
             self.current_pattern,
-            self.channel_rack.channel,
+            self.cursors.channel_rack.channel,
             note_id,
         ));
         // Take history out temporarily to avoid borrow conflict
@@ -1213,15 +1205,17 @@ impl App {
     pub fn current_jump_position(&self) -> JumpPosition {
         match self.view_mode {
             ViewMode::ChannelRack => JumpPosition::channel_rack(
-                self.channel_rack.channel,
-                self.channel_rack.col.to_step_or_zero(),
+                self.cursors.channel_rack.channel,
+                self.cursors.channel_rack.col.to_step_or_zero(),
             ),
             ViewMode::PianoRoll => {
                 // Convert pitch to row (higher pitch = lower row number)
-                let pitch_row = (84 - self.piano_roll.pitch) as usize;
-                JumpPosition::piano_roll(pitch_row, self.piano_roll.step)
+                let pitch_row = (84 - self.cursors.piano_roll.pitch) as usize;
+                JumpPosition::piano_roll(pitch_row, self.cursors.piano_roll.step)
             }
-            ViewMode::Playlist => JumpPosition::playlist(self.playlist.row, self.playlist.bar),
+            ViewMode::Playlist => {
+                JumpPosition::playlist(self.cursors.playlist.row, self.cursors.playlist.bar)
+            }
         }
     }
 
@@ -1244,42 +1238,52 @@ impl App {
         // Set cursor position and scroll viewport based on view
         match pos.view {
             ViewMode::ChannelRack => {
-                self.channel_rack.channel = pos.row.min(self.channels.len().saturating_sub(1));
+                self.cursors.channel_rack.channel =
+                    pos.row.min(self.channels.len().saturating_sub(1));
                 // Convert step to AppCol (step zone starts at col 3 in vim space)
-                self.channel_rack.col = AppCol::from_step(pos.col);
+                self.cursors.channel_rack.col = AppCol::from_step(pos.col);
                 // Scroll viewport to keep cursor visible
                 let visible_rows = 15;
-                if self.channel_rack.channel >= self.channel_rack.viewport_top + visible_rows {
-                    self.channel_rack.viewport_top = self.channel_rack.channel - visible_rows + 1;
+                if self.cursors.channel_rack.channel
+                    >= self.cursors.channel_rack.viewport_top + visible_rows
+                {
+                    self.cursors.channel_rack.viewport_top =
+                        self.cursors.channel_rack.channel - visible_rows + 1;
                 }
-                if self.channel_rack.channel < self.channel_rack.viewport_top {
-                    self.channel_rack.viewport_top = self.channel_rack.channel;
+                if self.cursors.channel_rack.channel < self.cursors.channel_rack.viewport_top {
+                    self.cursors.channel_rack.viewport_top = self.cursors.channel_rack.channel;
                 }
             }
             ViewMode::PianoRoll => {
                 // Convert row back to pitch (row 0 = pitch 84, row 48 = pitch 36)
-                self.piano_roll.pitch = (84 - pos.row as i32).clamp(36, 84) as u8;
-                self.piano_roll.step = pos.col.min(15);
+                self.cursors.piano_roll.pitch = (84 - pos.row as i32).clamp(36, 84) as u8;
+                self.cursors.piano_roll.step = pos.col.min(15);
                 // Scroll viewport to keep cursor visible (viewport_top is highest visible pitch)
-                if self.piano_roll.pitch > self.piano_roll.viewport_top {
-                    self.piano_roll.viewport_top = self.piano_roll.pitch;
+                if self.cursors.piano_roll.pitch > self.cursors.piano_roll.viewport_top {
+                    self.cursors.piano_roll.viewport_top = self.cursors.piano_roll.pitch;
                 }
                 let visible_rows = 20u8;
-                if self.piano_roll.pitch < self.piano_roll.viewport_top.saturating_sub(visible_rows)
+                if self.cursors.piano_roll.pitch
+                    < self
+                        .cursors
+                        .piano_roll
+                        .viewport_top
+                        .saturating_sub(visible_rows)
                 {
-                    self.piano_roll.viewport_top = self.piano_roll.pitch + 10;
+                    self.cursors.piano_roll.viewport_top = self.cursors.piano_roll.pitch + 10;
                 }
             }
             ViewMode::Playlist => {
-                self.playlist.row = pos.row.min(self.patterns.len().saturating_sub(1));
-                self.playlist.bar = pos.col.min(16);
+                self.cursors.playlist.row = pos.row.min(self.patterns.len().saturating_sub(1));
+                self.cursors.playlist.bar = pos.col.min(16);
                 // Scroll viewport to keep cursor visible
                 let visible_rows = 10;
-                if self.playlist.row >= self.playlist.viewport_top + visible_rows {
-                    self.playlist.viewport_top = self.playlist.row - visible_rows + 1;
+                if self.cursors.playlist.row >= self.cursors.playlist.viewport_top + visible_rows {
+                    self.cursors.playlist.viewport_top =
+                        self.cursors.playlist.row - visible_rows + 1;
                 }
-                if self.playlist.row < self.playlist.viewport_top {
-                    self.playlist.viewport_top = self.playlist.row;
+                if self.cursors.playlist.row < self.cursors.playlist.viewport_top {
+                    self.cursors.playlist.viewport_top = self.cursors.playlist.row;
                 }
             }
         }
@@ -1323,7 +1327,7 @@ impl StepGridContext for App {
 
 impl PianoRollContext for App {
     fn notes(&self) -> &[Note] {
-        let channel = self.channel_rack.channel;
+        let channel = self.cursors.channel_rack.channel;
         let pattern_id = self.current_pattern;
         self.channels
             .get(channel)
@@ -1333,7 +1337,7 @@ impl PianoRollContext for App {
     }
 
     fn add_note(&mut self, note: Note) {
-        let channel = self.channel_rack.channel;
+        let channel = self.cursors.channel_rack.channel;
         let pattern_id = self.current_pattern;
         let pattern_length = self.pattern_length();
         if let Some(ch) = self.channels.get_mut(channel) {
@@ -1344,7 +1348,7 @@ impl PianoRollContext for App {
     }
 
     fn remove_note(&mut self, id: &str) -> Option<Note> {
-        let channel = self.channel_rack.channel;
+        let channel = self.cursors.channel_rack.channel;
         let pattern_id = self.current_pattern;
         let pattern_length = self.pattern_length();
         let removed = if let Some(ch) = self.channels.get_mut(channel) {

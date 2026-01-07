@@ -69,12 +69,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     };
 
     // Get current visual selection (if any)
-    let cursor = Position::new(app.playlist.row, app.playlist.bar);
+    let cursor = Position::new(app.cursors.playlist.row, app.cursors.playlist.bar);
     let selection = app.vim.playlist.get_selection(cursor);
 
     // Calculate visible pattern range based on viewport
     let visible_rows = (inner.height - HEADER_ROWS) as usize;
-    let viewport_top = app.playlist.viewport_top;
+    let viewport_top = app.cursors.playlist.viewport_top;
 
     // Render pattern rows
     for row_idx in 0..visible_rows {
@@ -126,7 +126,7 @@ fn render_header(frame: &mut Frame, inner: Rect, app: &App) {
         let bar_num = bar + 1;
         let is_beat = bar % 4 == 0;
         let is_playhead = app.is_playing_arrangement() && bar == app.arrangement_bar();
-        let is_cursor_col = focused && app.playlist.bar == bar;
+        let is_cursor_col = focused && app.cursors.playlist.bar == bar;
 
         let color = if is_playhead {
             Color::Green
@@ -198,7 +198,7 @@ fn render_pattern_row(
     let zone_bg = colors::bg::COL_A;
 
     // Pattern name
-    let is_cursor_row = focused && app.playlist.row == row_idx;
+    let is_cursor_row = focused && app.cursors.playlist.row == row_idx;
     let pattern_style = if is_cursor_row {
         Style::default()
             .fg(Color::Cyan)
@@ -235,7 +235,7 @@ fn render_pattern_row(
         ("○", Color::Green)
     };
 
-    let is_mute_cursor = is_cursor_row && app.playlist.bar == 0;
+    let is_mute_cursor = is_cursor_row && app.cursors.playlist.bar == 0;
     let mute_style = if is_mute_cursor {
         Style::default()
             .fg(colors::fg::CURSOR_CONTENT)
@@ -253,7 +253,8 @@ fn render_pattern_row(
     // Bar cells
     for bar in 0..NUM_BARS {
         let is_beat = bar % 4 == 0;
-        let is_cursor = focused && app.playlist.row == row_idx && app.playlist.bar == bar + 1;
+        let is_cursor =
+            focused && app.cursors.playlist.row == row_idx && app.cursors.playlist.bar == bar + 1;
         let is_playhead = app.is_playing_arrangement() && bar == app.arrangement_bar();
 
         // Check if this cell is in visual selection (bar + 1 because bar 0 is mute column)

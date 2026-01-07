@@ -27,11 +27,11 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
 
     // Calculate visible rows
     let visible_rows = (inner.height - HEADER_ROWS) as usize;
-    let viewport_top = app.channel_rack.viewport_top;
+    let viewport_top = app.cursors.channel_rack.viewport_top;
 
     // Get current visual selection (if any)
-    let vim_col: crate::coords::VimCol = app.channel_rack.col.into();
-    let cursor = Position::new(app.channel_rack.channel, vim_col.0);
+    let vim_col: crate::coords::VimCol = app.cursors.channel_rack.col.into();
+    let cursor = Position::new(app.cursors.channel_rack.channel, vim_col.0);
     let selection = app.vim.channel_rack.get_selection(cursor);
 
     // Render all 99 channel slots (within viewport)
@@ -69,8 +69,8 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
             .channel_rack_cells
             .insert((channel_idx, 0), mute_rect);
 
-        let is_mute_cursor = channel_idx == app.channel_rack.channel
-            && app.channel_rack.col.is_mute_zone()
+        let is_mute_cursor = channel_idx == app.cursors.channel_rack.channel
+            && app.cursors.channel_rack.col.is_mute_zone()
             && focused;
         let (mute_char, mute_color) = if is_allocated {
             if mixer_track.solo {
@@ -106,8 +106,8 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
             .channel_rack_cells
             .insert((channel_idx, 1), track_rect);
 
-        let is_track_cursor = channel_idx == app.channel_rack.channel
-            && app.channel_rack.col.is_track_zone()
+        let is_track_cursor = channel_idx == app.cursors.channel_rack.channel
+            && app.cursors.channel_rack.col.is_track_zone()
             && focused;
         let track_num = track_id.index();
         let track_text = if is_allocated {
@@ -135,15 +135,15 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
             .channel_rack_cells
             .insert((channel_idx, 2), sample_rect);
 
-        let is_sample_cursor = channel_idx == app.channel_rack.channel
-            && app.channel_rack.col.is_sample_zone()
+        let is_sample_cursor = channel_idx == app.cursors.channel_rack.channel
+            && app.cursors.channel_rack.col.is_sample_zone()
             && focused;
         let sample_style = if is_sample_cursor {
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
-        } else if channel_idx == app.channel_rack.channel && focused {
+        } else if channel_idx == app.cursors.channel_rack.channel && focused {
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
@@ -189,8 +189,8 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
             .unwrap_or_else(|| vec![false; 16]);
         let is_playing = app.is_playing();
         let playhead = app.playhead_step();
-        let cursor_channel = app.channel_rack.channel;
-        let cursor_col = app.channel_rack.col.0;
+        let cursor_channel = app.cursors.channel_rack.channel;
+        let cursor_col = app.cursors.channel_rack.col.0;
 
         for step in 0..16 {
             if x + STEP_WIDTH > inner.x + inner.width {

@@ -39,7 +39,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     match key.code {
         // 'm' to cycle mute state: normal -> muted -> solo -> normal
         KeyCode::Char('m') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let slot = app.channel_rack.channel;
+            let slot = app.cursors.channel_rack.channel;
             if app.get_channel_at_slot(slot).is_some() {
                 cycle_channel_mute_state(app, slot);
                 app.sync_mixer_to_audio();
@@ -51,13 +51,13 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Start preview (release is handled at top level of handle_key)
             if !app.is_previewing {
-                app.start_preview(app.channel_rack.channel);
+                app.start_preview(app.cursors.channel_rack.channel);
             }
             return;
         }
         // 'S' (shift+s) to toggle solo on current channel's mixer track
         KeyCode::Char('S') => {
-            let slot = app.channel_rack.channel;
+            let slot = app.cursors.channel_rack.channel;
             if let Some(channel) = app.get_channel_at_slot(slot) {
                 let track_id = TrackId(channel.mixer_track);
                 app.mixer.toggle_solo(track_id);
@@ -73,7 +73,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // 'p' to open plugin editor for plugin channels
         KeyCode::Char('p') => {
-            let slot = app.channel_rack.channel;
+            let slot = app.cursors.channel_rack.channel;
             // Extract data before mutable borrow
             let plugin_info = app.get_channel_at_slot(slot).and_then(|channel| {
                 if let ChannelSource::Plugin { .. } = &channel.source {
@@ -112,7 +112,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // 'd' in sample zone to delete channel
         KeyCode::Char('d') if app.cursor_zone() == "sample" => {
-            let slot = app.channel_rack.channel;
+            let slot = app.cursors.channel_rack.channel;
             // Find the channel by slot and remove it
             if let Some(idx) = app.channels.iter().position(|c| c.slot == slot) {
                 app.channels.remove(idx);
@@ -123,16 +123,16 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // 'x' or Enter in non-steps zones - zone-aware action
         // In steps zone, let vim handle 'x' (for visual mode delete, counts, etc.)
-        KeyCode::Char('x') | KeyCode::Enter if !app.channel_rack.col.is_step_zone() => {
-            let slot = app.channel_rack.channel;
-            if app.channel_rack.col.is_mute_zone() {
+        KeyCode::Char('x') | KeyCode::Enter if !app.cursors.channel_rack.col.is_step_zone() => {
+            let slot = app.cursors.channel_rack.channel;
+            if app.cursors.channel_rack.col.is_mute_zone() {
                 // Cycle mute state on the mixer track
                 if app.get_channel_at_slot(slot).is_some() {
                     cycle_channel_mute_state(app, slot);
                     app.sync_mixer_to_audio();
                     app.mark_dirty();
                 }
-            } else if app.channel_rack.col.is_track_zone() {
+            } else if app.cursors.channel_rack.col.is_track_zone() {
                 // Cycle to next mixer track (1-15, wrap around)
                 // Find Vec index for audio engine
                 if let Some(vec_idx) = app.channels.iter().position(|c| c.slot == slot) {
@@ -147,19 +147,20 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
                     app.audio.set_generator_track(vec_idx, next);
                     app.mark_dirty();
                 }
-            } else if app.channel_rack.col.is_sample_zone() {
+            } else if app.cursors.channel_rack.col.is_sample_zone() {
                 // Open sample browser - record position for Ctrl+O
                 let current = app.current_jump_position();
                 app.global_jumplist.push(current);
-                app.browser.start_selection(app.channel_rack.channel);
+                app.browser
+                    .start_selection(app.cursors.channel_rack.channel);
                 app.mode.switch_panel(Panel::Browser);
                 app.show_browser = true;
             }
             return;
         }
         // '+' or '=' to increment track assignment (when in track zone)
-        KeyCode::Char('+') | KeyCode::Char('=') if app.channel_rack.col.is_track_zone() => {
-            let slot = app.channel_rack.channel;
+        KeyCode::Char('+') | KeyCode::Char('=') if app.cursors.channel_rack.col.is_track_zone() => {
+            let slot = app.cursors.channel_rack.channel;
             if let Some(vec_idx) = app.channels.iter().position(|c| c.slot == slot) {
                 let channel = &mut app.channels[vec_idx];
                 let next = if channel.mixer_track >= 15 {
@@ -174,8 +175,8 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             return;
         }
         // '-' to decrement track assignment (when in track zone)
-        KeyCode::Char('-') if app.channel_rack.col.is_track_zone() => {
-            let slot = app.channel_rack.channel;
+        KeyCode::Char('-') if app.cursors.channel_rack.col.is_track_zone() => {
+            let slot = app.cursors.channel_rack.channel;
             if let Some(vec_idx) = app.channels.iter().position(|c| c.slot == slot) {
                 let channel = &mut app.channels[vec_idx];
                 let prev = if channel.mixer_track <= 1 {
@@ -191,8 +192,8 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         }
         // Arrow keys mapped to vim motions
         KeyCode::Left => {
-            let vim_col: VimCol = app.channel_rack.col.into();
-            let cursor = Position::new(app.channel_rack.channel, vim_col.0);
+            let vim_col: VimCol = app.cursors.channel_rack.col.into();
+            let cursor = Position::new(app.cursors.channel_rack.channel, vim_col.0);
             let actions = app.vim.channel_rack.process_key('h', false, cursor);
             for action in actions {
                 execute_vim_action(action, app);
@@ -200,8 +201,8 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             return;
         }
         KeyCode::Right => {
-            let vim_col: VimCol = app.channel_rack.col.into();
-            let cursor = Position::new(app.channel_rack.channel, vim_col.0);
+            let vim_col: VimCol = app.cursors.channel_rack.col.into();
+            let cursor = Position::new(app.cursors.channel_rack.channel, vim_col.0);
             let actions = app.vim.channel_rack.process_key('l', false, cursor);
             for action in actions {
                 execute_vim_action(action, app);
@@ -217,8 +218,8 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
     };
 
     // Get current cursor position (convert to vim space)
-    let vim_col: VimCol = app.channel_rack.col.into();
-    let cursor = Position::new(app.channel_rack.channel, vim_col.0);
+    let vim_col: VimCol = app.cursors.channel_rack.col.into();
+    let cursor = Position::new(app.cursors.channel_rack.channel, vim_col.0);
 
     // Let vim process the key
     let actions = app.vim.channel_rack.process_key(ch, ctrl, cursor);
@@ -236,26 +237,29 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
 
         VimAction::MoveCursor(pos) => {
             // Clamp to valid channel range (99 slots)
-            app.channel_rack.channel = pos.row.min(98);
+            app.cursors.channel_rack.channel = pos.row.min(98);
             // Convert vim col back to cursor_col
-            app.channel_rack.col = AppCol::from(VimCol(pos.col)).clamp();
+            app.cursors.channel_rack.col = AppCol::from(VimCol(pos.col)).clamp();
 
             // Update viewport to keep cursor visible
             // Assume ~15 visible rows (will be recalculated at render time)
             let visible_rows = 15;
-            if app.channel_rack.channel >= app.channel_rack.viewport_top + visible_rows {
-                app.channel_rack.viewport_top = app.channel_rack.channel - visible_rows + 1;
+            if app.cursors.channel_rack.channel
+                >= app.cursors.channel_rack.viewport_top + visible_rows
+            {
+                app.cursors.channel_rack.viewport_top =
+                    app.cursors.channel_rack.channel - visible_rows + 1;
             }
-            if app.channel_rack.channel < app.channel_rack.viewport_top {
-                app.channel_rack.viewport_top = app.channel_rack.channel;
+            if app.cursors.channel_rack.channel < app.cursors.channel_rack.viewport_top {
+                app.cursors.channel_rack.viewport_top = app.cursors.channel_rack.channel;
             }
         }
 
         VimAction::Toggle => {
             // Only toggle step if in steps zone
-            if app.channel_rack.col.is_step_zone() {
+            if app.cursors.channel_rack.col.is_step_zone() {
                 // For plugin channels, open piano roll instead of toggling step
-                let slot = app.channel_rack.channel;
+                let slot = app.cursors.channel_rack.channel;
                 if let Some(channel) = app.get_channel_at_slot(slot) {
                     if matches!(&channel.source, ChannelSource::Plugin { .. }) {
                         app.set_view_mode(ViewMode::PianoRoll);
@@ -308,20 +312,24 @@ fn execute_vim_action(action: VimAction, app: &mut App) {
             if delta > 0 {
                 // Scroll down
                 let max_top = 99usize.saturating_sub(visible_rows);
-                app.channel_rack.viewport_top =
-                    (app.channel_rack.viewport_top + delta as usize).min(max_top);
+                app.cursors.channel_rack.viewport_top =
+                    (app.cursors.channel_rack.viewport_top + delta as usize).min(max_top);
             } else {
                 // Scroll up
-                app.channel_rack.viewport_top = app
+                app.cursors.channel_rack.viewport_top = app
+                    .cursors
                     .channel_rack
                     .viewport_top
                     .saturating_sub((-delta) as usize);
             }
             // Keep cursor visible
-            if app.channel_rack.channel < app.channel_rack.viewport_top {
-                app.channel_rack.channel = app.channel_rack.viewport_top;
-            } else if app.channel_rack.channel >= app.channel_rack.viewport_top + visible_rows {
-                app.channel_rack.channel = app.channel_rack.viewport_top + visible_rows - 1;
+            if app.cursors.channel_rack.channel < app.cursors.channel_rack.viewport_top {
+                app.cursors.channel_rack.channel = app.cursors.channel_rack.viewport_top;
+            } else if app.cursors.channel_rack.channel
+                >= app.cursors.channel_rack.viewport_top + visible_rows
+            {
+                app.cursors.channel_rack.channel =
+                    app.cursors.channel_rack.viewport_top + visible_rows - 1;
             }
         }
 
@@ -443,7 +451,7 @@ fn delete_pattern_data(app: &mut App, range: &Range) {
 
 /// Paste clipboard at cursor position
 fn paste_at_cursor(app: &mut App, before: bool) {
-    let cursor_row = app.channel_rack.channel;
+    let cursor_row = app.cursors.channel_rack.channel;
     let cursor_col = app.cursor_step(); // Use method to get step index
 
     // Clone register data to avoid borrow issues
@@ -507,8 +515,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
             if let Some((row, vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
                 // Exit visual mode if active
                 if app.vim.channel_rack.is_visual() {
-                    let vim_col_current: VimCol = app.channel_rack.col.into();
-                    let cursor = Position::new(app.channel_rack.channel, vim_col_current.0);
+                    let vim_col_current: VimCol = app.cursors.channel_rack.col.into();
+                    let cursor = Position::new(app.cursors.channel_rack.channel, vim_col_current.0);
                     let actions = app.vim.channel_rack.process_key('\x1b', false, cursor);
                     for action in actions {
                         execute_vim_action(action, app);
@@ -516,8 +524,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                 }
 
                 // Move cursor to clicked cell
-                app.channel_rack.channel = row.min(98);
-                app.channel_rack.col = AppCol::from(VimCol(vim_col)).clamp();
+                app.cursors.channel_rack.channel = row.min(98);
+                app.cursors.channel_rack.col = AppCol::from(VimCol(vim_col)).clamp();
                 update_viewport(app);
 
                 // Handle zone-specific click behavior
@@ -565,8 +573,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
                 let col = AppCol::from(VimCol(vim_col));
                 if col.is_step_zone() {
                     // Move cursor to start position
-                    app.channel_rack.channel = row.min(98);
-                    app.channel_rack.col = col.clamp();
+                    app.cursors.channel_rack.channel = row.min(98);
+                    app.cursors.channel_rack.col = col.clamp();
                     update_viewport(app);
 
                     // Enter visual block mode
@@ -584,8 +592,8 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
             if app.vim.channel_rack.is_visual() {
                 if let Some((row, vim_col)) = app.screen_areas.channel_rack_cell_at(*x, *y) {
                     // Move cursor to extend selection
-                    app.channel_rack.channel = row.min(98);
-                    app.channel_rack.col = AppCol::from(VimCol(vim_col)).clamp();
+                    app.cursors.channel_rack.channel = row.min(98);
+                    app.cursors.channel_rack.col = AppCol::from(VimCol(vim_col)).clamp();
                     update_viewport(app);
                 }
             }
@@ -600,10 +608,12 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
             // Scroll viewport
             if *delta < 0 {
                 // Scroll up
-                app.channel_rack.viewport_top = app.channel_rack.viewport_top.saturating_sub(3);
+                app.cursors.channel_rack.viewport_top =
+                    app.cursors.channel_rack.viewport_top.saturating_sub(3);
             } else {
                 // Scroll down
-                app.channel_rack.viewport_top = (app.channel_rack.viewport_top + 3).min(98);
+                app.cursors.channel_rack.viewport_top =
+                    (app.cursors.channel_rack.viewport_top + 3).min(98);
             }
         }
 
@@ -634,10 +644,10 @@ pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
 /// Update viewport to keep cursor visible
 fn update_viewport(app: &mut App) {
     let visible_rows = 15; // Approximate
-    if app.channel_rack.channel >= app.channel_rack.viewport_top + visible_rows {
-        app.channel_rack.viewport_top = app.channel_rack.channel - visible_rows + 1;
+    if app.cursors.channel_rack.channel >= app.cursors.channel_rack.viewport_top + visible_rows {
+        app.cursors.channel_rack.viewport_top = app.cursors.channel_rack.channel - visible_rows + 1;
     }
-    if app.channel_rack.channel < app.channel_rack.viewport_top {
-        app.channel_rack.viewport_top = app.channel_rack.channel;
+    if app.cursors.channel_rack.channel < app.cursors.channel_rack.viewport_top {
+        app.cursors.channel_rack.viewport_top = app.cursors.channel_rack.channel;
     }
 }

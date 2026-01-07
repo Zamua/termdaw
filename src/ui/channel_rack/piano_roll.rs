@@ -56,7 +56,7 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
     // Render header rows (with piano roll mode headers)
     render_header(frame, inner, app, true);
 
-    let selected_channel = app.channel_rack.channel;
+    let selected_channel = app.cursors.channel_rack.channel;
     let pattern_id = app.current_pattern;
 
     // Get notes from channel's pattern data for selected channel
@@ -68,14 +68,14 @@ pub fn render(frame: &mut Frame, inner: Rect, app: &mut App, focused: bool) {
         .unwrap_or_default();
 
     // Get current visual selection (if any)
-    let cursor_row = MAX_PITCH.saturating_sub(app.piano_roll.pitch) as usize;
-    let cursor = Position::new(cursor_row, app.piano_roll.step);
+    let cursor_row = MAX_PITCH.saturating_sub(app.cursors.piano_roll.pitch) as usize;
+    let cursor = Position::new(cursor_row, app.cursors.piano_roll.step);
     let selection = app.vim.piano_roll.get_selection(cursor);
 
     // Calculate visible pitch range based on viewport
     let visible_rows = (inner.height - HEADER_ROWS) as usize;
-    let pitch_viewport_top = app.piano_roll.viewport_top.min(MAX_PITCH);
-    let channel_viewport_top = app.channel_rack.viewport_top;
+    let pitch_viewport_top = app.cursors.piano_roll.viewport_top.min(MAX_PITCH);
+    let channel_viewport_top = app.cursors.channel_rack.viewport_top;
 
     // Render pitch rows (from high to low)
     for row_idx in 0..visible_rows {
@@ -126,7 +126,7 @@ fn render_row(
     // Calculate vim row for this pitch (high pitches at top = low row numbers)
     let vim_row = MAX_PITCH.saturating_sub(pitch) as usize;
 
-    let is_cursor_row = focused && app.piano_roll.pitch == pitch;
+    let is_cursor_row = focused && app.cursors.piano_roll.pitch == pitch;
     let is_black = is_black_key(pitch);
 
     // Map this row to a slot (for displaying channel list alongside pitches)
@@ -231,12 +231,12 @@ fn render_row(
     // === STEP CELLS (piano roll notes) ===
     for step in 0..16usize {
         let is_beat = step % 4 == 0;
-        let is_cursor = is_cursor_row && app.piano_roll.step == step;
+        let is_cursor = is_cursor_row && app.cursors.piano_roll.step == step;
         let is_playhead = app.is_playing() && step == app.playhead_step();
-        let is_placing_preview = app.piano_roll.placing_note.is_some_and(|start| {
-            let min = start.min(app.piano_roll.step);
-            let max = start.max(app.piano_roll.step);
-            pitch == app.piano_roll.pitch && step >= min && step <= max
+        let is_placing_preview = app.cursors.piano_roll.placing_note.is_some_and(|start| {
+            let min = start.min(app.cursors.piano_roll.step);
+            let max = start.max(app.cursors.piano_roll.step);
+            pitch == app.cursors.piano_roll.pitch && step >= min && step <= max
         });
 
         // Check if this cell is in visual selection
@@ -259,7 +259,7 @@ fn render_row(
         let has_note = note_at.is_some();
 
         // Special handling for placement mode cursor
-        let is_placement_mode = app.piano_roll.placing_note.is_some();
+        let is_placement_mode = app.cursors.piano_roll.placing_note.is_some();
 
         // Determine cell style and content
         let (cell, cell_style) = if is_cursor {
