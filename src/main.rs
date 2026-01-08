@@ -37,6 +37,14 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
+    // Ensure templates are downloaded (first run setup)
+    if let Err(e) = termdaw::templates::ensure_templates() {
+        eprintln!("Warning: Could not download templates: {}", e);
+        eprintln!("You can still use the app, but new projects won't have starter content.");
+        eprintln!("Press Enter to continue...");
+        let _ = std::io::stdin().read_line(&mut String::new());
+    }
+
     // Determine project name: use provided name or auto-generate
     let project_name = args
         .project

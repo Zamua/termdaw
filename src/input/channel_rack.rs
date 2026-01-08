@@ -637,6 +637,12 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let project_path = temp_dir.path().join("test-project");
         std::fs::create_dir_all(&project_path).expect("Failed to create project dir");
+
+        // Create a minimal empty project.json so template is not copied
+        let empty_project = crate::project::ProjectFile::new("test-project");
+        crate::project::save_project(&project_path, &empty_project)
+            .expect("Failed to create test project");
+
         let audio = AudioHandle::dummy();
         let app = App::new(project_path.to_str().unwrap(), audio);
         (app, temp_dir)

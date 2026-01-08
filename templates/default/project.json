@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "untitled",
   "created_at": "2025-01-01T00:00:00Z",
   "modified_at": "2025-01-01T00:00:00Z",
@@ -8,108 +8,182 @@
   "channels": [
     {
       "name": "kick",
-      "channel_type": "Sampler",
-      "sample_path": "Kits/Acoustic/kick.wav",
-      "volume": 1.0,
-      "muted": false,
-      "solo": false
+      "slot": 0,
+      "source": { "type": "sampler", "path": "Kits/Acoustic/kick.wav" },
+      "mixer_track": 1,
+      "pattern_data": {
+        "0": {
+          "steps": [true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false],
+          "notes": []
+        },
+        "1": {
+          "steps": [true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false],
+          "notes": []
+        },
+        "2": {
+          "steps": [true, false, false, false, true, false, false, false, true, false, false, false, true, false, false, false],
+          "notes": []
+        },
+        "3": {
+          "steps": [true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+          "notes": []
+        }
+      }
     },
     {
       "name": "snare",
-      "channel_type": "Sampler",
-      "sample_path": "Kits/Acoustic/snare.wav",
-      "volume": 1.0,
-      "muted": false,
-      "solo": false
+      "slot": 1,
+      "source": { "type": "sampler", "path": "Kits/Acoustic/snare.wav" },
+      "mixer_track": 2,
+      "pattern_data": {
+        "0": {
+          "steps": [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+          "notes": []
+        },
+        "1": {
+          "steps": [false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false],
+          "notes": []
+        },
+        "2": {
+          "steps": [false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false],
+          "notes": []
+        },
+        "3": {
+          "steps": [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+          "notes": []
+        }
+      }
     },
     {
-      "name": "hihat-closed",
-      "channel_type": "Sampler",
-      "sample_path": "Kits/Acoustic/hihat-closed.wav",
-      "volume": 1.0,
-      "muted": false,
-      "solo": false
+      "name": "hihat",
+      "slot": 2,
+      "source": { "type": "sampler", "path": "Kits/Acoustic/hihat-closed.wav" },
+      "mixer_track": 3,
+      "pattern_data": {
+        "0": {
+          "steps": [true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false],
+          "notes": []
+        },
+        "1": {
+          "steps": [true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false],
+          "notes": []
+        },
+        "2": {
+          "steps": [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true],
+          "notes": []
+        },
+        "3": {
+          "steps": [true, false, false, false, true, false, false, false, true, false, false, false, false, false, false, false],
+          "notes": []
+        }
+      }
     },
     {
-      "name": "hihat-open",
-      "channel_type": "Sampler",
-      "sample_path": "Kits/Acoustic/hihat-open.wav",
-      "volume": 1.0,
-      "muted": false,
-      "solo": false
+      "name": "bass",
+      "slot": 3,
+      "source": { "type": "plugin", "path": "Simple Synth.clap", "params": {} },
+      "mixer_track": 4,
+      "pattern_data": {
+        "0": {
+          "steps": [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+          "notes": [
+            { "id": "intro-bass-1", "pitch": 36, "start_step": 0, "duration": 8, "velocity": 0.7 },
+            { "id": "intro-bass-2", "pitch": 36, "start_step": 8, "duration": 8, "velocity": 0.7 }
+          ]
+        },
+        "1": {
+          "steps": [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+          "notes": [
+            { "id": "verse-bass-1", "pitch": 36, "start_step": 0, "duration": 4, "velocity": 0.9 },
+            { "id": "verse-bass-2", "pitch": 36, "start_step": 4, "duration": 2, "velocity": 0.8 },
+            { "id": "verse-bass-3", "pitch": 38, "start_step": 6, "duration": 2, "velocity": 0.8 },
+            { "id": "verse-bass-4", "pitch": 40, "start_step": 8, "duration": 4, "velocity": 0.9 },
+            { "id": "verse-bass-5", "pitch": 38, "start_step": 12, "duration": 4, "velocity": 0.8 }
+          ]
+        },
+        "2": {
+          "steps": [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+          "notes": [
+            { "id": "chorus-bass-1", "pitch": 40, "start_step": 0, "duration": 4, "velocity": 1.0 },
+            { "id": "chorus-bass-2", "pitch": 43, "start_step": 4, "duration": 4, "velocity": 1.0 },
+            { "id": "chorus-bass-3", "pitch": 45, "start_step": 8, "duration": 4, "velocity": 1.0 },
+            { "id": "chorus-bass-4", "pitch": 43, "start_step": 12, "duration": 4, "velocity": 1.0 }
+          ]
+        },
+        "3": {
+          "steps": [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+          "notes": [
+            { "id": "outro-bass-1", "pitch": 36, "start_step": 0, "duration": 16, "velocity": 0.6 }
+          ]
+        }
+      }
     },
     {
-      "name": "crash",
-      "channel_type": "Sampler",
-      "sample_path": "Kits/Acoustic/crash.wav",
-      "volume": 1.0,
-      "muted": false,
-      "solo": false
-    },
-    {
-      "name": "ride",
-      "channel_type": "Sampler",
-      "sample_path": "Kits/Acoustic/ride.wav",
-      "volume": 1.0,
-      "muted": false,
-      "solo": false
-    },
-    {
-      "name": "tom-high",
-      "channel_type": "Sampler",
-      "sample_path": "Kits/Acoustic/tom-high.wav",
-      "volume": 1.0,
-      "muted": false,
-      "solo": false
-    },
-    {
-      "name": "tom-low",
-      "channel_type": "Sampler",
-      "sample_path": "Kits/Acoustic/tom-low.wav",
-      "volume": 1.0,
-      "muted": false,
-      "solo": false
-    },
-    {
-      "name": "Synth",
-      "channel_type": { "Plugin": { "path": "Simple Synth.clap" } },
-      "sample_path": null,
-      "volume": 1.0,
-      "muted": false,
-      "solo": false
+      "name": "lead",
+      "slot": 4,
+      "source": { "type": "plugin", "path": "Simple Synth.clap", "params": {} },
+      "mixer_track": 5,
+      "pattern_data": {
+        "0": {
+          "steps": [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+          "notes": []
+        },
+        "1": {
+          "steps": [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+          "notes": [
+            { "id": "verse-lead-1", "pitch": 60, "start_step": 0, "duration": 2, "velocity": 0.7 },
+            { "id": "verse-lead-2", "pitch": 64, "start_step": 2, "duration": 2, "velocity": 0.7 },
+            { "id": "verse-lead-3", "pitch": 67, "start_step": 4, "duration": 4, "velocity": 0.8 },
+            { "id": "verse-lead-4", "pitch": 65, "start_step": 8, "duration": 2, "velocity": 0.7 },
+            { "id": "verse-lead-5", "pitch": 64, "start_step": 10, "duration": 2, "velocity": 0.7 },
+            { "id": "verse-lead-6", "pitch": 60, "start_step": 12, "duration": 4, "velocity": 0.8 }
+          ]
+        },
+        "2": {
+          "steps": [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+          "notes": [
+            { "id": "chorus-lead-1", "pitch": 67, "start_step": 0, "duration": 4, "velocity": 0.9 },
+            { "id": "chorus-lead-2", "pitch": 72, "start_step": 4, "duration": 4, "velocity": 0.9 },
+            { "id": "chorus-lead-3", "pitch": 69, "start_step": 8, "duration": 4, "velocity": 0.9 },
+            { "id": "chorus-lead-4", "pitch": 67, "start_step": 12, "duration": 4, "velocity": 0.9 }
+          ]
+        },
+        "3": {
+          "steps": [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+          "notes": [
+            { "id": "outro-lead-1", "pitch": 60, "start_step": 0, "duration": 8, "velocity": 0.5 },
+            { "id": "outro-lead-2", "pitch": 55, "start_step": 8, "duration": 8, "velocity": 0.4 }
+          ]
+        }
+      }
     }
   ],
   "patterns": [
-    {
-      "id": 0,
-      "name": "Pattern 1",
-      "steps": [
-        [true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false],
-        [false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false],
-        [true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false],
-        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
-        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
-        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
-        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
-        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
-        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]
-      ],
-      "notes": [
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-        [
-          { "id": "synth-note-1", "pitch": 60, "start_step": 0, "duration": 2, "velocity": 0.8 },
-          { "id": "synth-note-2", "pitch": 64, "start_step": 4, "duration": 2, "velocity": 0.8 },
-          { "id": "synth-note-3", "pitch": 67, "start_step": 8, "duration": 2, "velocity": 0.8 },
-          { "id": "synth-note-4", "pitch": 72, "start_step": 12, "duration": 4, "velocity": 0.8 }
-        ]
-      ]
-    }
-  ]
+    { "id": 0, "name": "Intro", "length": 16 },
+    { "id": 1, "name": "Verse", "length": 16 },
+    { "id": 2, "name": "Chorus", "length": 16 },
+    { "id": 3, "name": "Outro", "length": 16 }
+  ],
+  "arrangement": {
+    "placements": [
+      { "id": "arr-0", "pattern_id": 0, "start_bar": 0, "length": 1 },
+      { "id": "arr-1", "pattern_id": 0, "start_bar": 1, "length": 1 },
+      { "id": "arr-2", "pattern_id": 1, "start_bar": 2, "length": 1 },
+      { "id": "arr-3", "pattern_id": 1, "start_bar": 3, "length": 1 },
+      { "id": "arr-4", "pattern_id": 1, "start_bar": 4, "length": 1 },
+      { "id": "arr-5", "pattern_id": 1, "start_bar": 5, "length": 1 },
+      { "id": "arr-6", "pattern_id": 2, "start_bar": 6, "length": 1 },
+      { "id": "arr-7", "pattern_id": 2, "start_bar": 7, "length": 1 },
+      { "id": "arr-8", "pattern_id": 2, "start_bar": 8, "length": 1 },
+      { "id": "arr-9", "pattern_id": 2, "start_bar": 9, "length": 1 },
+      { "id": "arr-10", "pattern_id": 1, "start_bar": 10, "length": 1 },
+      { "id": "arr-11", "pattern_id": 1, "start_bar": 11, "length": 1 },
+      { "id": "arr-12", "pattern_id": 2, "start_bar": 12, "length": 1 },
+      { "id": "arr-13", "pattern_id": 2, "start_bar": 13, "length": 1 },
+      { "id": "arr-14", "pattern_id": 3, "start_bar": 14, "length": 1 },
+      { "id": "arr-15", "pattern_id": 3, "start_bar": 15, "length": 1 }
+    ],
+    "muted_patterns": [],
+    "soloed_patterns": []
+  }
 }

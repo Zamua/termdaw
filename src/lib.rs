@@ -24,4 +24,5 @@ pub mod playback;
 pub mod plugin_host;
 pub mod project;
 pub mod sequencer;
+pub mod templates;
 pub mod ui;

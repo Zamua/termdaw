@@ -1233,12 +1233,16 @@ impl App {
             .map(|s| s.0 == 15)
             .unwrap_or(false);
 
+        // Save the current bar BEFORE advancing (for stopping notes from the old bar)
+        let old_bar = self.transport.playback.bar_or_zero();
+
         // Advance the playback state machine
         let events = self.transport.playback.advance();
 
         // When pattern loops to step 0, stop notes that span the loop boundary
+        // Pass the OLD bar so we stop notes from the pattern that was playing
         if will_loop {
-            self.stop_spanning_notes();
+            self.stop_spanning_notes(old_bar);
         }
 
         // Handle playback events
@@ -1263,13 +1267,14 @@ impl App {
     }
 
     /// Stop notes that span the loop boundary (started before step 16 but end after)
-    fn stop_spanning_notes(&self) {
+    /// The `bar` parameter should be the bar that was playing BEFORE the loop occurred.
+    fn stop_spanning_notes(&self, bar: usize) {
         // Get patterns to check based on play mode
         let patterns_to_check: Vec<&crate::sequencer::Pattern> =
             if self.transport.playback.is_playing_arrangement() {
-                // Get all active patterns at current bar
+                // Get all active patterns at the specified bar (the OLD bar before loop)
                 self.arrangement
-                    .get_active_placements_at_bar(self.transport.playback.bar_or_zero())
+                    .get_active_placements_at_bar(bar)
                     .iter()
                     .filter_map(|p| self.patterns.get(p.pattern_id))
                     .collect()
@@ -2177,6 +2182,11 @@ mod tests {
         let project_path = temp_dir.path().join("test-project");
         std::fs::create_dir_all(&project_path).expect("Failed to create project dir");
 
+        // Create a minimal empty project.json so template is not copied
+        let empty_project = crate::project::ProjectFile::new("test-project");
+        crate::project::save_project(&project_path, &empty_project)
+            .expect("Failed to create test project");
+
         let audio = AudioHandle::dummy();
         let app = App::new(project_path.to_str().unwrap(), audio);
         (app, temp_dir)
@@ -2187,6 +2197,11 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let project_path = temp_dir.path().join("test-project");
         std::fs::create_dir_all(&project_path).expect("Failed to create project dir");
+
+        // Create a minimal empty project.json so template is not copied
+        let empty_project = crate::project::ProjectFile::new("test-project");
+        crate::project::save_project(&project_path, &empty_project)
+            .expect("Failed to create test project");
 
         let (audio, rx) = AudioHandle::testable();
         let app = App::new(project_path.to_str().unwrap(), audio);
@@ -3145,6 +3160,89 @@ mod tests {
             app.channels().len(),
             1,
             "AddChannel should not overwrite existing channel"
+        );
+    }
+
+    // ========================================================================
+    // Arrangement playback note-off bug test
+    // ========================================================================
+
+    #[test]
+    fn test_spanning_notes_stopped_at_bar_boundary_in_arrangement() {
+        use crate::arrangement::PatternPlacement;
+        use crate::sequencer::{ChannelSource, Note, Pattern, PatternSlice};
+        use std::collections::HashMap;
+        use std::time::Duration;
+
+        let (mut app, _temp, rx) = create_test_app_with_audio_rx();
+
+        // Create two patterns
+        app.patterns = vec![Pattern::new(0, 16), Pattern::new(1, 16)];
+
+        // Create a plugin channel with a note that spans the full pattern (duration 16)
+        let mut pattern_data = HashMap::new();
+        pattern_data.insert(
+            0,
+            PatternSlice {
+                steps: vec![false; 16],
+                notes: vec![Note::with_velocity(60, 0, 16, 0.8)], // Note spans entire pattern
+            },
+        );
+        pattern_data.insert(
+            1,
+            PatternSlice {
+                steps: vec![false; 16],
+                notes: vec![], // Pattern 1 has no notes
+            },
+        );
+
+        let channel = crate::sequencer::Channel {
+            name: "synth".to_string(),
+            slot: 0,
+            source: ChannelSource::Plugin {
+                path: "test.clap".to_string(),
+                params: HashMap::new(),
+            },
+            mixer_track: 1,
+            pattern_data,
+        };
+        app.state.channels = vec![channel];
+
+        // Set up arrangement: pattern 0 at bar 0, pattern 1 at bar 1
+        app.arrangement.placements = vec![
+            PatternPlacement::new(0, 0), // Pattern 0 at bar 0
+            PatternPlacement::new(1, 1), // Pattern 1 at bar 1
+        ];
+
+        // Start arrangement playback
+        app.transport.playback.play_arrangement();
+
+        // Clear any commands from setup
+        let _: Vec<_> = rx.try_iter().collect();
+
+        // Advance through all 16 steps to complete bar 0 and enter bar 1
+        for _ in 0..16 {
+            app.tick(Duration::from_millis(125)); // At 120 BPM, each step is ~125ms
+        }
+
+        // Collect all audio commands
+        let commands: Vec<AudioCommand> = rx.try_iter().collect();
+
+        // The note from pattern 0 should have received note_off when bar boundary was crossed
+        let has_note_off = commands.iter().any(|cmd| {
+            matches!(
+                cmd,
+                AudioCommand::PluginNoteOff {
+                    channel: 0,
+                    note: 60
+                }
+            )
+        });
+
+        assert!(
+            has_note_off,
+            "Spanning note should receive note_off at bar boundary. Commands: {:?}",
+            commands
         );
     }
 }

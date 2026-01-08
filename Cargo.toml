@@ -46,6 +46,11 @@ walkdir = "2.5"                  # Directory traversal
 chrono = { version = "0.4", features = ["serde"] }  # Timestamps
 dirs = "6"
 
+# HTTP/Archive (for template downloads)
+ureq = "2"
+flate2 = "1"
+tar = "0.4"
+
 # Graphics (for waveform visualizer)
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"

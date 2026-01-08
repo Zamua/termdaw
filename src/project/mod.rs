@@ -53,7 +53,7 @@ impl ProjectFile {
             bpm: 140.0,
             current_pattern: 0,
             channels: Vec::new(),
-            patterns: Vec::new(),
+            patterns: vec![Pattern::new(0, 16)], // At least one pattern required
             arrangement: Arrangement::default(),
             mixer: None,
         }
@@ -164,33 +164,13 @@ pub fn create_project(path: &Path, name: &str) -> Result<ProjectFile, ProjectErr
     Ok(project)
 }
 
-/// Find the template directory (bundled with the app)
+/// Find the template directory (local for dev, or installed via templates module)
 pub fn find_template_dir() -> Option<PathBuf> {
-    // Try relative to current directory first (for development)
-    let cwd_template = PathBuf::from("templates/default");
-    if cwd_template.exists() && cwd_template.is_dir() {
-        return Some(cwd_template);
+    let templates_dir = crate::templates::templates_dir();
+    let default_template = templates_dir.join("default");
+    if default_template.exists() && default_template.is_dir() {
+        return Some(default_template);
     }
-
-    // Try relative to executable
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let exe_template = exe_dir.join("templates/default");
-            if exe_template.exists() && exe_template.is_dir() {
-                return Some(exe_template);
-            }
-            // Also try one level up (for target/debug/termdaw)
-            if let Some(parent) = exe_dir.parent() {
-                if let Some(grandparent) = parent.parent() {
-                    let dev_template = grandparent.join("templates/default");
-                    if dev_template.exists() && dev_template.is_dir() {
-                        return Some(dev_template);
-                    }
-                }
-            }
-        }
-    }
-
     None
 }
 
@@ -239,4 +219,72 @@ pub fn generate_project_name() -> String {
 
     // Fallback with timestamp
     format!("untitled-{}", chrono::Utc::now().timestamp())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_template_dir_returns_local() {
+        // When running from repo, should find local templates
+        let template_dir = find_template_dir();
+        assert!(template_dir.is_some(), "Should find template dir");
+        let path = template_dir.unwrap();
+        assert!(path.ends_with("default"), "Should end with 'default'");
+        assert!(path.exists(), "Template dir should exist");
+    }
+
+    #[test]
+    fn test_template_contains_project_json() {
+        let template_dir = find_template_dir().expect("Should find template dir");
+        let project_file = template_dir.join("project.json");
+        assert!(project_file.exists(), "Template should have project.json");
+    }
+
+    #[test]
+    fn test_template_project_loads_correctly() {
+        let template_dir = find_template_dir().expect("Should find template dir");
+        let project = load_project(&template_dir).expect("Template should load without error");
+
+        // Verify channels loaded
+        assert_eq!(project.channels.len(), 5, "Should have 5 channels");
+        assert_eq!(project.channels[0].name, "kick");
+        assert_eq!(project.channels[1].name, "snare");
+        assert_eq!(project.channels[2].name, "hihat");
+        assert_eq!(project.channels[3].name, "bass");
+        assert_eq!(project.channels[4].name, "lead");
+
+        // Verify patterns loaded
+        assert_eq!(project.patterns.len(), 4, "Should have 4 patterns");
+        assert_eq!(project.patterns[0].name, "Intro");
+        assert_eq!(project.patterns[1].name, "Verse");
+        assert_eq!(project.patterns[2].name, "Chorus");
+        assert_eq!(project.patterns[3].name, "Outro");
+
+        // Verify arrangement loaded
+        assert_eq!(
+            project.arrangement.placements.len(),
+            16,
+            "Should have 16 arrangement placements"
+        );
+
+        // Verify kick has pattern data for pattern 0
+        let kick_pattern_0 = project.channels[0]
+            .pattern_data
+            .get(&0)
+            .expect("Kick should have pattern 0 data");
+        assert_eq!(kick_pattern_0.steps.len(), 16, "Should have 16 steps");
+        assert!(kick_pattern_0.steps[0], "Kick step 0 should be active");
+
+        // Verify bass has notes in pattern 1
+        let bass_pattern_1 = project.channels[3]
+            .pattern_data
+            .get(&1)
+            .expect("Bass should have pattern 1 data");
+        assert!(
+            !bass_pattern_1.notes.is_empty(),
+            "Bass should have notes in pattern 1"
+        );
+    }
 }
