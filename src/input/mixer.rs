@@ -122,13 +122,34 @@ fn handle_effects_key(key: KeyEvent, app: &mut App) {
                 }
             }
         }
-        // d = delete effect - only for effect slots, only on effect column
+        // d = delete effect (and yank) - only for effect slots, only on effect column
         KeyCode::Char('d') => {
             if selected < EFFECT_SLOTS && !on_bypass {
-                app.dispatch(AppCommand::RemoveEffect {
-                    track: app.mixer.selected_track,
-                    slot: app.mixer.selected_effect_slot,
-                });
+                let track = app.mixer.selected_track;
+                let slot = app.mixer.selected_effect_slot;
+                // Store effect in register before deleting (vim-like yank on delete)
+                if let Some(effect) = app.mixer.tracks[track].effects[slot].clone() {
+                    app.ui.effect_register = Some(effect);
+                }
+                app.dispatch(AppCommand::RemoveEffect { track, slot });
+            }
+        }
+        // p = paste effect from register - only for effect slots, only on effect column
+        KeyCode::Char('p') => {
+            if selected < EFFECT_SLOTS && !on_bypass {
+                if let Some(effect) = app.ui.effect_register.clone() {
+                    let track = app.mixer.selected_track;
+                    let slot = app.mixer.selected_effect_slot;
+                    app.dispatch(AppCommand::AddEffect {
+                        track,
+                        slot,
+                        effect_type: effect.effect_type,
+                    });
+                    // Copy parameters from register to the new effect
+                    if let Some(new_effect) = &mut app.mixer.tracks[track].effects[slot] {
+                        new_effect.params = effect.params;
+                    }
+                }
             }
         }
         _ => {}
@@ -415,6 +436,81 @@ mod tests {
         assert!(
             app.mixer.tracks[1].effects[0].is_none(),
             "Slot should remain empty when pasting from empty register"
+        );
+    }
+
+    // ========================================================================
+    // Effect undo/redo tests
+    // ========================================================================
+
+    #[test]
+    fn test_add_effect_is_undoable() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add an effect via dispatch
+        app.dispatch(AppCommand::AddEffect {
+            track: 1,
+            slot: 0,
+            effect_type: EffectType::Filter,
+        });
+
+        // Effect should be present
+        assert!(
+            app.mixer.tracks[1].effects[0].is_some(),
+            "Effect should be added"
+        );
+
+        // Undo should remove the effect
+        let mut history = std::mem::take(&mut app.history);
+        history.undo(&mut app);
+        app.history = history;
+
+        assert!(
+            app.mixer.tracks[1].effects[0].is_none(),
+            "Effect should be removed after undo"
+        );
+
+        // Redo should restore the effect
+        let mut history = std::mem::take(&mut app.history);
+        history.redo(&mut app);
+        app.history = history;
+
+        assert!(
+            app.mixer.tracks[1].effects[0].is_some(),
+            "Effect should be restored after redo"
+        );
+    }
+
+    #[test]
+    fn test_remove_effect_is_undoable() {
+        let (mut app, _temp) = create_test_app();
+
+        // First add an effect directly (not through dispatch)
+        let effect = EffectSlot::new(EffectType::Delay);
+        app.mixer.tracks[1].effects[0] = Some(effect);
+
+        // Remove via dispatch
+        app.dispatch(AppCommand::RemoveEffect { track: 1, slot: 0 });
+
+        // Effect should be gone
+        assert!(
+            app.mixer.tracks[1].effects[0].is_none(),
+            "Effect should be removed"
+        );
+
+        // Undo should restore the effect
+        let mut history = std::mem::take(&mut app.history);
+        history.undo(&mut app);
+        app.history = history;
+
+        assert!(
+            app.mixer.tracks[1].effects[0].is_some(),
+            "Effect should be restored after undo"
+        );
+        assert_eq!(
+            app.mixer.tracks[1].effects[0].as_ref().unwrap().effect_type,
+            EffectType::Delay,
+            "Restored effect should be Delay"
         );
     }
 }

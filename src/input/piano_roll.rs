@@ -76,13 +76,18 @@ pub fn check_note_collision(
 
 /// Handle keyboard input for piano roll
 pub fn handle_key(key: KeyEvent, app: &mut App) {
-    // Handle Escape to return to channel rack (if not placing a note and not in visual mode)
-    if key.code == KeyCode::Esc
-        && app.ui.cursors.piano_roll.placing_note.is_none()
-        && !app.ui.vim.piano_roll.is_visual()
-    {
-        app.set_view_mode(ViewMode::ChannelRack);
-        return;
+    // Handle Escape
+    if key.code == KeyCode::Esc {
+        // If placing a note, cancel placement
+        if app.ui.cursors.piano_roll.placing_note.is_some() {
+            app.ui.cursors.piano_roll.placing_note = None;
+            return;
+        }
+        // If not in visual mode, exit to channel rack
+        if !app.ui.vim.piano_roll.is_visual() {
+            app.set_view_mode(ViewMode::ChannelRack);
+            return;
+        }
     }
 
     // Component-specific keys (not handled by vim)
