@@ -424,6 +424,16 @@ fn render_effects_panel(frame: &mut Frame, x: u16, y: u16, width: u16, height: u
                         }
                     }
                     EffectType::Reverb => "Reverb",
+                    EffectType::Enhancer => {
+                        let mode =
+                            slot.get_param(crate::effects::EffectParamId::EnhancerMode) as u32;
+                        match mode {
+                            0 => "Enh Warm",
+                            1 => "Enh Bright",
+                            2 => "Enh Punch",
+                            _ => "Enh Loud",
+                        }
+                    }
                 };
                 (name, slot.bypassed, true)
             }

@@ -102,7 +102,7 @@ fn render_effect_editor(
     let param_defs = get_param_defs(effect_slot.effect_type);
 
     // Modal size based on number of parameters
-    let modal_width = 40;
+    let modal_width = 50;
     let modal_height = (param_defs.len() + 4).min(15) as u16;
     let x = (area.width.saturating_sub(modal_width)) / 2;
     let y = (area.height.saturating_sub(modal_height)) / 2;

@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 pub mod delay;
+pub mod enhancer;
 pub mod filter;
 pub mod reverb;
 pub mod test_helpers;
@@ -27,6 +28,8 @@ pub enum EffectType {
     Delay,
     /// Freeverb-style reverb
     Reverb,
+    /// Enhancer - saturation, excitation, compression
+    Enhancer,
 }
 
 impl EffectType {
@@ -36,12 +39,18 @@ impl EffectType {
             EffectType::Filter => "Filter",
             EffectType::Delay => "Delay",
             EffectType::Reverb => "Reverb",
+            EffectType::Enhancer => "Enhancer",
         }
     }
 
     /// Get all available effect types
     pub fn all() -> &'static [EffectType] {
-        &[EffectType::Filter, EffectType::Delay, EffectType::Reverb]
+        &[
+            EffectType::Filter,
+            EffectType::Delay,
+            EffectType::Reverb,
+            EffectType::Enhancer,
+        ]
     }
 }
 
@@ -65,6 +74,10 @@ pub enum EffectParamId {
     ReverbRoomSize,
     ReverbDamping,
     ReverbMix,
+
+    // Enhancer parameters
+    EnhancerAmount,
+    EnhancerMode,
 }
 
 impl EffectParamId {
@@ -82,6 +95,8 @@ impl EffectParamId {
             EffectParamId::ReverbRoomSize => "Room Size",
             EffectParamId::ReverbDamping => "Damping",
             EffectParamId::ReverbMix => "Mix",
+            EffectParamId::EnhancerAmount => "Amount",
+            EffectParamId::EnhancerMode => "Mode",
         }
     }
 }
@@ -289,6 +304,27 @@ pub fn get_param_defs(effect_type: EffectType) -> Vec<EffectParamDef> {
                 },
             },
         ],
+        EffectType::Enhancer => vec![
+            EffectParamDef {
+                id: EffectParamId::EnhancerAmount,
+                min: 0.0,
+                max: 1.0,
+                default: 0.5,
+                display: ParamDisplay::Continuous {
+                    unit: "%",
+                    decimals: 0,
+                },
+            },
+            EffectParamDef {
+                id: EffectParamId::EnhancerMode,
+                min: 0.0,
+                max: 3.0,
+                default: 0.0,
+                display: ParamDisplay::Discrete {
+                    choices: &["Warm", "Bright", "Punch", "Loud"],
+                },
+            },
+        ],
     }
 }
 
@@ -337,6 +373,13 @@ pub fn create_effect(slot: &EffectSlot, sample_rate: f32, bpm: f64) -> Box<dyn E
         }
         EffectType::Reverb => {
             let mut effect = reverb::ReverbEffect::new(sample_rate);
+            for (id, value) in &slot.params {
+                effect.set_param(*id, *value);
+            }
+            Box::new(effect)
+        }
+        EffectType::Enhancer => {
+            let mut effect = enhancer::EnhancerEffect::new(sample_rate);
             for (id, value) in &slot.params {
                 effect.set_param(*id, *value);
             }
