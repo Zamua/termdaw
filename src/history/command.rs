@@ -59,7 +59,8 @@ impl ToggleStepCmd {
 impl Command for ToggleStepCmd {
     fn execute(&mut self, app: &mut App) {
         let pattern_length = app.pattern_length();
-        if let Some(ch) = app.channels.get_mut(self.channel) {
+        // Use slot-based lookup, not Vec index
+        if let Some(ch) = app.get_channel_at_slot_mut(self.channel) {
             let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
             // Capture the current state before toggling
             if self.was_active.is_none() {
@@ -72,7 +73,8 @@ impl Command for ToggleStepCmd {
 
     fn undo(&mut self, app: &mut App) {
         let pattern_length = app.pattern_length();
-        if let Some(ch) = app.channels.get_mut(self.channel) {
+        // Use slot-based lookup, not Vec index
+        if let Some(ch) = app.get_channel_at_slot_mut(self.channel) {
             let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
             if let Some(was_active) = self.was_active {
                 slice.set_step(self.step, was_active);
@@ -112,7 +114,7 @@ impl Command for DeleteStepsCmd {
     fn execute(&mut self, app: &mut App) {
         let pattern_length = app.pattern_length();
         for &(channel, step, _) in &self.deleted_steps {
-            if let Some(ch) = app.channels.get_mut(channel) {
+            if let Some(ch) = app.get_channel_at_slot_mut(channel) {
                 let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
                 slice.set_step(step, false);
             }
@@ -123,7 +125,7 @@ impl Command for DeleteStepsCmd {
     fn undo(&mut self, app: &mut App) {
         let pattern_length = app.pattern_length();
         for &(channel, step, was_active) in &self.deleted_steps {
-            if let Some(ch) = app.channels.get_mut(channel) {
+            if let Some(ch) = app.get_channel_at_slot_mut(channel) {
                 let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
                 slice.set_step(step, was_active);
             }
@@ -161,7 +163,7 @@ impl AddNoteCmd {
 impl Command for AddNoteCmd {
     fn execute(&mut self, app: &mut App) {
         let pattern_length = app.pattern_length();
-        if let Some(ch) = app.channels.get_mut(self.channel) {
+        if let Some(ch) = app.get_channel_at_slot_mut(self.channel) {
             let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
             slice.add_note(self.note.clone());
             app.mark_dirty();
@@ -169,7 +171,7 @@ impl Command for AddNoteCmd {
     }
 
     fn undo(&mut self, app: &mut App) {
-        if let Some(ch) = app.channels.get_mut(self.channel) {
+        if let Some(ch) = app.get_channel_at_slot_mut(self.channel) {
             if let Some(slice) = ch.get_pattern_mut(self.pattern_id) {
                 slice.remove_note(&self.note.id);
                 app.mark_dirty();
@@ -216,7 +218,7 @@ impl RemoveNoteCmd {
 
 impl Command for RemoveNoteCmd {
     fn execute(&mut self, app: &mut App) {
-        if let Some(ch) = app.channels.get_mut(self.channel) {
+        if let Some(ch) = app.get_channel_at_slot_mut(self.channel) {
             if let Some(slice) = ch.get_pattern_mut(self.pattern_id) {
                 if let Some(note) = slice.remove_note(&self.note_id) {
                     self.removed_note = Some(note);
@@ -228,7 +230,7 @@ impl Command for RemoveNoteCmd {
 
     fn undo(&mut self, app: &mut App) {
         let pattern_length = app.pattern_length();
-        if let Some(ch) = app.channels.get_mut(self.channel) {
+        if let Some(ch) = app.get_channel_at_slot_mut(self.channel) {
             let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
             if let Some(note) = self.removed_note.take() {
                 slice.add_note(note.clone());
@@ -264,7 +266,7 @@ impl DeleteNotesCmd {
 
 impl Command for DeleteNotesCmd {
     fn execute(&mut self, app: &mut App) {
-        if let Some(ch) = app.channels.get_mut(self.channel) {
+        if let Some(ch) = app.get_channel_at_slot_mut(self.channel) {
             if let Some(slice) = ch.get_pattern_mut(self.pattern_id) {
                 for note in &self.deleted_notes {
                     slice.remove_note(&note.id);
@@ -276,7 +278,7 @@ impl Command for DeleteNotesCmd {
 
     fn undo(&mut self, app: &mut App) {
         let pattern_length = app.pattern_length();
-        if let Some(ch) = app.channels.get_mut(self.channel) {
+        if let Some(ch) = app.get_channel_at_slot_mut(self.channel) {
             let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
             for note in &self.deleted_notes {
                 slice.add_note(note.clone());
@@ -428,7 +430,7 @@ impl Command for SetStepsCmd {
     fn execute(&mut self, app: &mut App) {
         let pattern_length = app.pattern_length();
         for &(channel, step, new_value, _) in &self.steps {
-            if let Some(ch) = app.channels.get_mut(channel) {
+            if let Some(ch) = app.get_channel_at_slot_mut(channel) {
                 let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
                 slice.set_step(step, new_value);
             }
@@ -439,7 +441,7 @@ impl Command for SetStepsCmd {
     fn undo(&mut self, app: &mut App) {
         let pattern_length = app.pattern_length();
         for &(channel, step, _, old_value) in &self.steps {
-            if let Some(ch) = app.channels.get_mut(channel) {
+            if let Some(ch) = app.get_channel_at_slot_mut(channel) {
                 let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
                 slice.set_step(step, old_value);
             }
@@ -477,7 +479,7 @@ impl AddNotesCmd {
 impl Command for AddNotesCmd {
     fn execute(&mut self, app: &mut App) {
         let pattern_length = app.pattern_length();
-        if let Some(ch) = app.channels.get_mut(self.channel) {
+        if let Some(ch) = app.get_channel_at_slot_mut(self.channel) {
             let slice = ch.get_or_create_pattern(self.pattern_id, pattern_length);
             for note in &self.notes {
                 slice.add_note(note.clone());
@@ -487,7 +489,7 @@ impl Command for AddNotesCmd {
     }
 
     fn undo(&mut self, app: &mut App) {
-        if let Some(ch) = app.channels.get_mut(self.channel) {
+        if let Some(ch) = app.get_channel_at_slot_mut(self.channel) {
             if let Some(slice) = ch.get_pattern_mut(self.pattern_id) {
                 for note in &self.notes {
                     slice.remove_note(&note.id);

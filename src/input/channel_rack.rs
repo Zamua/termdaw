@@ -47,20 +47,39 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             app.set_view_mode(ViewMode::PianoRoll);
             return;
         }
-        // 'p' to open plugin editor for plugin channels
+        // 'p' in sample zone to paste channel from register, otherwise open plugin editor
         KeyCode::Char('p') => {
             let slot = app.ui.cursors.channel_rack.channel;
-            // Extract data before mutable borrow
-            let plugin_info = app.get_channel_at_slot(slot).and_then(|channel| {
-                if let ChannelSource::Plugin { .. } = &channel.source {
-                    let params = build_editor_params(channel.plugin_params());
-                    Some((channel.name.clone(), params))
-                } else {
-                    None
+            if app.cursor_zone() == "sample" {
+                // Paste channel from register
+                if let Some(channel) = app.ui.channel_register.clone() {
+                    // Create a new channel at the current slot with the stored data
+                    let mut new_channel = channel;
+                    new_channel.slot = slot;
+                    // Find next available mixer track
+                    let mixer_track = app.find_available_mixer_track();
+                    new_channel.mixer_track = mixer_track;
+                    app.channels.push(new_channel);
+                    // Update mixer routing
+                    let channel_idx = app.channels.len() - 1;
+                    app.mixer.auto_assign_generator(channel_idx);
+                    // Sync routing to audio thread
+                    app.audio.set_generator_track(channel_idx, mixer_track);
+                    app.mark_dirty();
                 }
-            });
-            if let Some((name, params)) = plugin_info {
-                app.ui.plugin_editor.open(slot, &name, params);
+            } else {
+                // Open plugin editor for plugin channels
+                let plugin_info = app.get_channel_at_slot(slot).and_then(|channel| {
+                    if let ChannelSource::Plugin { .. } = &channel.source {
+                        let params = build_editor_params(channel.plugin_params());
+                        Some((channel.name.clone(), params))
+                    } else {
+                        None
+                    }
+                });
+                if let Some((name, params)) = plugin_info {
+                    app.ui.plugin_editor.open(slot, &name, params);
+                }
             }
             return;
         }
@@ -74,9 +93,13 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             app.dispatch(AppCommand::NextPattern);
             return;
         }
-        // 'd' in sample zone to delete channel
+        // 'd' in sample zone to delete channel (and yank to register)
         KeyCode::Char('d') if app.cursor_zone() == "sample" => {
             let slot = app.ui.cursors.channel_rack.channel;
+            // Store channel in register before deleting (vim-like yank on delete)
+            if let Some(channel) = app.get_channel_at_slot(slot) {
+                app.ui.channel_register = Some(channel.clone());
+            }
             app.dispatch(AppCommand::DeleteChannel(slot));
             return;
         }
@@ -729,6 +752,45 @@ mod tests {
             pasted.sample_path(),
             Some("original.wav"),
             "Pasted channel should have the original sample"
+        );
+    }
+
+    #[test]
+    fn test_pasted_channel_can_have_steps_toggled() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add a channel at slot 0
+        app.set_channel_sample(0, "original.wav".to_string());
+        app.patterns.push(crate::sequencer::Pattern::new(0, 16));
+
+        // Delete it (stores in register)
+        app.ui.cursors.channel_rack.channel = 0;
+        app.ui.cursors.channel_rack.col = AppCol::SAMPLE_ZONE;
+        handle_key(key(KeyCode::Char('d')), &mut app);
+
+        // Paste to slot 5 (different from original)
+        app.ui.cursors.channel_rack.channel = 5;
+        handle_key(key(KeyCode::Char('p')), &mut app);
+
+        // Verify channel exists at slot 5
+        assert!(
+            app.get_channel_at_slot(5).is_some(),
+            "Pasted channel should exist at slot 5"
+        );
+
+        // Try to toggle a step on the pasted channel
+        app.dispatch(AppCommand::ToggleStep {
+            channel: 5, // Using slot, not Vec index
+            pattern: 0,
+            step: 0,
+        });
+
+        // Verify the step was toggled
+        let channel = app.get_channel_at_slot(5).expect("Channel should exist");
+        let slice = channel.get_pattern(0).expect("Pattern should exist");
+        assert!(
+            slice.get_step(0),
+            "Step should be toggled on for pasted channel"
         );
     }
 
