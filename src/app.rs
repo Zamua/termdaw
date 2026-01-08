@@ -216,6 +216,9 @@ pub struct UiState {
     /// Effect picker selection index
     pub effect_picker_selection: usize,
 
+    /// Effect register for yank/paste operations (stores last deleted/yanked effect)
+    pub effect_register: Option<crate::effects::EffectSlot>,
+
     /// Whether we're currently previewing a channel (for hold-to-preview)
     pub is_previewing: bool,
 
@@ -396,6 +399,7 @@ impl App {
             mouse: MouseState::new(),
             context_menu: ContextMenu::new(),
             effect_picker_selection: 0,
+            effect_register: None,
             is_previewing: false,
             preview_channel: None,
             preview_note: None,

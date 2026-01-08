@@ -270,3 +270,151 @@ fn adjust_volume(app: &mut App, delta: f32) {
         volume: new_volume,
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::AudioHandle;
+    use crate::effects::{EffectSlot, EffectType};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use tempfile::TempDir;
+
+    /// Create a test App
+    fn create_test_app() -> (App, TempDir) {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let project_path = temp_dir.path().join("test-project");
+        std::fs::create_dir_all(&project_path).expect("Failed to create project dir");
+        let audio = AudioHandle::dummy();
+        let app = App::new(project_path.to_str().unwrap(), audio);
+        (app, temp_dir)
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    // ========================================================================
+    // Effect delete/paste tests
+    // ========================================================================
+
+    #[test]
+    fn test_delete_effect_stores_in_register() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add an effect to track 1, slot 0
+        let effect = EffectSlot::new(EffectType::Filter);
+        app.mixer.tracks[1].effects[0] = Some(effect);
+
+        // Focus on track 1's effects
+        app.mixer.selected_track = 1;
+        app.mixer.effects_focused = true;
+        app.mixer.selected_effect_slot = 0;
+        app.mixer.on_bypass_column = false;
+
+        // Press 'd' to delete
+        handle_key(key(KeyCode::Char('d')), &mut app);
+
+        // Effect should be removed from slot
+        assert!(
+            app.mixer.tracks[1].effects[0].is_none(),
+            "Effect should be removed from slot"
+        );
+
+        // Effect should be stored in yank register
+        assert!(
+            app.ui.effect_register.is_some(),
+            "Deleted effect should be stored in register"
+        );
+        assert_eq!(
+            app.ui.effect_register.as_ref().unwrap().effect_type,
+            EffectType::Filter,
+            "Register should contain the deleted Filter effect"
+        );
+    }
+
+    #[test]
+    fn test_paste_effect_from_register() {
+        let (mut app, _temp) = create_test_app();
+
+        // Pre-populate the register with a Delay effect
+        app.ui.effect_register = Some(EffectSlot::new(EffectType::Delay));
+
+        // Focus on track 1's effects, slot 2 (empty)
+        app.mixer.selected_track = 1;
+        app.mixer.effects_focused = true;
+        app.mixer.selected_effect_slot = 2;
+        app.mixer.on_bypass_column = false;
+
+        // Press 'p' to paste
+        handle_key(key(KeyCode::Char('p')), &mut app);
+
+        // Effect should be added to slot
+        assert!(
+            app.mixer.tracks[1].effects[2].is_some(),
+            "Effect should be pasted to slot"
+        );
+        assert_eq!(
+            app.mixer.tracks[1].effects[2].as_ref().unwrap().effect_type,
+            EffectType::Delay,
+            "Pasted effect should be Delay"
+        );
+    }
+
+    #[test]
+    fn test_delete_then_paste_workflow() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add a Reverb effect to track 1, slot 0
+        let effect = EffectSlot::new(EffectType::Reverb);
+        app.mixer.tracks[1].effects[0] = Some(effect);
+
+        // Focus and delete from slot 0
+        app.mixer.selected_track = 1;
+        app.mixer.effects_focused = true;
+        app.mixer.selected_effect_slot = 0;
+        app.mixer.on_bypass_column = false;
+        handle_key(key(KeyCode::Char('d')), &mut app);
+
+        // Move to slot 3 and paste
+        app.mixer.selected_effect_slot = 3;
+        handle_key(key(KeyCode::Char('p')), &mut app);
+
+        // Slot 0 should be empty, slot 3 should have the effect
+        assert!(
+            app.mixer.tracks[1].effects[0].is_none(),
+            "Original slot should be empty"
+        );
+        assert!(
+            app.mixer.tracks[1].effects[3].is_some(),
+            "Target slot should have effect"
+        );
+        assert_eq!(
+            app.mixer.tracks[1].effects[3].as_ref().unwrap().effect_type,
+            EffectType::Reverb,
+            "Pasted effect should be Reverb"
+        );
+    }
+
+    #[test]
+    fn test_paste_does_nothing_with_empty_register() {
+        let (mut app, _temp) = create_test_app();
+
+        // Register is empty (None)
+        app.ui.effect_register = None;
+
+        // Focus on an empty slot
+        app.mixer.selected_track = 1;
+        app.mixer.effects_focused = true;
+        app.mixer.selected_effect_slot = 0;
+        app.mixer.on_bypass_column = false;
+
+        // Press 'p' to paste
+        handle_key(key(KeyCode::Char('p')), &mut app);
+
+        // Slot should still be empty
+        assert!(
+            app.mixer.tracks[1].effects[0].is_none(),
+            "Slot should remain empty when pasting from empty register"
+        );
+    }
+}

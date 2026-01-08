@@ -802,4 +802,69 @@ mod tests {
         // Step 8 starts just after step 7 ends, so no collision
         assert!(!check_note_collision(&notes, 60, 8, 10));
     }
+
+    // ========================================================================
+    // ESC behavior tests
+    // ========================================================================
+
+    #[test]
+    fn test_esc_cancels_note_placement() {
+        use crate::audio::AudioHandle;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use tempfile::TempDir;
+
+        // Create test app
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let project_path = temp_dir.path().join("test-project");
+        std::fs::create_dir_all(&project_path).expect("Failed to create project dir");
+        let audio = AudioHandle::dummy();
+        let mut app = crate::app::App::new(project_path.to_str().unwrap(), audio);
+
+        // Set up: enter piano roll mode and start placing a note
+        app.set_view_mode(ViewMode::PianoRoll);
+        app.ui.cursors.piano_roll.placing_note = Some(4); // Started placing at step 4
+
+        // Press ESC
+        let esc_key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        handle_key(esc_key, &mut app);
+
+        // Should cancel placement (placing_note becomes None)
+        assert!(
+            app.ui.cursors.piano_roll.placing_note.is_none(),
+            "ESC should cancel note placement"
+        );
+        // Should remain in PianoRoll view (not exit to ChannelRack)
+        assert!(
+            matches!(app.ui.view_mode, ViewMode::PianoRoll),
+            "Should remain in PianoRoll after canceling placement"
+        );
+    }
+
+    #[test]
+    fn test_esc_exits_piano_roll_when_not_placing() {
+        use crate::audio::AudioHandle;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use tempfile::TempDir;
+
+        // Create test app
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let project_path = temp_dir.path().join("test-project");
+        std::fs::create_dir_all(&project_path).expect("Failed to create project dir");
+        let audio = AudioHandle::dummy();
+        let mut app = crate::app::App::new(project_path.to_str().unwrap(), audio);
+
+        // Set up: in piano roll, NOT placing a note
+        app.set_view_mode(ViewMode::PianoRoll);
+        app.ui.cursors.piano_roll.placing_note = None;
+
+        // Press ESC
+        let esc_key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        handle_key(esc_key, &mut app);
+
+        // Should exit to ChannelRack
+        assert!(
+            matches!(app.ui.view_mode, ViewMode::ChannelRack),
+            "ESC should exit PianoRoll when not placing"
+        );
+    }
 }
