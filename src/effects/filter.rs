@@ -72,21 +72,19 @@ impl FilterEffect {
 
     /// Update filter coefficients after parameter change
     fn update_coefficients(&mut self) {
-        // Clamp cutoff to valid range (0.36 * sample_rate ≈ 16kHz at 44.1kHz)
-        // Chamberlin SVF becomes unstable when g approaches 2.0
-        let cutoff = self.cutoff.clamp(20.0, self.sample_rate * 0.36);
+        // Clamp cutoff to valid range
+        let cutoff = self.cutoff.clamp(20.0, self.sample_rate * 0.45);
 
         // Chamberlin SVF: g = 2 * sin(pi * fc / fs)
-        // Clamp g to ≤ 1.0 for unconditional stability
+        // CRITICAL: Chamberlin SVF is only stable when g < ~0.8 for all k values
+        // At g >= 0.85 with high k (low resonance), eigenvalues exceed 1.0
         let omega = std::f32::consts::PI * cutoff / self.sample_rate;
-        self.g = (2.0 * omega.sin()).min(1.0);
+        self.g = (2.0 * omega.sin()).min(0.75);
 
-        // k = 2 - 2*cos(omega) for frequency-dependent damping
-        // This ensures stability across all frequencies
-        // Then scale by resonance: high resonance = low k = more resonance
-        let base_k = 2.0 - 2.0 * omega.cos();
-        // Mix between damped (base_k) and resonant (base_k * 0.05) based on resonance
-        self.k = base_k * (1.0 - self.resonance * 0.95).max(0.05);
+        // k = damping factor = 1/Q
+        // k=2.0 is critically damped (no resonance), k→0 is high resonance
+        // Range: 2.0 (0% resonance) to 0.1 (100% resonance)
+        self.k = 2.0 * (1.0 - self.resonance * 0.95).max(0.05);
     }
 
     /// Process a single sample through the SVF (standalone function to avoid borrow issues)
