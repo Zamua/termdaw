@@ -8,6 +8,7 @@
 
 pub mod delay;
 pub mod filter;
+pub mod reverb;
 pub mod test_helpers;
 
 use std::collections::HashMap;
@@ -20,10 +21,12 @@ pub const EFFECT_SLOTS: usize = 8;
 /// Effect types available in the DAW
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EffectType {
-    /// Resonant state-variable filter (LP/HP/BP)
+    /// Simple state-variable filter (LP/HP/BP)
     Filter,
     /// Tempo-synced delay with feedback
     Delay,
+    /// Freeverb-style reverb
+    Reverb,
 }
 
 impl EffectType {
@@ -32,12 +35,13 @@ impl EffectType {
         match self {
             EffectType::Filter => "Filter",
             EffectType::Delay => "Delay",
+            EffectType::Reverb => "Reverb",
         }
     }
 
     /// Get all available effect types
     pub fn all() -> &'static [EffectType] {
-        &[EffectType::Filter, EffectType::Delay]
+        &[EffectType::Filter, EffectType::Delay, EffectType::Reverb]
     }
 }
 
@@ -56,6 +60,11 @@ pub enum EffectParamId {
     DelayMix,
     DelaySync,
     DelayFreeMs,
+
+    // Reverb parameters
+    ReverbRoomSize,
+    ReverbDamping,
+    ReverbMix,
 }
 
 impl EffectParamId {
@@ -70,6 +79,9 @@ impl EffectParamId {
             EffectParamId::DelayMix => "Mix",
             EffectParamId::DelaySync => "Sync",
             EffectParamId::DelayFreeMs => "Free Time",
+            EffectParamId::ReverbRoomSize => "Room Size",
+            EffectParamId::ReverbDamping => "Damping",
+            EffectParamId::ReverbMix => "Mix",
         }
     }
 }
@@ -108,10 +120,12 @@ impl EffectParamDef {
     pub fn format_value(&self, value: f32) -> String {
         match &self.display {
             ParamDisplay::Continuous { unit, decimals } => {
+                // For percentage units, multiply 0-1 range by 100 for display
+                let display_value = if *unit == "%" { value * 100.0 } else { value };
                 if *decimals == 0 {
-                    format!("{:.0}{}", value, unit)
+                    format!("{:.0}{}", display_value, unit)
                 } else {
-                    format!("{:.1$}{2}", value, *decimals as usize, unit)
+                    format!("{:.1$}{2}", display_value, *decimals as usize, unit)
                 }
             }
             ParamDisplay::Discrete { choices } => {
@@ -243,6 +257,38 @@ pub fn get_param_defs(effect_type: EffectType) -> Vec<EffectParamDef> {
                 },
             },
         ],
+        EffectType::Reverb => vec![
+            EffectParamDef {
+                id: EffectParamId::ReverbRoomSize,
+                min: 0.0,
+                max: 1.0,
+                default: 0.8,
+                display: ParamDisplay::Continuous {
+                    unit: "%",
+                    decimals: 0,
+                },
+            },
+            EffectParamDef {
+                id: EffectParamId::ReverbDamping,
+                min: 0.0,
+                max: 1.0,
+                default: 0.1,
+                display: ParamDisplay::Continuous {
+                    unit: "%",
+                    decimals: 0,
+                },
+            },
+            EffectParamDef {
+                id: EffectParamId::ReverbMix,
+                min: 0.0,
+                max: 1.0,
+                default: 0.05,
+                display: ParamDisplay::Continuous {
+                    unit: "%",
+                    decimals: 0,
+                },
+            },
+        ],
     }
 }
 
@@ -284,6 +330,13 @@ pub fn create_effect(slot: &EffectSlot, sample_rate: f32, bpm: f64) -> Box<dyn E
         }
         EffectType::Delay => {
             let mut effect = delay::DelayEffect::new(sample_rate, bpm);
+            for (id, value) in &slot.params {
+                effect.set_param(*id, *value);
+            }
+            Box::new(effect)
+        }
+        EffectType::Reverb => {
+            let mut effect = reverb::ReverbEffect::new(sample_rate);
             for (id, value) in &slot.params {
                 effect.set_param(*id, *value);
             }

@@ -423,6 +423,7 @@ fn render_effects_panel(frame: &mut Frame, x: u16, y: u16, width: u16, height: u
                             _ => "Dly 4",
                         }
                     }
+                    EffectType::Reverb => "Reverb",
                 };
                 (name, slot.bypassed, true)
             }
