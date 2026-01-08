@@ -292,6 +292,115 @@ fn adjust_volume(app: &mut App, delta: f32) {
     });
 }
 
+// ============================================================================
+// Mouse handling
+// ============================================================================
+
+use super::mouse::MouseAction;
+
+/// Handle mouse actions for mixer
+pub fn handle_mouse_action(action: &MouseAction, app: &mut App) {
+    match action {
+        MouseAction::Click { x, y, .. } => {
+            // Check mute button first
+            if let Some(track) = app.ui.screen_areas.mixer_mute_at(*x, *y) {
+                app.dispatch(AppCommand::ToggleTrackMute(track));
+                return;
+            }
+
+            // Check solo button
+            if let Some(track) = app.ui.screen_areas.mixer_solo_at(*x, *y) {
+                // Can't solo master track (track 0)
+                if track > 0 {
+                    app.dispatch(AppCommand::ToggleTrackSolo(track));
+                }
+                return;
+            }
+
+            // Check fader - click to set volume
+            if let Some((track, y_in_fader)) = app.ui.screen_areas.mixer_fader_at(*x, *y) {
+                // Get fader height from the stored rect
+                if let Some(rect) = app.ui.screen_areas.mixer_faders.get(&track) {
+                    let fader_height = rect.height as f32;
+                    // Fader is inverted: top = 100%, bottom = 0%
+                    let volume = 1.0 - (y_in_fader as f32 / fader_height);
+                    let volume = volume.clamp(0.0, 1.0);
+                    app.dispatch(AppCommand::SetTrackVolume { track, volume });
+                }
+                // Select this track
+                app.mixer.selected_track = track;
+                return;
+            }
+
+            // Fallback: click anywhere on channel strip to select track and show effects
+            if let Some(track) = app.ui.screen_areas.mixer_channel_strip_at(*x, *y) {
+                app.mixer.selected_track = track;
+                app.mixer.effects_focused = true;
+            }
+        }
+
+        MouseAction::DragStart { x, y, .. } => {
+            // Start fader drag - select the track
+            if let Some((track, _)) = app.ui.screen_areas.mixer_fader_at(*x, *y) {
+                app.mixer.selected_track = track;
+            }
+        }
+
+        MouseAction::DragMove { x, y, .. } => {
+            // Update volume during drag
+            if let Some((track, y_in_fader)) = app.ui.screen_areas.mixer_fader_at(*x, *y) {
+                if let Some(rect) = app.ui.screen_areas.mixer_faders.get(&track) {
+                    let fader_height = rect.height as f32;
+                    let volume = 1.0 - (y_in_fader as f32 / fader_height);
+                    let volume = volume.clamp(0.0, 1.0);
+                    app.dispatch(AppCommand::SetTrackVolume { track, volume });
+                }
+            }
+        }
+
+        MouseAction::DragEnd { .. } => {
+            // Drag complete, nothing special needed
+        }
+
+        MouseAction::DoubleClick { x, y } => {
+            // Double-click on fader to reset volume to 100%
+            if let Some((track, _)) = app.ui.screen_areas.mixer_fader_at(*x, *y) {
+                app.dispatch(AppCommand::SetTrackVolume { track, volume: 1.0 });
+            }
+        }
+
+        MouseAction::Scroll { x, y, delta } => {
+            // Scroll on fader to adjust volume
+            if let Some((track, _)) = app.ui.screen_areas.mixer_fader_at(*x, *y) {
+                let current_volume = app.mixer.tracks[track].volume;
+                let step = 0.05; // 5% per scroll tick
+                let new_volume = if *delta < 0 {
+                    // Scroll down = decrease volume
+                    (current_volume - step).max(0.0)
+                } else {
+                    // Scroll up = increase volume
+                    (current_volume + step).min(1.0)
+                };
+                app.dispatch(AppCommand::SetTrackVolume {
+                    track,
+                    volume: new_volume,
+                });
+            }
+        }
+
+        MouseAction::RightClick { x, y } => {
+            // Show context menu for mixer track
+            if let Some((track, _)) = app.ui.screen_areas.mixer_fader_at(*x, *y) {
+                use crate::ui::context_menu::{mixer_menu, MenuContext};
+
+                let items = mixer_menu();
+                let context = MenuContext::Mixer { channel: track };
+                app.ui.context_menu.show(*x, *y, items, context);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,6 +620,343 @@ mod tests {
             app.mixer.tracks[1].effects[0].as_ref().unwrap().effect_type,
             EffectType::Delay,
             "Restored effect should be Delay"
+        );
+    }
+
+    // ========================================================================
+    // Mouse handling tests
+    // ========================================================================
+
+    use ratatui::layout::Rect;
+
+    /// Register a fake fader area for testing
+    fn register_fader(app: &mut App, track: usize, rect: Rect) {
+        app.ui.screen_areas.mixer_faders.insert(track, rect);
+    }
+
+    /// Register a fake mute button area for testing
+    fn register_mute_button(app: &mut App, track: usize, rect: Rect) {
+        app.ui.screen_areas.mixer_mute_buttons.insert(track, rect);
+    }
+
+    /// Register a fake solo button area for testing
+    fn register_solo_button(app: &mut App, track: usize, rect: Rect) {
+        app.ui.screen_areas.mixer_solo_buttons.insert(track, rect);
+    }
+
+    /// Register a fake channel strip area for testing
+    fn register_channel_strip(app: &mut App, track: usize, rect: Rect) {
+        app.ui.screen_areas.mixer_channel_strips.insert(track, rect);
+    }
+
+    #[test]
+    fn test_mouse_click_mute_button_toggles_mute() {
+        let (mut app, _temp) = create_test_app();
+
+        // Register a mute button at (10, 10) with size 3x1
+        register_mute_button(&mut app, 1, Rect::new(10, 10, 3, 1));
+
+        // Track 1 should start unmuted
+        assert!(!app.mixer.tracks[1].muted);
+
+        // Click on mute button
+        let action = MouseAction::Click {
+            x: 11,
+            y: 10,
+            button: crossterm::event::MouseButton::Left,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        // Track should now be muted
+        assert!(
+            app.mixer.tracks[1].muted,
+            "Track should be muted after click"
+        );
+    }
+
+    #[test]
+    fn test_mouse_click_solo_button_toggles_solo() {
+        let (mut app, _temp) = create_test_app();
+
+        // Register a solo button at (15, 10) with size 3x1
+        register_solo_button(&mut app, 1, Rect::new(15, 10, 3, 1));
+
+        // Track 1 should start not soloed
+        assert!(!app.mixer.tracks[1].solo);
+
+        // Click on solo button
+        let action = MouseAction::Click {
+            x: 16,
+            y: 10,
+            button: crossterm::event::MouseButton::Left,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        // Track should now be soloed
+        assert!(
+            app.mixer.tracks[1].solo,
+            "Track should be soloed after click"
+        );
+    }
+
+    #[test]
+    fn test_mouse_click_solo_on_master_does_nothing() {
+        let (mut app, _temp) = create_test_app();
+
+        // Register a solo button for master track (track 0)
+        register_solo_button(&mut app, 0, Rect::new(15, 10, 3, 1));
+
+        // Master track should start not soloed
+        assert!(!app.mixer.tracks[0].solo);
+
+        // Click on solo button
+        let action = MouseAction::Click {
+            x: 16,
+            y: 10,
+            button: crossterm::event::MouseButton::Left,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        // Master should still not be soloed (can't solo master)
+        assert!(
+            !app.mixer.tracks[0].solo,
+            "Master track should not be soloable"
+        );
+    }
+
+    #[test]
+    fn test_mouse_click_fader_sets_volume() {
+        let (mut app, _temp) = create_test_app();
+
+        // Register a fader at (20, 10) with height 20 (y: 10-29)
+        register_fader(&mut app, 1, Rect::new(20, 10, 5, 20));
+
+        // Set initial volume
+        app.mixer.tracks[1].volume = 0.5;
+
+        // Click at top of fader (y=10) should set volume to ~100%
+        let action = MouseAction::Click {
+            x: 22,
+            y: 10,
+            button: crossterm::event::MouseButton::Left,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        // Volume should be close to 1.0 (top of fader)
+        assert!(
+            app.mixer.tracks[1].volume > 0.9,
+            "Click at top should set high volume, got {}",
+            app.mixer.tracks[1].volume
+        );
+
+        // Click at bottom of fader (y=29) should set volume to ~0%
+        let action = MouseAction::Click {
+            x: 22,
+            y: 29,
+            button: crossterm::event::MouseButton::Left,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        // Volume should be close to 0.0 (bottom of fader)
+        assert!(
+            app.mixer.tracks[1].volume < 0.1,
+            "Click at bottom should set low volume, got {}",
+            app.mixer.tracks[1].volume
+        );
+    }
+
+    #[test]
+    fn test_mouse_click_fader_selects_track() {
+        let (mut app, _temp) = create_test_app();
+
+        // Register faders for tracks 1 and 2
+        register_fader(&mut app, 1, Rect::new(20, 10, 5, 20));
+        register_fader(&mut app, 2, Rect::new(30, 10, 5, 20));
+
+        // Start with track 1 selected
+        app.mixer.selected_track = 1;
+
+        // Click on track 2's fader
+        let action = MouseAction::Click {
+            x: 32,
+            y: 15,
+            button: crossterm::event::MouseButton::Left,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        // Track 2 should now be selected
+        assert_eq!(
+            app.mixer.selected_track, 2,
+            "Clicking fader should select that track"
+        );
+    }
+
+    #[test]
+    fn test_mouse_scroll_adjusts_volume() {
+        let (mut app, _temp) = create_test_app();
+
+        // Register a fader
+        register_fader(&mut app, 1, Rect::new(20, 10, 5, 20));
+
+        // Set initial volume to 50%
+        app.mixer.tracks[1].volume = 0.5;
+
+        // Scroll up should increase volume
+        let action = MouseAction::Scroll {
+            x: 22,
+            y: 15,
+            delta: 1,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        assert!(
+            app.mixer.tracks[1].volume > 0.5,
+            "Scroll up should increase volume, got {}",
+            app.mixer.tracks[1].volume
+        );
+
+        // Reset to 50%
+        app.mixer.tracks[1].volume = 0.5;
+
+        // Scroll down should decrease volume
+        let action = MouseAction::Scroll {
+            x: 22,
+            y: 15,
+            delta: -1,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        assert!(
+            app.mixer.tracks[1].volume < 0.5,
+            "Scroll down should decrease volume, got {}",
+            app.mixer.tracks[1].volume
+        );
+    }
+
+    #[test]
+    fn test_mouse_double_click_resets_volume() {
+        let (mut app, _temp) = create_test_app();
+
+        // Register a fader
+        register_fader(&mut app, 1, Rect::new(20, 10, 5, 20));
+
+        // Set volume to something other than 100%
+        app.mixer.tracks[1].volume = 0.3;
+
+        // Double-click should reset to 100%
+        let action = MouseAction::DoubleClick { x: 22, y: 15 };
+        handle_mouse_action(&action, &mut app);
+
+        assert_eq!(
+            app.mixer.tracks[1].volume, 1.0,
+            "Double-click should reset volume to 100%"
+        );
+    }
+
+    #[test]
+    fn test_mouse_drag_updates_volume() {
+        let (mut app, _temp) = create_test_app();
+
+        // Register a fader at (20, 10) with height 20
+        register_fader(&mut app, 1, Rect::new(20, 10, 5, 20));
+
+        // Set initial volume
+        app.mixer.tracks[1].volume = 0.5;
+
+        // Drag start
+        let action = MouseAction::DragStart {
+            x: 22,
+            y: 20,
+            button: crossterm::event::MouseButton::Left,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        // Track should be selected
+        assert_eq!(app.mixer.selected_track, 1);
+
+        // Drag move to top of fader
+        let action = MouseAction::DragMove {
+            x: 22,
+            y: 10,
+            start_x: 22,
+            start_y: 20,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        // Volume should be high (near top)
+        assert!(
+            app.mixer.tracks[1].volume > 0.9,
+            "Drag to top should set high volume"
+        );
+
+        // Drag move to bottom
+        let action = MouseAction::DragMove {
+            x: 22,
+            y: 29,
+            start_x: 22,
+            start_y: 20,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        // Volume should be low (near bottom)
+        assert!(
+            app.mixer.tracks[1].volume < 0.1,
+            "Drag to bottom should set low volume"
+        );
+    }
+
+    #[test]
+    fn test_mouse_right_click_shows_context_menu() {
+        let (mut app, _temp) = create_test_app();
+
+        // Register a fader
+        register_fader(&mut app, 1, Rect::new(20, 10, 5, 20));
+
+        // Context menu should not be visible initially
+        assert!(!app.ui.context_menu.visible);
+
+        // Right-click on fader
+        let action = MouseAction::RightClick { x: 22, y: 15 };
+        handle_mouse_action(&action, &mut app);
+
+        // Context menu should now be visible
+        assert!(
+            app.ui.context_menu.visible,
+            "Right-click should show context menu"
+        );
+    }
+
+    #[test]
+    fn test_mouse_click_channel_strip_selects_track() {
+        let (mut app, _temp) = create_test_app();
+
+        // Register channel strips for tracks 1 and 2
+        // Track 1: x=10-19, y=0-30
+        // Track 2: x=20-29, y=0-30
+        register_channel_strip(&mut app, 1, Rect::new(10, 0, 10, 30));
+        register_channel_strip(&mut app, 2, Rect::new(20, 0, 10, 30));
+
+        // Start with track 1 selected
+        app.mixer.selected_track = 1;
+
+        // Click on track 2's channel strip (not on any control)
+        let action = MouseAction::Click {
+            x: 25,
+            y: 5,
+            button: crossterm::event::MouseButton::Left,
+        };
+        handle_mouse_action(&action, &mut app);
+
+        // Track 2 should now be selected
+        assert_eq!(
+            app.mixer.selected_track, 2,
+            "Clicking channel strip should select that track"
+        );
+
+        // Effects panel should be focused
+        assert!(
+            app.mixer.effects_focused,
+            "Clicking channel strip should focus effects panel"
         );
     }
 }

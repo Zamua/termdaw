@@ -101,7 +101,7 @@ fn render_track(
     x: u16,
     y: u16,
     height: u16,
-    app: &App,
+    app: &mut App,
     track_idx: usize,
     focused: bool,
 ) {
@@ -317,7 +317,36 @@ fn render_track(
         ]);
         let ms_widget = Paragraph::new(ms_line);
         frame.render_widget(ms_widget, Rect::new(x, y + height - 1, TRACK_WIDTH - 1, 1));
+
+        // Register mute button area (M is at padding offset)
+        let mute_rect = Rect::new(x + ms_padding as u16, y + height - 1, 1, 1);
+        app.ui
+            .screen_areas
+            .mixer_mute_buttons
+            .insert(track_idx, mute_rect);
+
+        // Register solo button area (S is at padding + 4)
+        let solo_rect = Rect::new(x + ms_padding as u16 + 4, y + height - 1, 1, 1);
+        app.ui
+            .screen_areas
+            .mixer_solo_buttons
+            .insert(track_idx, solo_rect);
     }
+
+    // Register fader area (the meter area)
+    let meter_height = height.saturating_sub(5);
+    let fader_rect = Rect::new(x, y + 2, TRACK_WIDTH - 1, meter_height);
+    app.ui
+        .screen_areas
+        .mixer_faders
+        .insert(track_idx, fader_rect);
+
+    // Register channel strip area (whole track)
+    let strip_rect = Rect::new(x, y, TRACK_WIDTH - 1, height);
+    app.ui
+        .screen_areas
+        .mixer_channel_strips
+        .insert(track_idx, strip_rect);
 
     // Draw separator line after track (except last visible)
     let sep_style = Style::default().fg(Color::DarkGray);

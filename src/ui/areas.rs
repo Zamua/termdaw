@@ -144,6 +144,9 @@ pub struct ScreenAreas {
     /// Mixer solo buttons: maps channel index to rect
     pub mixer_solo_buttons: HashMap<usize, Rect>,
 
+    /// Mixer channel strips: maps channel index to full strip rect
+    pub mixer_channel_strips: HashMap<usize, Rect>,
+
     /// Plugin editor params: maps param index to slider rect
     pub plugin_editor_params: Vec<Rect>,
 
@@ -169,6 +172,7 @@ impl ScreenAreas {
         self.mixer_faders.clear();
         self.mixer_mute_buttons.clear();
         self.mixer_solo_buttons.clear();
+        self.mixer_channel_strips.clear();
         self.plugin_editor_params.clear();
         self.command_picker_items.clear();
         self.context_menu_items.clear();
@@ -354,6 +358,16 @@ impl ScreenAreas {
     /// Find mixer solo button at screen position
     pub fn mixer_solo_at(&self, x: u16, y: u16) -> Option<usize> {
         for (ch_idx, rect) in &self.mixer_solo_buttons {
+            if Self::point_in_rect(x, y, *rect) {
+                return Some(*ch_idx);
+            }
+        }
+        None
+    }
+
+    /// Find mixer channel strip at screen position
+    pub fn mixer_channel_strip_at(&self, x: u16, y: u16) -> Option<usize> {
+        for (ch_idx, rect) in &self.mixer_channel_strips {
             if Self::point_in_rect(x, y, *rect) {
                 return Some(*ch_idx);
             }

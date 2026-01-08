@@ -653,7 +653,7 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
                 }
             }
             Some(AreaId::Mixer) | Some(AreaId::MixerChannelStrip) => {
-                // TODO: Mixer mouse handling needs to be reimplemented for track-based architecture
+                mixer::handle_mouse_action(&action, app);
             }
 
             // Main view (fallback for general area clicks)
