@@ -219,6 +219,9 @@ pub struct UiState {
     /// Effect register for yank/paste operations (stores last deleted/yanked effect)
     pub effect_register: Option<crate::effects::EffectSlot>,
 
+    /// Channel register for yank/paste operations (stores last deleted/yanked channel)
+    pub channel_register: Option<crate::sequencer::Channel>,
+
     /// Whether we're currently previewing a channel (for hold-to-preview)
     pub is_previewing: bool,
 
@@ -400,6 +403,7 @@ impl App {
             context_menu: ContextMenu::new(),
             effect_picker_selection: 0,
             effect_register: None,
+            channel_register: None,
             is_previewing: false,
             preview_channel: None,
             preview_note: None,

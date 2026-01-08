@@ -607,3 +607,153 @@ fn update_viewport(app: &mut App) {
         app.ui.cursors.channel_rack.viewport_top = app.ui.cursors.channel_rack.channel;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::AudioHandle;
+    use crossterm::event::KeyModifiers;
+    use tempfile::TempDir;
+
+    fn create_test_app() -> (App, TempDir) {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let project_path = temp_dir.path().join("test-project");
+        std::fs::create_dir_all(&project_path).expect("Failed to create project dir");
+        let audio = AudioHandle::dummy();
+        let app = App::new(project_path.to_str().unwrap(), audio);
+        (app, temp_dir)
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    // ========================================================================
+    // Channel delete/paste tests
+    // ========================================================================
+
+    #[test]
+    fn test_delete_channel_stores_in_register() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add a channel at slot 0 with a sample
+        app.set_channel_sample(0, "test.wav".to_string());
+        assert_eq!(app.channels.len(), 1, "Should have 1 channel");
+
+        // Move cursor to sample zone of slot 0
+        app.ui.cursors.channel_rack.channel = 0;
+        app.ui.cursors.channel_rack.col = AppCol::SAMPLE_ZONE;
+
+        // Verify register is empty
+        assert!(
+            app.ui.channel_register.is_none(),
+            "Register should be empty initially"
+        );
+
+        // Press 'd' to delete (in sample zone)
+        handle_key(key(KeyCode::Char('d')), &mut app);
+
+        // Channel should be deleted
+        assert_eq!(app.channels.len(), 0, "Channel should be deleted");
+
+        // Register should contain the channel
+        assert!(
+            app.ui.channel_register.is_some(),
+            "Register should contain deleted channel"
+        );
+        let stored = app.ui.channel_register.as_ref().unwrap();
+        assert_eq!(
+            stored.sample_path(),
+            Some("test.wav"),
+            "Stored channel should have correct sample"
+        );
+    }
+
+    #[test]
+    fn test_paste_channel_from_register() {
+        let (mut app, _temp) = create_test_app();
+
+        // Manually set up a channel in the register
+        let channel = crate::sequencer::Channel::with_sample("Test Channel", "stored.wav");
+        app.ui.channel_register = Some(channel);
+
+        // Move cursor to sample zone of empty slot 0
+        app.ui.cursors.channel_rack.channel = 0;
+        app.ui.cursors.channel_rack.col = AppCol::SAMPLE_ZONE;
+
+        // Verify no channels exist
+        assert_eq!(app.channels.len(), 0, "Should have no channels initially");
+
+        // Press 'p' to paste
+        handle_key(key(KeyCode::Char('p')), &mut app);
+
+        // Channel should be created at slot 0
+        assert_eq!(app.channels.len(), 1, "Should have 1 channel after paste");
+        let pasted = app
+            .get_channel_at_slot(0)
+            .expect("Channel should exist at slot 0");
+        assert_eq!(
+            pasted.sample_path(),
+            Some("stored.wav"),
+            "Pasted channel should have correct sample"
+        );
+    }
+
+    #[test]
+    fn test_delete_then_paste_channel_workflow() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add a channel at slot 0
+        app.set_channel_sample(0, "original.wav".to_string());
+
+        // Move cursor to sample zone of slot 0
+        app.ui.cursors.channel_rack.channel = 0;
+        app.ui.cursors.channel_rack.col = AppCol::SAMPLE_ZONE;
+
+        // Delete with 'd'
+        handle_key(key(KeyCode::Char('d')), &mut app);
+        assert_eq!(app.channels.len(), 0, "Channel should be deleted");
+
+        // Move to slot 1
+        app.ui.cursors.channel_rack.channel = 1;
+
+        // Paste with 'p'
+        handle_key(key(KeyCode::Char('p')), &mut app);
+
+        // Channel should be created at slot 1
+        assert_eq!(app.channels.len(), 1, "Should have 1 channel after paste");
+        let pasted = app
+            .get_channel_at_slot(1)
+            .expect("Channel should exist at slot 1");
+        assert_eq!(
+            pasted.sample_path(),
+            Some("original.wav"),
+            "Pasted channel should have the original sample"
+        );
+    }
+
+    #[test]
+    fn test_paste_does_nothing_with_empty_register() {
+        let (mut app, _temp) = create_test_app();
+
+        // Verify register is empty
+        assert!(
+            app.ui.channel_register.is_none(),
+            "Register should be empty"
+        );
+
+        // Move cursor to sample zone
+        app.ui.cursors.channel_rack.channel = 0;
+        app.ui.cursors.channel_rack.col = AppCol::SAMPLE_ZONE;
+
+        // Press 'p' to paste
+        handle_key(key(KeyCode::Char('p')), &mut app);
+
+        // No channel should be created
+        assert_eq!(
+            app.channels.len(),
+            0,
+            "No channel should be created from empty register"
+        );
+    }
+}
