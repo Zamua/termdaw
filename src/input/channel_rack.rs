@@ -51,23 +51,9 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         KeyCode::Char('p') => {
             let slot = app.ui.cursors.channel_rack.channel;
             if app.cursor_zone() == "sample" {
-                // Paste channel from register (only if slot is empty)
-                if app.get_channel_at_slot(slot).is_none() {
-                    if let Some(channel) = app.ui.channel_register.clone() {
-                        // Create a new channel at the current slot with the stored data
-                        let mut new_channel = channel;
-                        new_channel.slot = slot;
-                        // Find next available mixer track
-                        let mixer_track = app.find_available_mixer_track();
-                        new_channel.mixer_track = mixer_track;
-                        app.channels.push(new_channel);
-                        // Update mixer routing
-                        let channel_idx = app.channels.len() - 1;
-                        app.mixer.auto_assign_generator(channel_idx);
-                        // Sync routing to audio thread
-                        app.audio.set_generator_track(channel_idx, mixer_track);
-                        app.mark_dirty();
-                    }
+                // Paste channel from register via dispatch (supports undo)
+                if let Some(channel) = app.ui.channel_register.clone() {
+                    app.dispatch(AppCommand::AddChannel { slot, channel });
                 }
             } else {
                 // Open plugin editor for plugin channels
@@ -418,8 +404,8 @@ fn range_to_clear_operations(app: &App, range: &Range) -> Vec<(usize, usize, usi
 
 /// Paste clipboard at cursor position
 fn paste_at_cursor(app: &mut App, before: bool) {
-    let cursor_row = app.ui.cursors.channel_rack.channel;
-    let cursor_col = app.cursor_step(); // Use method to get step index
+    let cursor_slot = app.ui.cursors.channel_rack.channel;
+    let cursor_col = app.cursor_step();
 
     // Clone register data to avoid borrow issues
     let paste_data = app.ui.vim.channel_rack.get_register().cloned();
@@ -430,37 +416,44 @@ fn paste_at_cursor(app: &mut App, before: bool) {
         let width = register.data.first().map(|r| r.len()).unwrap_or(0);
 
         // Calculate paste position based on before/after
-        let (paste_row, paste_col) = if before {
+        let (paste_slot, paste_col) = if before {
             // P: paste before - shift by register dimensions
             (
-                cursor_row.saturating_sub(height.saturating_sub(1)),
+                cursor_slot.saturating_sub(height.saturating_sub(1)),
                 cursor_col.saturating_sub(width.saturating_sub(1)),
             )
         } else {
             // p: paste at cursor position
-            (cursor_row, cursor_col)
+            (cursor_slot, cursor_col)
         };
 
-        let pattern_id = app.current_pattern;
+        let pattern_id = app.current_pattern();
         let pattern_length = app.get_current_pattern().map(|p| p.length).unwrap_or(16);
-        let num_channels = app.channels.len();
 
+        // Build batch operations for dispatch (supports undo)
+        // Operations use slot-based channel indexing
+        let mut operations = Vec::new();
         for (row_offset, row_data) in register.data.iter().enumerate() {
-            let target_row = paste_row + row_offset;
-            if target_row >= num_channels {
-                break;
+            let target_slot = paste_slot + row_offset;
+            // Check if there's a channel at this slot
+            if app.get_channel_at_slot(target_slot).is_none() {
+                continue;
             }
 
-            // Get the channel's pattern slice
-            if let Some(channel) = app.channels.get_mut(target_row) {
-                let slice = channel.get_or_create_pattern(pattern_id, pattern_length);
-                for (col_offset, &value) in row_data.iter().enumerate() {
-                    let target_col = paste_col + col_offset;
-                    if target_col < pattern_length {
-                        slice.set_step(target_col, value);
-                    }
+            for (col_offset, &value) in row_data.iter().enumerate() {
+                let target_col = paste_col + col_offset;
+                if target_col < pattern_length {
+                    operations.push((target_slot, target_col, value));
                 }
             }
+        }
+
+        // Dispatch batch set for proper undo support
+        if !operations.is_empty() {
+            app.dispatch(AppCommand::BatchSetSteps {
+                pattern: pattern_id,
+                operations,
+            });
         }
     }
 }

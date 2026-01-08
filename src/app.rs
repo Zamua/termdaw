@@ -126,13 +126,16 @@ pub struct AppState {
     pub project: ProjectState,
 
     /// Channels (sound sources - samplers, plugins)
-    pub channels: Vec<Channel>,
+    /// Use `channels()` for reads, `channels_mut()` for writes in commands
+    pub(crate) channels: Vec<Channel>,
 
     /// Patterns
-    pub patterns: Vec<Pattern>,
+    /// Use `patterns()` for reads, `patterns_mut()` for writes in commands
+    pub(crate) patterns: Vec<Pattern>,
 
     /// Currently selected pattern
-    pub current_pattern: usize,
+    /// Use `current_pattern()` and `set_current_pattern()` accessors
+    pub(crate) current_pattern: usize,
 
     /// Arrangement data
     pub arrangement: Arrangement,
@@ -276,6 +279,29 @@ impl App {
     /// Transport (read-only)
     pub fn transport(&self) -> &TransportState {
         &self.state.transport
+    }
+
+    // === Internal Mutable Accessors (for commands only) ===
+    // These bypass history and should only be used by history/command.rs
+
+    /// Mutable access to channels (for history commands only)
+    pub(crate) fn channels_mut(&mut self) -> &mut Vec<Channel> {
+        &mut self.state.channels
+    }
+
+    /// Mutable access to patterns (for history commands only)
+    pub(crate) fn patterns_mut(&mut self) -> &mut Vec<Pattern> {
+        &mut self.state.patterns
+    }
+
+    /// Set current pattern (for history commands only)
+    pub(crate) fn set_current_pattern(&mut self, pattern: usize) {
+        self.state.current_pattern = pattern;
+    }
+
+    /// Get current pattern
+    pub fn current_pattern(&self) -> usize {
+        self.state.current_pattern
     }
 }
 
@@ -540,7 +566,7 @@ impl App {
     pub fn dispatch(&mut self, cmd: crate::command::AppCommand) {
         use crate::command::AppCommand;
         use crate::history::command::{
-            AddEffectCmd, AddNoteCmd, AddNotesCmd, DeleteChannelCmd, DeleteNotesCmd,
+            AddChannelCmd, AddEffectCmd, AddNoteCmd, AddNotesCmd, DeleteChannelCmd, DeleteNotesCmd,
             DeletePatternCmd, DeleteStepsCmd, RemoveEffectCmd, RemoveNoteCmd, SetStepsCmd,
             TogglePlacementCmd, ToggleStepCmd,
         };
@@ -589,15 +615,20 @@ impl App {
                 operations,
             } => {
                 // Capture current step states for undo
-                let pattern_length = self.patterns.get(*pattern).map(|p| p.length).unwrap_or(16);
+                // Operations use slot-based channel indexing (not Vec indices)
+                let pattern_length = self
+                    .patterns()
+                    .get(*pattern)
+                    .map(|p| p.length)
+                    .unwrap_or(16);
                 let mut history_cmd = SetStepsCmd::new(*pattern);
 
-                for &(channel, step_idx, new_value) in operations {
-                    if let Some(ch) = self.channels.get(channel) {
+                for &(slot, step_idx, new_value) in operations {
+                    if let Some(ch) = self.get_channel_at_slot(slot) {
                         let slice = ch.get_pattern(*pattern);
                         let old_value = slice.map(|s| s.get_step(step_idx)).unwrap_or(false);
                         if step_idx < pattern_length {
-                            history_cmd.add_step(channel, step_idx, new_value, old_value);
+                            history_cmd.add_step(slot, step_idx, new_value, old_value);
                         }
                     }
                 }
@@ -722,6 +753,16 @@ impl App {
                 let mut history = std::mem::take(&mut self.history);
                 history.execute(Box::new(history_cmd), self);
                 self.history = history;
+                true
+            }
+            AppCommand::AddChannel { slot, channel } => {
+                // Only add if slot is empty
+                if self.get_channel_at_slot(*slot).is_none() {
+                    let history_cmd = AddChannelCmd::new(*slot, channel.clone());
+                    let mut history = std::mem::take(&mut self.history);
+                    history.execute(Box::new(history_cmd), self);
+                    self.history = history;
+                }
                 true
             }
             AppCommand::DeletePattern(pattern_id) => {
@@ -863,6 +904,9 @@ impl App {
                 if let Some(idx) = self.channels.iter().position(|c| c.slot == slot) {
                     self.channels.remove(idx);
                 }
+            }
+            AppCommand::AddChannel { .. } => {
+                // Handled through history dispatch, no-op here
             }
             AppCommand::SetChannelSample { slot, path } => {
                 self.set_channel_sample(slot, path);
@@ -3007,6 +3051,70 @@ mod tests {
             app.patterns.len(),
             pattern_count,
             "Pattern count should be restored after undo"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_add_channel_records_to_history() {
+        let (mut app, _temp) = create_test_app();
+
+        // Create a channel to "paste"
+        let channel = Channel::with_sample("Test", "test.wav");
+
+        // Clear history
+        app.history = History::new();
+
+        // Verify we start with 0 channels
+        assert_eq!(app.channels().len(), 0);
+
+        // Add channel via dispatch
+        use crate::command::AppCommand;
+        app.dispatch(AppCommand::AddChannel { slot: 5, channel });
+
+        // Verify channel was added at slot 5
+        assert_eq!(app.channels().len(), 1, "Should have 1 channel after add");
+        assert!(
+            app.get_channel_at_slot(5).is_some(),
+            "Channel should be at slot 5"
+        );
+
+        // Verify undo is available
+        assert!(
+            app.history.can_undo(),
+            "AddChannel should record to history"
+        );
+
+        // Perform undo
+        let mut history = std::mem::take(&mut app.history);
+        history.undo(&mut app);
+        app.history = history;
+
+        // Verify channel is removed
+        assert_eq!(app.channels().len(), 0, "Should have 0 channels after undo");
+        assert!(
+            app.get_channel_at_slot(5).is_none(),
+            "Channel should be gone from slot 5"
+        );
+    }
+
+    #[test]
+    fn test_add_channel_does_not_overwrite_existing() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add a channel at slot 5
+        app.set_channel_sample(5, "kick.wav".to_string());
+        assert_eq!(app.channels().len(), 1);
+
+        // Try to add another channel at slot 5
+        let channel = Channel::with_sample("Test", "test.wav");
+        use crate::command::AppCommand;
+        app.dispatch(AppCommand::AddChannel { slot: 5, channel });
+
+        // Should still have only 1 channel (add was blocked)
+        assert_eq!(
+            app.channels().len(),
+            1,
+            "AddChannel should not overwrite existing channel"
         );
     }
 }

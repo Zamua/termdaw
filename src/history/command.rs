@@ -530,9 +530,9 @@ impl DeleteChannelCmd {
 
 impl Command for DeleteChannelCmd {
     fn execute(&mut self, app: &mut App) {
-        if let Some(idx) = app.channels.iter().position(|c| c.slot == self.slot) {
+        if let Some(idx) = app.channels().iter().position(|c| c.slot == self.slot) {
             self.deleted_index = Some(idx);
-            self.deleted_channel = Some(app.channels.remove(idx));
+            self.deleted_channel = Some(app.channels_mut().remove(idx));
             app.mark_dirty();
         }
     }
@@ -540,15 +540,77 @@ impl Command for DeleteChannelCmd {
     fn undo(&mut self, app: &mut App) {
         if let (Some(channel), Some(idx)) = (self.deleted_channel.take(), self.deleted_index) {
             // Insert at the original index (or at end if index is out of bounds)
-            let insert_idx = idx.min(app.channels.len());
-            app.channels.insert(insert_idx, channel.clone());
-            self.deleted_channel = Some(app.channels[insert_idx].clone());
+            let insert_idx = idx.min(app.channels().len());
+            app.channels_mut().insert(insert_idx, channel.clone());
+            self.deleted_channel = Some(app.channels_mut()[insert_idx].clone());
             app.mark_dirty();
         }
     }
 
     fn description(&self) -> &str {
         "Delete channel"
+    }
+}
+
+// ============================================================================
+// Add Channel Command
+// ============================================================================
+
+/// Add a channel with undo support (for paste operations)
+#[derive(Debug)]
+pub struct AddChannelCmd {
+    pub slot: usize,
+    pub channel: crate::sequencer::Channel,
+    /// The index in the channels Vec where it was inserted
+    inserted_index: Option<usize>,
+    /// The mixer track that was assigned
+    assigned_mixer_track: Option<usize>,
+}
+
+impl AddChannelCmd {
+    pub fn new(slot: usize, channel: crate::sequencer::Channel) -> Self {
+        Self {
+            slot,
+            channel,
+            inserted_index: None,
+            assigned_mixer_track: None,
+        }
+    }
+}
+
+impl Command for AddChannelCmd {
+    fn execute(&mut self, app: &mut App) {
+        // Only add if slot is empty
+        if app.get_channel_at_slot(self.slot).is_some() {
+            return;
+        }
+
+        let mut new_channel = self.channel.clone();
+        new_channel.slot = self.slot;
+        // Preserve the original mixer track from the yanked/cloned channel
+        let mixer_track = new_channel.mixer_track;
+        self.assigned_mixer_track = Some(mixer_track);
+
+        app.channels_mut().push(new_channel);
+        let idx = app.channels().len() - 1;
+        self.inserted_index = Some(idx);
+
+        app.mixer.auto_assign_generator(idx);
+        app.audio.set_generator_track(idx, mixer_track);
+        app.mark_dirty();
+    }
+
+    fn undo(&mut self, app: &mut App) {
+        if let Some(idx) = self.inserted_index {
+            if idx < app.channels().len() && app.channels()[idx].slot == self.slot {
+                app.channels_mut().remove(idx);
+                app.mark_dirty();
+            }
+        }
+    }
+
+    fn description(&self) -> &str {
+        "Add channel"
     }
 }
 
@@ -575,10 +637,10 @@ impl DeletePatternCmd {
 
 impl Command for DeletePatternCmd {
     fn execute(&mut self, app: &mut App) {
-        if self.pattern_id < app.patterns.len() && app.patterns.len() > 1 {
-            self.deleted_pattern = Some(app.patterns.remove(self.pattern_id));
-            if app.current_pattern >= app.patterns.len() {
-                app.current_pattern = app.patterns.len() - 1;
+        if self.pattern_id < app.patterns().len() && app.patterns().len() > 1 {
+            self.deleted_pattern = Some(app.patterns_mut().remove(self.pattern_id));
+            if app.current_pattern() >= app.patterns().len() {
+                app.set_current_pattern(app.patterns().len() - 1);
             }
             app.mark_dirty();
         }
@@ -587,9 +649,9 @@ impl Command for DeletePatternCmd {
     fn undo(&mut self, app: &mut App) {
         if let Some(pattern) = self.deleted_pattern.take() {
             // Insert at the original index (or at end if index is out of bounds)
-            let insert_idx = self.pattern_id.min(app.patterns.len());
-            app.patterns.insert(insert_idx, pattern.clone());
-            self.deleted_pattern = Some(app.patterns[insert_idx].clone());
+            let insert_idx = self.pattern_id.min(app.patterns().len());
+            app.patterns_mut().insert(insert_idx, pattern.clone());
+            self.deleted_pattern = Some(app.patterns_mut()[insert_idx].clone());
             app.mark_dirty();
         }
     }

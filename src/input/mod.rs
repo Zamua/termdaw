@@ -886,15 +886,16 @@ fn execute_context_menu_action(
         ContextMenuAction::DuplicateChannel => {
             if let Some(MenuContext::ChannelRack { channel: slot }) = context {
                 if let Some(ch) = app.get_channel_at_slot(slot) {
-                    let mut new_channel = ch.clone();
+                    let new_channel = ch.clone();
                     // Find first unused slot number
                     let used_slots: std::collections::HashSet<usize> =
-                        app.channels.iter().map(|c| c.slot).collect();
+                        app.channels().iter().map(|c| c.slot).collect();
                     let new_slot = (0..99).find(|s| !used_slots.contains(s)).unwrap_or(98);
-                    new_channel.slot = new_slot;
-                    new_channel.mixer_track = app.find_available_mixer_track();
-                    app.channels.push(new_channel);
-                    app.mark_dirty();
+                    // Use dispatch for proper undo support
+                    app.dispatch(AppCommand::AddChannel {
+                        slot: new_slot,
+                        channel: new_channel,
+                    });
                 }
             }
         }

@@ -6,7 +6,7 @@
 //! - Event logging and debugging
 
 use crate::effects::{EffectParamId, EffectType};
-use crate::sequencer::Note;
+use crate::sequencer::{Channel, Note};
 
 /// Application commands representing all possible state mutations.
 ///
@@ -52,6 +52,9 @@ pub enum AppCommand {
 
     /// Delete a channel at slot
     DeleteChannel(usize),
+
+    /// Add/paste a channel at a slot
+    AddChannel { slot: usize, channel: Channel },
 
     /// Set channel's sample path
     SetChannelSample { slot: usize, path: String },
@@ -223,6 +226,7 @@ impl AppCommand {
             AppCommand::CycleChannelMuteState(_) => "cycle mute state",
             AppCommand::ToggleSolo(_) => "toggle solo",
             AppCommand::DeleteChannel(_) => "delete channel",
+            AppCommand::AddChannel { .. } => "add channel",
             AppCommand::SetChannelSample { .. } => "set channel sample",
             AppCommand::SetChannelPlugin { .. } => "set channel plugin",
             AppCommand::SetChannelRouting { .. } => "set channel routing",
