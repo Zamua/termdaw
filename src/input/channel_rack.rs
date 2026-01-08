@@ -51,21 +51,23 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
         KeyCode::Char('p') => {
             let slot = app.ui.cursors.channel_rack.channel;
             if app.cursor_zone() == "sample" {
-                // Paste channel from register
-                if let Some(channel) = app.ui.channel_register.clone() {
-                    // Create a new channel at the current slot with the stored data
-                    let mut new_channel = channel;
-                    new_channel.slot = slot;
-                    // Find next available mixer track
-                    let mixer_track = app.find_available_mixer_track();
-                    new_channel.mixer_track = mixer_track;
-                    app.channels.push(new_channel);
-                    // Update mixer routing
-                    let channel_idx = app.channels.len() - 1;
-                    app.mixer.auto_assign_generator(channel_idx);
-                    // Sync routing to audio thread
-                    app.audio.set_generator_track(channel_idx, mixer_track);
-                    app.mark_dirty();
+                // Paste channel from register (only if slot is empty)
+                if app.get_channel_at_slot(slot).is_none() {
+                    if let Some(channel) = app.ui.channel_register.clone() {
+                        // Create a new channel at the current slot with the stored data
+                        let mut new_channel = channel;
+                        new_channel.slot = slot;
+                        // Find next available mixer track
+                        let mixer_track = app.find_available_mixer_track();
+                        new_channel.mixer_track = mixer_track;
+                        app.channels.push(new_channel);
+                        // Update mixer routing
+                        let channel_idx = app.channels.len() - 1;
+                        app.mixer.auto_assign_generator(channel_idx);
+                        // Sync routing to audio thread
+                        app.audio.set_generator_track(channel_idx, mixer_track);
+                        app.mark_dirty();
+                    }
                 }
             } else {
                 // Open plugin editor for plugin channels
@@ -816,6 +818,42 @@ mod tests {
             app.channels.len(),
             0,
             "No channel should be created from empty register"
+        );
+    }
+
+    #[test]
+    fn test_paste_does_nothing_if_slot_occupied() {
+        let (mut app, _temp) = create_test_app();
+
+        // Add a channel at slot 0
+        app.set_channel_sample(0, "existing.wav".to_string());
+
+        // Store a different channel in register
+        let channel = crate::sequencer::Channel::with_sample("Other", "other.wav");
+        app.ui.channel_register = Some(channel);
+
+        // Move cursor to sample zone of occupied slot 0
+        app.ui.cursors.channel_rack.channel = 0;
+        app.ui.cursors.channel_rack.col = AppCol::SAMPLE_ZONE;
+
+        // Press 'p' multiple times
+        handle_key(key(KeyCode::Char('p')), &mut app);
+        handle_key(key(KeyCode::Char('p')), &mut app);
+        handle_key(key(KeyCode::Char('p')), &mut app);
+
+        // Should still have only 1 channel
+        assert_eq!(
+            app.channels.len(),
+            1,
+            "Should not create duplicate channels at same slot"
+        );
+
+        // Original channel should be unchanged
+        let channel = app.get_channel_at_slot(0).expect("Channel should exist");
+        assert_eq!(
+            channel.sample_path(),
+            Some("existing.wav"),
+            "Original channel should be unchanged"
         );
     }
 }
