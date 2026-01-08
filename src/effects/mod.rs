@@ -46,7 +46,6 @@ impl EffectType {
 pub enum EffectParamId {
     // Filter parameters
     FilterCutoff,
-    FilterResonance,
     FilterMode,
 
     // Delay parameters
@@ -62,7 +61,6 @@ impl EffectParamId {
     pub fn name(&self) -> &'static str {
         match self {
             EffectParamId::FilterCutoff => "Cutoff",
-            EffectParamId::FilterResonance => "Resonance",
             EffectParamId::FilterMode => "Mode",
             EffectParamId::DelayTime => "Time",
             EffectParamId::DelayFeedback => "Feedback",
@@ -170,20 +168,10 @@ pub fn get_param_defs(effect_type: EffectType) -> Vec<EffectParamDef> {
             EffectParamDef {
                 id: EffectParamId::FilterCutoff,
                 min: 20.0,
-                max: 16000.0, // Limited to ensure filter stability
+                max: 20000.0,
                 default: 1000.0,
                 display: ParamDisplay::Continuous {
                     unit: "Hz",
-                    decimals: 0,
-                },
-            },
-            EffectParamDef {
-                id: EffectParamId::FilterResonance,
-                min: 0.0,
-                max: 100.0,
-                default: 50.0,
-                display: ParamDisplay::Continuous {
-                    unit: "%",
                     decimals: 0,
                 },
             },
