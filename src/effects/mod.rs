@@ -47,6 +47,8 @@ pub enum EffectParamId {
     // Filter parameters
     FilterCutoff,
     FilterMode,
+    /// Deprecated: kept for backward compatibility with saved projects
+    FilterResonance,
 
     // Delay parameters
     DelayTime,
@@ -62,6 +64,7 @@ impl EffectParamId {
         match self {
             EffectParamId::FilterCutoff => "Cutoff",
             EffectParamId::FilterMode => "Mode",
+            EffectParamId::FilterResonance => "Resonance", // Deprecated but kept for compat
             EffectParamId::DelayTime => "Time",
             EffectParamId::DelayFeedback => "Feedback",
             EffectParamId::DelayMix => "Mix",
@@ -116,6 +119,11 @@ impl EffectParamDef {
                 choices[idx].to_string()
             }
         }
+    }
+
+    /// Check if this is a discrete (enum-like) parameter
+    pub fn is_discrete(&self) -> bool {
+        matches!(self.display, ParamDisplay::Discrete { .. })
     }
 }
 

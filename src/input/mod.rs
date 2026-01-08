@@ -417,7 +417,12 @@ fn handle_effect_editor_key(key: KeyEvent, app: &mut App) -> bool {
             if selected_param < param_defs.len() {
                 let def = &param_defs[selected_param];
                 let current = effect_slot.get_param(def.id);
-                let step = (def.max - def.min) * 0.05; // 5% coarse step
+                // For discrete params, step by 1; for continuous, step by 5%
+                let step = if def.is_discrete() {
+                    1.0
+                } else {
+                    (def.max - def.min) * 0.05
+                };
                 let new_value = (current - step).max(def.min);
                 app.set_effect_param(def.id, new_value);
             }
@@ -427,7 +432,12 @@ fn handle_effect_editor_key(key: KeyEvent, app: &mut App) -> bool {
             if selected_param < param_defs.len() {
                 let def = &param_defs[selected_param];
                 let current = effect_slot.get_param(def.id);
-                let step = (def.max - def.min) * 0.05; // 5% coarse step
+                // For discrete params, step by 1; for continuous, step by 5%
+                let step = if def.is_discrete() {
+                    1.0
+                } else {
+                    (def.max - def.min) * 0.05
+                };
                 let new_value = (current + step).min(def.max);
                 app.set_effect_param(def.id, new_value);
             }
@@ -437,7 +447,12 @@ fn handle_effect_editor_key(key: KeyEvent, app: &mut App) -> bool {
             if selected_param < param_defs.len() {
                 let def = &param_defs[selected_param];
                 let current = effect_slot.get_param(def.id);
-                let step = (def.max - def.min) * 0.01; // 1% fine step
+                // For discrete params, H/L also step by 1; for continuous, step by 1%
+                let step = if def.is_discrete() {
+                    1.0
+                } else {
+                    (def.max - def.min) * 0.01
+                };
                 let new_value = (current - step).max(def.min);
                 app.set_effect_param(def.id, new_value);
             }
@@ -447,7 +462,12 @@ fn handle_effect_editor_key(key: KeyEvent, app: &mut App) -> bool {
             if selected_param < param_defs.len() {
                 let def = &param_defs[selected_param];
                 let current = effect_slot.get_param(def.id);
-                let step = (def.max - def.min) * 0.01; // 1% fine step
+                // For discrete params, H/L also step by 1; for continuous, step by 1%
+                let step = if def.is_discrete() {
+                    1.0
+                } else {
+                    (def.max - def.min) * 0.01
+                };
                 let new_value = (current + step).min(def.max);
                 app.set_effect_param(def.id, new_value);
             }

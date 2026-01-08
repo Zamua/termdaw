@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::effects::{get_param_defs, EffectType};
+use crate::effects::{get_param_defs, EffectType, ParamDisplay};
 use crate::mode::AppMode;
 
 /// Render effect-related modals
@@ -130,7 +130,6 @@ fn render_effect_editor(
 
         let is_selected = i == selected_param;
         let value = effect_slot.get_param(def.id);
-        let normalized = def.normalize(value);
 
         // Parameter name
         let name_style = if is_selected {
@@ -143,39 +142,66 @@ fn render_effect_editor(
 
         let selector = if is_selected { ">" } else { " " };
 
-        // Value bar (10 chars wide)
-        let bar_width = 10;
-        let filled = (normalized * bar_width as f32) as usize;
-        let bar: String = (0..bar_width)
-            .map(|i| if i < filled { '█' } else { '░' })
-            .collect();
+        // Build line based on parameter type
+        let line = match &def.display {
+            ParamDisplay::Discrete { choices } => {
+                // Show discrete choices as radio buttons (same style as plugin editor)
+                let current_idx = (value as usize).min(choices.len().saturating_sub(1));
 
-        // Value display
-        let value_str = def.format_value(value);
+                let mut spans = vec![
+                    Span::styled(selector, Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{:10}", def.id.name()), name_style),
+                ];
 
-        let line = Line::from(vec![
-            Span::styled(selector, Style::default().fg(Color::Cyan)),
-            Span::styled(format!("{:12}", def.id.name()), name_style),
-            Span::styled(
-                bar,
-                Style::default().fg(if is_selected {
-                    Color::Cyan
-                } else {
-                    Color::DarkGray
-                }),
-            ),
-            Span::styled(format!(" {:>8}", value_str), name_style),
-        ]);
+                // Add each choice with radio button style
+                for (idx, choice) in choices.iter().enumerate() {
+                    if idx == current_idx {
+                        spans.push(Span::styled(
+                            format!(" ◉ {} ", choice),
+                            Style::default().fg(if is_selected {
+                                Color::Yellow
+                            } else {
+                                Color::White
+                            }),
+                        ));
+                    } else {
+                        spans.push(Span::styled(
+                            format!(" ○ {} ", choice),
+                            Style::default().fg(Color::DarkGray),
+                        ));
+                    }
+                }
+
+                Line::from(spans)
+            }
+            ParamDisplay::Continuous { .. } => {
+                // Show continuous values with a bar
+                let normalized = def.normalize(value);
+                let bar_width = 10;
+                let filled = (normalized * bar_width as f32) as usize;
+                let bar: String = (0..bar_width)
+                    .map(|j| if j < filled { '█' } else { '░' })
+                    .collect();
+
+                let value_str = def.format_value(value);
+
+                Line::from(vec![
+                    Span::styled(selector, Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{:10}", def.id.name()), name_style),
+                    Span::styled(
+                        bar,
+                        Style::default().fg(if is_selected {
+                            Color::Cyan
+                        } else {
+                            Color::DarkGray
+                        }),
+                    ),
+                    Span::styled(format!(" {:>8}", value_str), name_style),
+                ])
+            }
+        };
 
         let para = Paragraph::new(line);
         frame.render_widget(para, Rect::new(inner.x, row_y, inner.width, 1));
     }
-
-    // Help text
-    let help = Paragraph::new("j/k: param  h/l: adjust  Esc: close")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(
-        help,
-        Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1),
-    );
 }
