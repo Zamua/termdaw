@@ -7,8 +7,10 @@
 use std::io;
 use std::time::{Duration, Instant};
 
+use std::fs;
+
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser, Subcommand};
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyboardEnhancementFlags,
@@ -28,15 +30,98 @@ use termdaw::ui;
 #[derive(Parser, Debug)]
 #[command(name = "termdaw")]
 #[command(about = "A terminal-based Digital Audio Workstation", long_about = None)]
-struct Args {
-    /// Project name or path to open/create (auto-generates if not specified)
-    #[arg()]
-    project: Option<String>,
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Project management commands
+    Projects {
+        #[command(subcommand)]
+        action: ProjectsAction,
+    },
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ProjectsAction {
+    /// List available projects
+    List,
+    /// Open or create a project
+    Open {
+        /// Project name
+        name: String,
+    },
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
+    // Handle subcommands that don't launch the DAW
+    match &cli.command {
+        Some(Commands::Projects { action }) => match action {
+            ProjectsAction::List => list_projects(),
+            ProjectsAction::Open { name } => run_daw(name.clone()),
+        },
+        Some(Commands::Completions { shell }) => {
+            print_completions(*shell);
+            Ok(())
+        }
+        None => {
+            // Default: open/create untitled project
+            let project_name = termdaw::project::generate_project_name();
+            run_daw(project_name)
+        }
+    }
+}
+
+/// List available projects
+fn list_projects() -> Result<()> {
+    let dir = termdaw::templates::projects_dir();
+
+    if !dir.exists() {
+        println!("No projects found.");
+        return Ok(());
+    }
+
+    let mut projects: Vec<_> = fs::read_dir(&dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().join("project.json").exists())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+
+    projects.sort();
+
+    if projects.is_empty() {
+        println!("No projects found in {}", dir.display());
+    } else {
+        println!("Projects in {}:", dir.display());
+        for name in projects {
+            println!("  {}", name);
+        }
+    }
+
+    Ok(())
+}
+
+/// Print shell completions
+fn print_completions(shell: clap_complete::Shell) {
+    clap_complete::generate(
+        shell,
+        &mut Cli::command(),
+        "termdaw",
+        &mut std::io::stdout(),
+    );
+}
+
+/// Run the DAW with a specific project
+fn run_daw(project_name: String) -> Result<()> {
     // Ensure templates are downloaded (first run setup)
     if let Err(e) = termdaw::templates::ensure_templates() {
         eprintln!("Warning: Could not download templates: {}", e);
@@ -44,11 +129,6 @@ fn main() -> Result<()> {
         eprintln!("Press Enter to continue...");
         let _ = std::io::stdin().read_line(&mut String::new());
     }
-
-    // Determine project name: use provided name or auto-generate
-    let project_name = args
-        .project
-        .unwrap_or_else(termdaw::project::generate_project_name);
 
     // Initialize audio engine
     let (mut audio_engine, audio_handle) =

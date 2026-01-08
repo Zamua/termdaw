@@ -22,7 +22,8 @@ fn local_templates_dir() -> PathBuf {
 }
 
 /// Check if local templates exist (development mode)
-fn local_templates_exist() -> bool {
+/// Public so other modules can check dev mode
+pub fn local_templates_exist() -> bool {
     let dir = local_templates_dir();
     dir.exists() && dir.join("default").exists()
 }
@@ -42,6 +43,20 @@ pub fn templates_dir() -> PathBuf {
         return local_templates_dir();
     }
     installed_templates_dir()
+}
+
+/// Get the projects directory path
+/// Dev mode: ./ (current directory)
+/// Installed: ~/.config/termdaw/projects
+pub fn projects_dir() -> PathBuf {
+    if local_templates_exist() {
+        PathBuf::from(".")
+    } else {
+        dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("termdaw")
+            .join("projects")
+    }
 }
 
 /// Check if templates are available (local or installed)

@@ -30,6 +30,7 @@ clack-extensions = { git = "https://github.com/prokopyl/clack.git" }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

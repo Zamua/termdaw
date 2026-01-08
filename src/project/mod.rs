@@ -207,11 +207,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), ProjectError> {
 
 /// Generate a unique project name (untitled-1, untitled-2, etc.)
 pub fn generate_project_name() -> String {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let base_dir = crate::templates::projects_dir();
 
     for i in 1..1000 {
         let name = format!("untitled-{}", i);
-        let path = cwd.join(&name);
+        let path = base_dir.join(&name);
         if !path.exists() {
             return name;
         }

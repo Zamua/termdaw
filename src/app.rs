@@ -340,7 +340,7 @@ impl std::ops::DerefMut for App {
 impl App {
     /// Create a new App instance
     pub fn new(project_name: &str, audio: AudioHandle) -> Self {
-        let project_path = PathBuf::from(project_name);
+        let project_path = crate::templates::projects_dir().join(project_name);
 
         // If project doesn't exist, create from template
         if !project::is_valid_project(&project_path) {
