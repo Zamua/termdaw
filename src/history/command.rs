@@ -651,3 +651,100 @@ impl Command for BatchCmd {
         &self.desc
     }
 }
+
+// ============================================================================
+// Effect Commands
+// ============================================================================
+
+/// Add an effect to a mixer track slot
+#[derive(Debug)]
+pub struct AddEffectCmd {
+    pub track: usize,
+    pub slot: usize,
+    pub effect_type: crate::effects::EffectType,
+    /// The previous effect in this slot (for undo)
+    previous_effect: Option<crate::effects::EffectSlot>,
+}
+
+impl AddEffectCmd {
+    pub fn new(track: usize, slot: usize, effect_type: crate::effects::EffectType) -> Self {
+        Self {
+            track,
+            slot,
+            effect_type,
+            previous_effect: None,
+        }
+    }
+}
+
+impl Command for AddEffectCmd {
+    fn execute(&mut self, app: &mut App) {
+        // Store the previous effect (if any) for undo
+        self.previous_effect = app.mixer.tracks[self.track].effects[self.slot].take();
+
+        // Add the new effect
+        let effect_slot = crate::effects::EffectSlot::new(self.effect_type);
+        app.mixer.tracks[self.track].effects[self.slot] = Some(effect_slot);
+        app.audio
+            .set_effect(self.track, self.slot, Some(self.effect_type));
+        app.mark_dirty();
+    }
+
+    fn undo(&mut self, app: &mut App) {
+        // Restore the previous effect (or None)
+        app.mixer.tracks[self.track].effects[self.slot] = self.previous_effect.take();
+        let effect_type = app.mixer.tracks[self.track].effects[self.slot]
+            .as_ref()
+            .map(|e| e.effect_type);
+        app.audio.set_effect(self.track, self.slot, effect_type);
+        app.mark_dirty();
+    }
+
+    fn description(&self) -> &str {
+        "Add effect"
+    }
+}
+
+/// Remove an effect from a mixer track slot
+#[derive(Debug)]
+pub struct RemoveEffectCmd {
+    pub track: usize,
+    pub slot: usize,
+    /// The removed effect (captured during execute)
+    removed_effect: Option<crate::effects::EffectSlot>,
+}
+
+impl RemoveEffectCmd {
+    pub fn new(track: usize, slot: usize) -> Self {
+        Self {
+            track,
+            slot,
+            removed_effect: None,
+        }
+    }
+}
+
+impl Command for RemoveEffectCmd {
+    fn execute(&mut self, app: &mut App) {
+        // Store the removed effect for undo
+        self.removed_effect = app.mixer.tracks[self.track].effects[self.slot].take();
+        app.audio.set_effect(self.track, self.slot, None);
+        app.mark_dirty();
+    }
+
+    fn undo(&mut self, app: &mut App) {
+        // Restore the removed effect
+        if let Some(effect) = self.removed_effect.take() {
+            let effect_type = effect.effect_type;
+            app.mixer.tracks[self.track].effects[self.slot] = Some(effect.clone());
+            self.removed_effect = Some(effect);
+            app.audio
+                .set_effect(self.track, self.slot, Some(effect_type));
+            app.mark_dirty();
+        }
+    }
+
+    fn description(&self) -> &str {
+        "Remove effect"
+    }
+}

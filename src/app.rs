@@ -536,8 +536,9 @@ impl App {
     pub fn dispatch(&mut self, cmd: crate::command::AppCommand) {
         use crate::command::AppCommand;
         use crate::history::command::{
-            AddNoteCmd, AddNotesCmd, DeleteChannelCmd, DeleteNotesCmd, DeletePatternCmd,
-            DeleteStepsCmd, RemoveNoteCmd, SetStepsCmd, TogglePlacementCmd, ToggleStepCmd,
+            AddEffectCmd, AddNoteCmd, AddNotesCmd, DeleteChannelCmd, DeleteNotesCmd,
+            DeletePatternCmd, DeleteStepsCmd, RemoveEffectCmd, RemoveNoteCmd, SetStepsCmd,
+            TogglePlacementCmd, ToggleStepCmd,
         };
 
         // For undoable commands with history support, use history.execute()
@@ -732,6 +733,24 @@ impl App {
                     Box::new(TogglePlacementCmd::new(*pattern_id, *bar)) as Box<dyn Command>;
                 let mut history = std::mem::take(&mut self.history);
                 history.execute(history_cmd, self);
+                self.history = history;
+                true
+            }
+            AppCommand::AddEffect {
+                track,
+                slot,
+                effect_type,
+            } => {
+                let history_cmd = AddEffectCmd::new(*track, *slot, *effect_type);
+                let mut history = std::mem::take(&mut self.history);
+                history.execute(Box::new(history_cmd), self);
+                self.history = history;
+                true
+            }
+            AppCommand::RemoveEffect { track, slot } => {
+                let history_cmd = RemoveEffectCmd::new(*track, *slot);
+                let mut history = std::mem::take(&mut self.history);
+                history.execute(Box::new(history_cmd), self);
                 self.history = history;
                 true
             }
