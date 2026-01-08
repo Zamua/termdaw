@@ -1,0 +1,208 @@
+name: Release
+
+run-name: ${{ inputs.dry_run && 'Release (Dry Run)' || format('Release {0}', github.ref_name) }}
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (build only, no release)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: termdaw
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Create archive
+        id: archive
+        shell: bash
+        run: |
+          ARCHIVE="${BINARY_NAME}-${{ matrix.target }}.tar.gz"
+          tar -czvf "$ARCHIVE" -C "target/${{ matrix.target }}/release" "$BINARY_NAME"
+          echo "path=$ARCHIVE" >> $GITHUB_OUTPUT
+          echo "name=$ARCHIVE" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.archive.outputs.name }}
+          path: ${{ steps.archive.outputs.path }}
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=0.0.0-test" >> $GITHUB_OUTPUT
+          else
+            VERSION="${{ github.ref_name }}"
+            echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f
+
+      - name: Create universal macOS binary
+        run: |
+          mkdir -p universal extracted/{x86_64,aarch64}
+
+          tar -xzf "artifacts/${BINARY_NAME}-x86_64-apple-darwin.tar.gz/${BINARY_NAME}-x86_64-apple-darwin.tar.gz" -C extracted/x86_64
+          tar -xzf "artifacts/${BINARY_NAME}-aarch64-apple-darwin.tar.gz/${BINARY_NAME}-aarch64-apple-darwin.tar.gz" -C extracted/aarch64
+
+          lipo -create -output "universal/${BINARY_NAME}" \
+            "extracted/x86_64/${BINARY_NAME}" \
+            "extracted/aarch64/${BINARY_NAME}"
+
+          tar -czvf "${BINARY_NAME}-universal-apple-darwin.tar.gz" -C universal "${BINARY_NAME}"
+
+      - name: Generate checksums
+        run: |
+          mkdir -p release
+
+          # Move archives to release folder
+          mv "${BINARY_NAME}-universal-apple-darwin.tar.gz" release/
+          mv "artifacts/${BINARY_NAME}-x86_64-unknown-linux-gnu.tar.gz/${BINARY_NAME}-x86_64-unknown-linux-gnu.tar.gz" release/
+
+          # Generate SHA256 checksums
+          cd release
+          shasum -a 256 *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload release artifacts (dry run)
+        if: inputs.dry_run == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: release/
+
+      - name: Create GitHub Release
+        if: inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            release/*
+
+  update-homebrew:
+    name: Update Homebrew Tap
+    needs: release
+    if: inputs.dry_run != true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: Zamua/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+
+      - name: Download checksum file
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "SHA256SUMS.txt"
+
+      - name: Update formula
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          SHA_MAC=$(grep "universal-apple-darwin" SHA256SUMS.txt | cut -d ' ' -f 1)
+          SHA_LINUX=$(grep "x86_64-unknown-linux-gnu" SHA256SUMS.txt | cut -d ' ' -f 1)
+
+          cat > tap/Formula/termdaw.rb << EOF
+          class Termdaw < Formula
+            desc "Terminal-based Digital Audio Workstation with vim-style navigation"
+            homepage "https://github.com/Zamua/termdaw"
+            license "MIT"
+            version "${VERSION}"
+
+            on_macos do
+              url "https://github.com/Zamua/termdaw/releases/download/v${VERSION}/termdaw-universal-apple-darwin.tar.gz"
+              sha256 "${SHA_MAC}"
+            end
+
+            on_linux do
+              url "https://github.com/Zamua/termdaw/releases/download/v${VERSION}/termdaw-x86_64-unknown-linux-gnu.tar.gz"
+              sha256 "${SHA_LINUX}"
+            end
+
+            def install
+              bin.install "termdaw"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/termdaw --version 2>&1", 1)
+            end
+          end
+          EOF
+
+          echo "Generated formula:"
+          cat tap/Formula/termdaw.rb
+
+      - name: Commit and push
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/termdaw.rb
+          git diff --staged
+          git commit -m "Update termdaw to ${{ github.ref_name }}"
+          git push
