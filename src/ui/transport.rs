@@ -32,6 +32,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             Constraint::Length(5),  // Browser toggle
             Constraint::Length(1),  // Spacer
             Constraint::Length(5),  // Mixer toggle
+            Constraint::Length(1),  // Spacer
+            Constraint::Length(5),  // Event log toggle
             Constraint::Min(0),     // Remaining space
         ])
         .split(inner);
@@ -63,6 +65,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // Mixer toggle area
     let mixer_area = chunks[6];
     render_mixer_toggle(frame, mixer_area, app);
+
+    // Event log toggle area
+    let log_area = chunks[8];
+    render_event_log_toggle(frame, log_area, app);
 }
 
 /// Render transport info (play/stop, BPM, time sig, step)
@@ -147,4 +153,25 @@ fn render_mixer_toggle(frame: &mut Frame, area: Rect, app: &mut App) {
     let line = Line::from(vec![Span::styled("MIX", style)]);
     let mixer_btn = Paragraph::new(line);
     frame.render_widget(mixer_btn, area);
+}
+
+/// Render event log toggle button
+fn render_event_log_toggle(frame: &mut Frame, area: Rect, app: &mut App) {
+    let log_rect = Rect::new(area.x, area.y, 3, 1);
+    app.ui
+        .screen_areas
+        .register(AreaId::TransportEventLogToggle, log_rect);
+
+    let style = if app.ui.show_event_log {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let line = Line::from(vec![Span::styled("LOG", style)]);
+    let log_btn = Paragraph::new(line);
+    frame.render_widget(log_btn, area);
 }

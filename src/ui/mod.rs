@@ -8,6 +8,7 @@ mod command_picker;
 pub mod context_menu;
 mod effect_editor;
 mod envelope;
+mod event_log;
 mod mixer;
 mod playlist;
 pub mod plugin_editor;
@@ -107,28 +108,52 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     effect_editor::render(frame, app);
 }
 
-/// Render the main content area (browser + main view)
+/// Render the main content area (browser + main view + event log)
 fn render_content_area(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut App) {
     use areas::AreaId;
 
+    // Build constraints based on visible panels
+    let mut constraints = Vec::new();
+
     if app.ui.show_browser {
-        // Split horizontally: Browser | Main View
-        let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(30), // Browser width
-                Constraint::Min(40),    // Main view
-            ])
-            .split(area);
+        constraints.push(Constraint::Length(30)); // Browser width
+    }
 
-        app.ui.screen_areas.register(AreaId::Browser, chunks[0]);
-        browser::render(frame, chunks[0], app);
+    constraints.push(Constraint::Min(40)); // Main view (always present)
 
-        app.ui.screen_areas.register(AreaId::MainView, chunks[1]);
-        render_main_view(frame, chunks[1], app);
-    } else {
-        app.ui.screen_areas.register(AreaId::MainView, area);
-        render_main_view(frame, area, app);
+    if app.ui.show_event_log {
+        constraints.push(Constraint::Length(35)); // Event log width
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
+        .split(area);
+
+    let mut chunk_idx = 0;
+
+    // Browser (optional, left side)
+    if app.ui.show_browser {
+        app.ui
+            .screen_areas
+            .register(AreaId::Browser, chunks[chunk_idx]);
+        browser::render(frame, chunks[chunk_idx], app);
+        chunk_idx += 1;
+    }
+
+    // Main view (always present, center)
+    app.ui
+        .screen_areas
+        .register(AreaId::MainView, chunks[chunk_idx]);
+    render_main_view(frame, chunks[chunk_idx], app);
+    chunk_idx += 1;
+
+    // Event log (optional, right side)
+    if app.ui.show_event_log {
+        app.ui
+            .screen_areas
+            .register(AreaId::EventLog, chunks[chunk_idx]);
+        event_log::render(frame, chunks[chunk_idx], app);
     }
 }
 

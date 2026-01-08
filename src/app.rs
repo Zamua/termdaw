@@ -185,6 +185,9 @@ pub struct UiState {
     /// Whether the mixer panel is visible
     pub show_mixer: bool,
 
+    /// Whether the event log panel is visible
+    pub show_event_log: bool,
+
     /// Terminal dimensions
     pub terminal_width: u16,
     pub terminal_height: u16,
@@ -247,6 +250,9 @@ pub struct App {
 
     /// UI state (mode, cursors, vim, panels, modals)
     pub ui: UiState,
+
+    /// Event log for command tracking (private - only dispatch() writes)
+    event_log: crate::event_log::EventLog,
 }
 
 // ============================================================================
@@ -279,6 +285,16 @@ impl App {
     /// Transport (read-only)
     pub fn transport(&self) -> &TransportState {
         &self.state.transport
+    }
+
+    /// Event log (read-only - for UI rendering)
+    pub fn event_log(&self) -> &crate::event_log::EventLog {
+        &self.event_log
+    }
+
+    /// Log an event directly (for operations that bypass dispatch like undo/redo)
+    pub fn log_event(&mut self, description: &'static str, is_undoable: bool) {
+        self.event_log.log(description, is_undoable);
     }
 
     // === Internal Mutable Accessors (for commands only) ===
@@ -408,6 +424,7 @@ impl App {
             view_mode: ViewMode::default(),
             show_browser: true,
             show_mixer: false,
+            show_event_log: false,
             terminal_width: 80,
             terminal_height: 24,
             cursors: CursorStates::default(),
@@ -435,7 +452,11 @@ impl App {
             preview_note: None,
         };
 
-        let mut app = Self { state, ui };
+        let mut app = Self {
+            state,
+            ui,
+            event_log: crate::event_log::EventLog::new(),
+        };
 
         // Load plugins for plugin channels
         app.load_plugins();
@@ -564,6 +585,9 @@ impl App {
     /// 2. Executes the command
     /// 3. Marks the project as dirty (for most commands)
     pub fn dispatch(&mut self, cmd: crate::command::AppCommand) {
+        // Log command to event log (single write point)
+        self.event_log.log(cmd.description(), cmd.is_undoable());
+
         use crate::command::AppCommand;
         use crate::history::command::{
             AddChannelCmd, AddEffectCmd, AddNoteCmd, AddNotesCmd, DeleteChannelCmd, DeleteNotesCmd,
@@ -1481,6 +1505,12 @@ impl App {
             };
             self.ui.mode.switch_panel(panel);
         }
+    }
+
+    /// Toggle the event log panel visibility
+    pub fn toggle_event_log(&mut self) {
+        self.ui.show_event_log = !self.ui.show_event_log;
+        // Event log is a utility panel - no jumplist or panel switching needed
     }
 
     /// Get the current step index (0-15) from cursor column

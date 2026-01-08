@@ -92,6 +92,10 @@ pub fn execute_command(cmd: Command, app: &mut App) -> bool {
             app.toggle_mixer();
             false
         }
+        Command::ToggleEventLog => {
+            app.toggle_event_log();
+            false
+        }
         Command::PlayStop => {
             app.toggle_play();
             false

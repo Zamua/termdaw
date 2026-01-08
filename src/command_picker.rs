@@ -16,6 +16,7 @@ pub enum Command {
     // Panels
     ToggleBrowser,
     ToggleMixer,
+    ToggleEventLog,
 
     // Transport
     PlayStop,
@@ -34,6 +35,7 @@ impl Command {
             Command::ShowPianoRoll => 'r',
             Command::ToggleBrowser => 'b',
             Command::ToggleMixer => 'm',
+            Command::ToggleEventLog => 'l',
             Command::PlayStop => ' ',
             Command::SetTempo => 't',
             Command::Quit => 'q',
@@ -48,6 +50,7 @@ impl Command {
             Command::ShowPianoRoll => "Piano Roll",
             Command::ToggleBrowser => "Toggle Browser",
             Command::ToggleMixer => "Toggle Mixer",
+            Command::ToggleEventLog => "Toggle Event Log",
             Command::PlayStop => "Play/Stop",
             Command::SetTempo => "Set Tempo",
             Command::Quit => "Quit",
@@ -140,7 +143,11 @@ impl CommandPicker {
             },
             CommandGroup {
                 name: "Panels",
-                commands: vec![Command::ToggleBrowser, Command::ToggleMixer],
+                commands: vec![
+                    Command::ToggleBrowser,
+                    Command::ToggleMixer,
+                    Command::ToggleEventLog,
+                ],
             },
             CommandGroup {
                 name: "Transport",

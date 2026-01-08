@@ -117,8 +117,11 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
         (KeyCode::Char('u'), false) if app.ui.mode.is_normal() => {
             // Take history out temporarily to avoid borrow conflict
             let mut history = std::mem::take(&mut app.history);
-            history.undo(app);
+            let did_undo = history.undo(app);
             app.history = history;
+            if did_undo {
+                app.log_event("undo", false);
+            }
             return false;
         }
 
@@ -126,8 +129,11 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
         (KeyCode::Char('r'), true) if app.ui.mode.is_normal() => {
             // Take history out temporarily to avoid borrow conflict
             let mut history = std::mem::take(&mut app.history);
-            history.redo(app);
+            let did_redo = history.redo(app);
             app.history = history;
+            if did_redo {
+                app.log_event("redo", false);
+            }
             return false;
         }
 
@@ -586,6 +592,13 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
                 }
             }
 
+            // Event log toggle
+            Some(AreaId::TransportEventLogToggle) => {
+                if matches!(action, MouseAction::Click { .. }) {
+                    app.toggle_event_log();
+                }
+            }
+
             // Browser
             Some(AreaId::BrowserClose) => {
                 if matches!(action, MouseAction::Click { .. }) {
@@ -654,6 +667,16 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
             }
             Some(AreaId::Mixer) | Some(AreaId::MixerChannelStrip) => {
                 mixer::handle_mouse_action(&action, app);
+            }
+
+            // Event log
+            Some(AreaId::EventLogClose) => {
+                if matches!(action, MouseAction::Click { .. }) {
+                    app.ui.show_event_log = false;
+                }
+            }
+            Some(AreaId::EventLog) => {
+                // Event log doesn't need mouse handling beyond close button
             }
 
             // Main view (fallback for general area clicks)

@@ -43,6 +43,7 @@ pub enum AreaId {
     TransportPatternLabel,
     TransportBrowserToggle,
     TransportMixerToggle,
+    TransportEventLogToggle,
 
     // ========================================================================
     // Browser regions
@@ -94,6 +95,14 @@ pub enum AreaId {
     MixerChannelStrip,
     /// Mixer close button
     MixerClose,
+
+    // ========================================================================
+    // Event Log regions
+    // ========================================================================
+    /// Event log panel
+    EventLog,
+    /// Event log close button
+    EventLogClose,
 
     // ========================================================================
     // Modals
@@ -228,6 +237,7 @@ impl ScreenAreas {
             AreaId::TransportPatternLabel,
             AreaId::TransportBrowserToggle,
             AreaId::TransportMixerToggle,
+            AreaId::TransportEventLogToggle,
             // Browser sub-areas
             AreaId::BrowserTabs,
             AreaId::BrowserContent,
@@ -252,6 +262,8 @@ impl ScreenAreas {
             // Mixer sub-areas
             AreaId::MixerChannelStrip,
             AreaId::MixerClose,
+            // Event log sub-areas
+            AreaId::EventLogClose,
         ];
 
         for id in sub_areas {
