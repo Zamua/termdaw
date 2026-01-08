@@ -4,7 +4,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::App;
 use crate::command_picker::Command;
-use crate::mode::ViewMode;
 use crate::plugin_host::params::{ParamDef, PluginParamId};
 
 /// Convert a KeyEvent to vim-compatible (char, is_ctrl) tuple.
@@ -65,16 +64,8 @@ pub fn send_param_to_plugin(app: &mut App) {
 /// Execute a command from the picker
 pub fn execute_command(cmd: Command, app: &mut App) -> bool {
     match cmd {
-        Command::ShowPlaylist => {
-            app.set_view_mode(ViewMode::Playlist);
-            false
-        }
-        Command::ShowChannelRack => {
-            app.set_view_mode(ViewMode::ChannelRack);
-            false
-        }
-        Command::ShowPianoRoll => {
-            app.set_view_mode(ViewMode::PianoRoll);
+        Command::OpenProjects => {
+            app.show_projects_modal();
             false
         }
         Command::ToggleBrowser => {

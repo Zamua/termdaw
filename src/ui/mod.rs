@@ -12,6 +12,7 @@ mod event_log;
 mod mixer;
 mod playlist;
 pub mod plugin_editor;
+mod projects_modal;
 mod transport;
 pub mod waveform;
 mod widgets;
@@ -98,7 +99,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Command picker overlay (rendered last, on top of everything)
     command_picker::render(frame, app);
 
-    // Plugin editor modal (rendered on top of command picker)
+    // Projects modal (rendered on top of command picker)
+    projects_modal::render(frame, app);
+
+    // Plugin editor modal (rendered on top of everything else)
     plugin_editor::render(frame, app);
 
     // Context menu (rendered on top of everything else)
@@ -188,8 +192,8 @@ fn render_main_view(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut Ap
     };
 
     // Calculate tab positions for click detection
-    // Tab format: "Channel Rack | Playlist" with padding from Tabs widget
-    let cr_text = "Channel Rack";
+    // Tab format: "Patterns | Playlist" with padding from Tabs widget
+    let cr_text = "Patterns";
     let pl_text = "Playlist";
 
     // Tabs widget adds space padding, approximate positions

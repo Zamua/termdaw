@@ -23,6 +23,7 @@ pub mod mode;
 pub mod playback;
 pub mod plugin_host;
 pub mod project;
+pub mod projects_modal;
 pub mod sequencer;
 pub mod templates;
 pub mod ui;

@@ -82,6 +82,11 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
         return handle_command_picker_key(key, app);
     }
 
+    // Handle projects modal (if visible)
+    if app.ui.projects_modal.visible {
+        return handle_projects_modal_key(key, app);
+    }
+
     // Handle plugin editor modal (if visible)
     if app.ui.plugin_editor.visible {
         return handle_plugin_editor_key(key, app);
@@ -232,6 +237,39 @@ fn handle_command_picker_key(key: KeyEvent, app: &mut App) -> bool {
             app.ui.command_picker.hide();
             false
         }
+    }
+}
+
+/// Handle projects modal keys
+fn handle_projects_modal_key(key: KeyEvent, app: &mut App) -> bool {
+    match key.code {
+        // Escape closes modal
+        KeyCode::Esc => {
+            app.hide_projects_modal();
+            false
+        }
+        // j/Down - move selection down
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.ui.projects_modal.select_next();
+            false
+        }
+        // k/Up - move selection up
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.ui.projects_modal.select_prev();
+            false
+        }
+        // Enter - open selected project
+        KeyCode::Enter => {
+            if let Some(path) = app.ui.projects_modal.selected_project_path() {
+                // Load the project
+                if let Ok(project) = crate::project::load_project(&path) {
+                    app.load_project(project, path);
+                }
+            }
+            app.hide_projects_modal();
+            false
+        }
+        _ => false,
     }
 }
 

@@ -8,10 +8,8 @@ use tui_input::Input;
 /// A command that can be executed from the picker
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
-    // Views
-    ShowPlaylist,
-    ShowChannelRack,
-    ShowPianoRoll,
+    // Projects
+    OpenProjects,
 
     // Panels
     ToggleBrowser,
@@ -22,7 +20,7 @@ pub enum Command {
     PlayStop,
     SetTempo,
 
-    // File
+    // App
     Quit,
 }
 
@@ -30,9 +28,7 @@ impl Command {
     /// Get the key that triggers this command
     pub fn key(&self) -> char {
         match self {
-            Command::ShowPlaylist => 'p',
-            Command::ShowChannelRack => 'c',
-            Command::ShowPianoRoll => 'r',
+            Command::OpenProjects => 'p',
             Command::ToggleBrowser => 'b',
             Command::ToggleMixer => 'm',
             Command::ToggleEventLog => 'l',
@@ -45,9 +41,7 @@ impl Command {
     /// Get the display label for this command
     pub fn label(&self) -> &'static str {
         match self {
-            Command::ShowPlaylist => "Playlist",
-            Command::ShowChannelRack => "Channel Rack",
-            Command::ShowPianoRoll => "Piano Roll",
+            Command::OpenProjects => "Open Projects",
             Command::ToggleBrowser => "Toggle Browser",
             Command::ToggleMixer => "Toggle Mixer",
             Command::ToggleEventLog => "Toggle Event Log",
@@ -134,12 +128,8 @@ impl CommandPicker {
     pub fn new() -> Self {
         let groups = vec![
             CommandGroup {
-                name: "Views",
-                commands: vec![
-                    Command::ShowPlaylist,
-                    Command::ShowChannelRack,
-                    Command::ShowPianoRoll,
-                ],
+                name: "Projects",
+                commands: vec![Command::OpenProjects],
             },
             CommandGroup {
                 name: "Panels",
@@ -154,7 +144,7 @@ impl CommandPicker {
                 commands: vec![Command::PlayStop, Command::SetTempo],
             },
             CommandGroup {
-                name: "File",
+                name: "App",
                 commands: vec![Command::Quit],
             },
         ];

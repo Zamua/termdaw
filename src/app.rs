@@ -105,6 +105,7 @@ use crate::playback::{PlaybackEvent, PlaybackState};
 use crate::plugin_host::params::build_init_params;
 use crate::plugin_host::{ClapPluginLoader, PluginLoader};
 use crate::project::{self, ProjectFile};
+use crate::projects_modal::ProjectsModal;
 use crate::sequencer::{default_channels, Channel, ChannelSource, Note, Pattern};
 use crate::ui::areas::ScreenAreas;
 use crate::ui::context_menu::ContextMenu;
@@ -206,6 +207,9 @@ pub struct UiState {
 
     /// Command picker (which-key style)
     pub command_picker: CommandPicker,
+
+    /// Projects modal (list and open projects)
+    pub projects_modal: ProjectsModal,
 
     /// Plugin editor modal
     pub plugin_editor: PluginEditorState,
@@ -440,6 +444,7 @@ impl App {
             global_jumplist: GlobalJumplist::new(),
             browser: BrowserState::new(samples_path),
             command_picker: CommandPicker::new(),
+            projects_modal: ProjectsModal::new(),
             plugin_editor: PluginEditorState::new(),
             screen_areas: ScreenAreas::new(),
             mouse: MouseState::new(),
@@ -1516,6 +1521,65 @@ impl App {
     pub fn toggle_event_log(&mut self) {
         self.ui.show_event_log = !self.ui.show_event_log;
         // Event log is a utility panel - no jumplist or panel switching needed
+    }
+
+    /// Show the projects modal
+    pub fn show_projects_modal(&mut self) {
+        let current = self.state.project.name.clone();
+        self.ui.projects_modal.show(Some(&current));
+    }
+
+    /// Hide the projects modal
+    pub fn hide_projects_modal(&mut self) {
+        self.ui.projects_modal.hide();
+    }
+
+    /// Load a project file into the app state
+    pub fn load_project(&mut self, project_file: ProjectFile, path: std::path::PathBuf) {
+        // Stop playback first
+        if self.transport.playback.is_playing() {
+            self.transport.playback.stop();
+        }
+
+        // Update project info
+        let project_name = project_file.name.clone();
+        self.state.project = ProjectState::new(&project_name, path, project_file.created_at);
+
+        // Load channels
+        self.state.channels = project_file.channels;
+
+        // Load patterns
+        self.state.patterns = project_file.patterns;
+
+        // Load arrangement
+        self.state.arrangement = project_file.arrangement;
+
+        // Load mixer or create default
+        self.state.mixer = project_file
+            .mixer
+            .unwrap_or_else(|| Self::create_default_mixer(&self.state.channels));
+
+        // Load transport settings
+        self.state.transport = TransportState::new(project_file.bpm);
+
+        // Reset current pattern
+        self.state.current_pattern = project_file.current_pattern;
+
+        // Clear history for new project
+        self.state.history = History::new();
+
+        // Mark as clean (freshly loaded)
+        self.state.dirty = false;
+
+        // Mark all routing as dirty so it gets synced to audio thread
+        for (idx, channel) in self.state.channels.iter().enumerate() {
+            self.state
+                .audio_sync
+                .mark_routing_dirty(idx, channel.mixer_track);
+        }
+
+        // Sync all effects to audio
+        self.sync_all_effects_to_audio();
     }
 
     /// Get the current step index (0-15) from cursor column

@@ -25,7 +25,7 @@ pub enum AreaId {
     // ========================================================================
     Transport,
     Browser,
-    MainView, // Channel Rack, Piano Roll, or Playlist
+    MainView, // Patterns, Piano Roll, or Playlist
     Mixer,
 
     // ========================================================================
@@ -55,9 +55,9 @@ pub enum AreaId {
     // ========================================================================
     // Main view regions (generic - the actual view type determines behavior)
     // ========================================================================
-    /// Tab bar at top of main view (Channel Rack | Playlist)
+    /// Tab bar at top of main view (Patterns | Playlist)
     MainViewTabBar,
-    /// Channel Rack tab button
+    /// Patterns tab button (was Channel Rack)
     MainViewTabChannelRack,
     /// Playlist tab button
     MainViewTabPlaylist,
@@ -242,10 +242,10 @@ impl ScreenAreas {
             AreaId::BrowserTabs,
             AreaId::BrowserContent,
             AreaId::BrowserClose,
-            // Main view tabs
-            AreaId::MainViewTabBar,
+            // Main view tabs (specific tabs before parent tab bar)
             AreaId::MainViewTabChannelRack,
             AreaId::MainViewTabPlaylist,
+            AreaId::MainViewTabBar,
             // Channel rack sub-areas
             AreaId::ChannelRackPatternPrev,
             AreaId::ChannelRackPatternNext,
