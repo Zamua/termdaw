@@ -428,6 +428,9 @@ impl App {
         } = &mut app.state;
         audio_sync.flush(audio, mixer);
 
+        // Sync any effects loaded from the project file to the audio thread
+        app.sync_all_effects_to_audio();
+
         app
     }
 
@@ -1785,7 +1788,6 @@ impl App {
     }
 
     /// Sync all effects from all tracks to the audio thread (called on project load)
-    #[allow(dead_code)]
     pub fn sync_all_effects_to_audio(&self) {
         for track_idx in 0..crate::mixer::NUM_TRACKS {
             self.sync_effects_to_audio(track_idx);
