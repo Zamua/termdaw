@@ -82,6 +82,13 @@ pub fn execute_command(cmd: Command, app: &mut App) -> bool {
             false
         }
         Command::ToggleMixer => {
+            // Get current channel's mixer track and focus it with effects chain open
+            let slot = app.ui.cursors.channel_rack.channel;
+            if let Some(channel) = app.get_channel_at_slot(slot) {
+                app.mixer.selected_track = channel.mixer_track;
+                app.mixer.effects_focused = true;
+                app.mixer.selected_effect_slot = 0;
+            }
             app.toggle_mixer();
             false
         }
