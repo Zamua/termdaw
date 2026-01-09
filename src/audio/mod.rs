@@ -749,19 +749,12 @@ impl MixingEngine {
 
 /// Shared state between audio thread and main thread
 struct AudioState {
-    /// Active voices
-    voices: Vec<Voice>,
-    /// Master volume
-    master_volume: f32,
-    /// Sample cache
+    /// Core mixing engine (owns voices, plugins, effects, mixer state)
+    engine: MixingEngine,
+    /// Sample cache (for loading samples from disk)
     sample_cache: HashMap<PathBuf, SampleData>,
     /// Command receiver
     rx: Receiver<AudioCommand>,
-    /// Output sample rate
-    output_sample_rate: u32,
-    /// Plugin channels (sparse - only Some if plugin is loaded)
-    #[allow(dead_code)]
-    plugin_channels: Vec<Option<PluginChannel>>,
     /// Receiver for plugin processors from main thread (channel, processor, initial state)
     #[allow(dead_code)]
     plugin_rx: Receiver<(usize, ActivePluginProcessor, PluginInitState)>,
@@ -769,21 +762,8 @@ struct AudioState {
     waveform_buffer: WaveformBuffer,
     /// Write position in waveform buffer
     waveform_write_pos: usize,
-    /// Per-track stereo buffers for mixing
-    track_buffers: Vec<TrackBuffer>,
-    /// Mixer state (volumes, pans, mutes)
-    mixer_state: AudioMixerState,
-    /// Generator-to-track routing (generator_idx -> track_idx)
-    generator_tracks: [usize; MAX_GENERATORS],
     /// Peak levels buffer (shared with UI for meter visualization)
     peak_levels: PeakLevelsBuffer,
-    /// Effect processors per track (16 tracks x 8 slots)
-    /// None = empty slot, Some = active effect processor
-    track_effects: Vec<[Option<Box<dyn Effect>>; EFFECT_SLOTS]>,
-    /// Effect bypass state per track/slot (true = bypassed)
-    effect_bypassed: [[bool; EFFECT_SLOTS]; NUM_TRACKS],
-    /// Current tempo in BPM (for tempo-synced effects)
-    tempo_bpm: f64,
 }
 
 /// Handle for sending commands to the audio engine
@@ -1031,39 +1011,17 @@ impl AudioEngine {
         let peak_levels: PeakLevelsBuffer =
             Arc::new(Mutex::new([StereoLevels::default(); NUM_TRACKS]));
 
-        // Create per-track stereo buffers
-        let track_buffers: Vec<TrackBuffer> = (0..NUM_TRACKS)
-            .map(|_| TrackBuffer {
-                left: vec![0.0; MAX_TRACK_BUFFER_SIZE],
-                right: vec![0.0; MAX_TRACK_BUFFER_SIZE],
-            })
-            .collect();
-
-        // Default generator routing: all to track 1 (first non-master)
-        let generator_tracks = [1usize; MAX_GENERATORS];
-
-        // Initialize empty effect slots for all tracks
-        let track_effects: Vec<[Option<Box<dyn Effect>>; EFFECT_SLOTS]> = (0..NUM_TRACKS)
-            .map(|_| std::array::from_fn(|_| None))
-            .collect();
+        // Create the mixing engine
+        let engine = MixingEngine::new(sample_rate);
 
         let state = Arc::new(Mutex::new(AudioState {
-            voices: Vec::with_capacity(MAX_VOICES),
-            master_volume: 1.0,
+            engine,
             sample_cache: HashMap::new(),
             rx,
-            output_sample_rate: sample_rate,
-            plugin_channels: Vec::new(),
             plugin_rx,
             waveform_buffer: waveform_buffer.clone(),
             waveform_write_pos: 0,
-            track_buffers,
-            mixer_state: AudioMixerState::default(),
-            generator_tracks,
             peak_levels: peak_levels.clone(),
-            track_effects,
-            effect_bypassed: [[false; EFFECT_SLOTS]; NUM_TRACKS],
-            tempo_bpm: 140.0,
         }));
 
         let sample_rate_atomic = Arc::new(AtomicU32::new(sample_rate));
@@ -1124,7 +1082,6 @@ impl AudioEngine {
         Ok(stream)
     }
 
-    #[allow(clippy::type_complexity)]
     fn audio_callback<T: cpal::SizedSample + cpal::FromSample<f32> + cpal::Sample>(
         data: &mut [T],
         channels: usize,
@@ -1146,158 +1103,22 @@ impl AudioEngine {
         // Receive any new plugin processors from main thread
         Self::receive_plugins(&mut state);
 
-        let master_volume = state.master_volume;
-        let output_sample_rate = state.output_sample_rate;
         let num_frames = data.len() / channels;
 
-        // Ensure track buffers are large enough
-        for track_buf in &mut state.track_buffers {
-            if track_buf.left.len() < num_frames {
-                track_buf.left.resize(num_frames, 0.0);
-                track_buf.right.resize(num_frames, 0.0);
-            }
-        }
+        // Delegate mixing to the engine
+        state.engine.process_block(num_frames);
 
-        // Step 1: Clear all track buffers
-        for track_buf in &mut state.track_buffers {
-            for i in 0..num_frames {
-                track_buf.left[i] = 0.0;
-                track_buf.right[i] = 0.0;
-            }
-        }
-
-        // Step 2: Route voices to their assigned track buffers
-        // We need to split borrows to satisfy the borrow checker
-        // First, collect what we need to write, then write it
-        let mut voice_outputs: Vec<(usize, Vec<(f32, f32)>, bool)> = Vec::new(); // (target_track, samples, finished)
-
-        for voice in state.voices.iter() {
-            let sample_data = &voice.sample.data;
-            let voice_channels = voice.sample.channels as usize;
-            let voice_volume = voice.volume;
-            let generator_idx = voice.generator_idx;
-            let sample_rate = voice.sample.sample_rate;
-
-            // Browser previews go to master, channel sounds use their assigned routing
-            let target_track = if voice.route_to_master {
-                0 // Master track (for browser previews)
-            } else {
-                *state.generator_tracks.get(generator_idx).unwrap_or(&1)
-            };
-
-            let resample_ratio = sample_rate as f32 / output_sample_rate as f32;
-            let mut samples = Vec::with_capacity(num_frames);
-            let mut finished = false;
-            let mut pos = voice.position;
-
-            for _ in 0..num_frames {
-                let src_frame = (pos as f32 * resample_ratio) as usize;
-
-                if src_frame * voice_channels >= sample_data.len() {
-                    finished = true;
-                    break;
-                }
-
-                // Get sample (mono or stereo)
-                let (left, right) = if voice_channels == 1 {
-                    let s = sample_data[src_frame] * voice_volume;
-                    (s, s)
-                } else {
-                    let idx = src_frame * 2;
-                    if idx + 1 < sample_data.len() {
-                        (
-                            sample_data[idx] * voice_volume,
-                            sample_data[idx + 1] * voice_volume,
-                        )
-                    } else {
-                        (0.0, 0.0)
-                    }
-                };
-
-                samples.push((left, right));
-                pos += 1;
-            }
-
-            voice_outputs.push((target_track, samples, finished));
-        }
-
-        // Now apply the samples to track buffers and update voice positions
-        let mut voices_to_remove = Vec::new();
-
-        for (voice_idx, (target_track, samples, finished)) in voice_outputs.into_iter().enumerate()
-        {
-            // Write samples to track buffer
-            if target_track < NUM_TRACKS {
-                for (frame, (left, right)) in samples.iter().enumerate() {
-                    state.track_buffers[target_track].left[frame] += left;
-                    state.track_buffers[target_track].right[frame] += right;
-                }
-            }
-
-            // Update voice position
-            state.voices[voice_idx].position += samples.len();
-
-            if finished {
-                voices_to_remove.push(voice_idx);
-            }
-        }
-
-        // Remove finished voices (in reverse order to maintain indices)
-        for idx in voices_to_remove.into_iter().rev() {
-            state.voices.remove(idx);
-        }
-
-        // Step 3: Process plugins and route to their assigned track buffers
-        Self::process_plugins_to_tracks(&mut state, num_frames);
-
-        // Step 3.5: Process insert effects on each track buffer
-        Self::process_track_effects(&mut state, num_frames);
-
-        // Step 4: Apply mixer state and sum all tracks to master
-        // Process tracks 1-15 first, then apply their output to master (track 0)
-        for track_idx in 1..NUM_TRACKS {
-            let volume = state.mixer_state.track_volumes[track_idx];
-            let muted = state.mixer_state.track_mutes[track_idx];
-            let (pan_left, pan_right) = state.mixer_state.pan_gains(track_idx);
-
-            if muted {
-                // If muted, don't route to master
-                continue;
-            }
-
-            for frame in 0..num_frames {
-                let left = state.track_buffers[track_idx].left[frame] * volume * pan_left;
-                let right = state.track_buffers[track_idx].right[frame] * volume * pan_right;
-
-                // Route to master (track 0)
-                state.track_buffers[0].left[frame] += left;
-                state.track_buffers[0].right[frame] += right;
-            }
-        }
-
-        // Apply master volume and pan
-        let master_pan_left;
-        let master_pan_right;
-        {
-            let master_vol = state.mixer_state.track_volumes[0];
-            (master_pan_left, master_pan_right) = state.mixer_state.pan_gains(0);
-            for frame in 0..num_frames {
-                state.track_buffers[0].left[frame] *= master_vol * master_pan_left * master_volume;
-                state.track_buffers[0].right[frame] *=
-                    master_vol * master_pan_right * master_volume;
-            }
-        }
-
-        // Step 5: Calculate peak levels for all tracks (before soft clip)
+        // Calculate peak levels for all tracks (need to access track buffers)
         let mut peak_levels = [StereoLevels::default(); NUM_TRACKS];
-        for (track_idx, track_buf) in state.track_buffers.iter().enumerate().take(NUM_TRACKS) {
+        for (track_idx, peak) in peak_levels.iter_mut().enumerate() {
+            let track_buf = state.engine.track_buffer(track_idx);
             let mut peak_left = 0.0f32;
             let mut peak_right = 0.0f32;
             for frame in 0..num_frames {
                 peak_left = peak_left.max(track_buf.left[frame].abs());
                 peak_right = peak_right.max(track_buf.right[frame].abs());
             }
-            peak_levels[track_idx] = StereoLevels {
+            *peak = StereoLevels {
                 left: peak_left.min(1.0),
                 right: peak_right.min(1.0),
             };
@@ -1308,10 +1129,11 @@ impl AudioEngine {
             *shared_peaks = peak_levels;
         }
 
-        // Step 6: Output master track to DAC
+        // Output master track to DAC
+        let master = state.engine.master_buffer();
         for frame in 0..num_frames {
-            let left = state.track_buffers[0].left[frame].clamp(-1.0, 1.0);
-            let right = state.track_buffers[0].right[frame].clamp(-1.0, 1.0);
+            let left = master.left[frame].clamp(-1.0, 1.0);
+            let right = master.right[frame].clamp(-1.0, 1.0);
 
             let out_idx = frame * channels;
             if channels >= 2 {
@@ -1326,12 +1148,10 @@ impl AudioEngine {
         let waveform_buffer = state.waveform_buffer.clone();
         let mut write_pos = state.waveform_write_pos;
 
+        let master = state.engine.master_buffer();
         if let Ok(mut waveform) = waveform_buffer.try_lock() {
             for frame in 0..num_frames {
-                // Use master track output for waveform
-                let sample = (state.track_buffers[0].left[frame]
-                    + state.track_buffers[0].right[frame])
-                    * 0.5;
+                let sample = (master.left[frame] + master.right[frame]) * 0.5;
                 waveform[write_pos] = sample.clamp(-1.0, 1.0);
                 write_pos = (write_pos + 1) % WAVEFORM_BUFFER_SIZE;
             }
@@ -1343,130 +1163,14 @@ impl AudioEngine {
     fn receive_plugins(state: &mut AudioState) {
         // Receive new plugin processors from main thread
         while let Ok((channel, processor, init_state)) = state.plugin_rx.try_recv() {
-            // Ensure plugin_channels is large enough
-            while state.plugin_channels.len() <= channel {
-                state.plugin_channels.push(None);
-            }
+            // Install plugin in the mixing engine
+            state
+                .engine
+                .install_plugin(channel, processor, init_state.volume);
 
-            // Convert initial params to pending params
-            let pending_params: Vec<PluginParamEvent> = init_state
-                .params
-                .into_iter()
-                .map(|(param_id, value)| PluginParamEvent { param_id, value })
-                .collect();
-
-            // Store the plugin processor with initial state
-            state.plugin_channels[channel] = Some(PluginChannel {
-                processor,
-                pending_notes: Vec::new(),
-                pending_params,
-                output_left: Vec::new(),
-                output_right: Vec::new(),
-                volume: init_state.volume,
-            });
-        }
-    }
-
-    /// Process plugins and route their output to assigned mixer track buffers
-    fn process_plugins_to_tracks(state: &mut AudioState, num_frames: usize) {
-        use crate::plugin_host::MidiNote;
-
-        if num_frames == 0 {
-            return;
-        }
-
-        // Process each active plugin (channel index matches generator index)
-        for (channel_idx, plugin_opt) in state.plugin_channels.iter_mut().enumerate() {
-            let Some(plugin_ch) = plugin_opt else {
-                continue;
-            };
-
-            // Ensure output buffers are large enough
-            if plugin_ch.output_left.len() < num_frames {
-                plugin_ch.output_left.resize(num_frames, 0.0);
-                plugin_ch.output_right.resize(num_frames, 0.0);
-            }
-
-            // Clear plugin output buffers
-            for i in 0..num_frames {
-                plugin_ch.output_left[i] = 0.0;
-                plugin_ch.output_right[i] = 0.0;
-            }
-
-            // Convert pending notes to MidiNote format
-            let notes: Vec<MidiNote> = plugin_ch
-                .pending_notes
-                .drain(..)
-                .map(|e| MidiNote {
-                    note: e.note,
-                    velocity: e.velocity,
-                    is_note_on: e.is_note_on,
-                })
-                .collect();
-
-            // Convert pending params to ParamChange format
-            let params: Vec<ParamChange> = plugin_ch
-                .pending_params
-                .drain(..)
-                .map(|e| ParamChange {
-                    param_id: e.param_id,
-                    value: e.value,
-                })
-                .collect();
-
-            // Process audio through the plugin
-            plugin_ch.processor.process(
-                &notes,
-                &params,
-                &mut plugin_ch.output_left[..num_frames],
-                &mut plugin_ch.output_right[..num_frames],
-            );
-
-            // Get target track for this plugin's generator
-            let target_track = state
-                .generator_tracks
-                .get(channel_idx)
-                .copied()
-                .unwrap_or(1);
-
-            // Route plugin output to target track buffer with per-channel volume
-            let channel_volume = plugin_ch.volume;
-            if target_track < NUM_TRACKS {
-                for frame in 0..num_frames {
-                    let left = plugin_ch.output_left[frame] * channel_volume;
-                    let right = plugin_ch.output_right[frame] * channel_volume;
-                    state.track_buffers[target_track].left[frame] += left;
-                    state.track_buffers[target_track].right[frame] += right;
-                }
-            }
-        }
-    }
-
-    /// Process insert effects on each track buffer
-    fn process_track_effects(state: &mut AudioState, num_frames: usize) {
-        if num_frames == 0 {
-            return;
-        }
-
-        // We need to process effects for each track, but we can't borrow
-        // track_effects and track_buffers at the same time through state.
-        // Solution: process one track at a time using indices.
-        for track_idx in 0..NUM_TRACKS {
-            // Process each effect slot in order (serial chain)
-            for slot_idx in 0..EFFECT_SLOTS {
-                // Skip if bypassed
-                if state.effect_bypassed[track_idx][slot_idx] {
-                    continue;
-                }
-
-                // Take the effect temporarily to avoid borrow issues
-                if let Some(mut effect) = state.track_effects[track_idx][slot_idx].take() {
-                    // Process the track buffer in-place
-                    let buf = &mut state.track_buffers[track_idx];
-                    effect.process(&mut buf.left[..num_frames], &mut buf.right[..num_frames]);
-                    // Put the effect back
-                    state.track_effects[track_idx][slot_idx] = Some(effect);
-                }
+            // Apply initial parameters
+            for (param_id, value) in init_state.params {
+                state.engine.send_plugin_param(channel, param_id, value);
             }
         }
     }
@@ -1487,7 +1191,7 @@ impl AudioEngine {
                     route_to_master,
                 } => {
                     // Stop existing preview
-                    state.voices.retain(|v| !v.is_preview);
+                    state.engine.stop_preview_voices();
                     Self::play_sample_internal(
                         state,
                         &path,
@@ -1498,13 +1202,13 @@ impl AudioEngine {
                     );
                 }
                 AudioCommand::StopPreview => {
-                    state.voices.retain(|v| !v.is_preview);
+                    state.engine.stop_preview_voices();
                 }
                 AudioCommand::StopAll => {
-                    state.voices.clear();
+                    state.engine.stop_all_voices();
                 }
                 AudioCommand::SetMasterVolume(vol) => {
-                    state.master_volume = vol.clamp(0.0, 1.0);
+                    state.engine.set_master_volume(vol.clamp(0.0, 1.0));
                 }
                 AudioCommand::PreloadSample { path } => {
                     Self::load_sample(state, &path);
@@ -1514,66 +1218,40 @@ impl AudioEngine {
                     note,
                     velocity,
                 } => {
-                    // Add note on event to plugin channel's pending notes
-                    if let Some(Some(plugin_ch)) = state.plugin_channels.get_mut(channel) {
-                        plugin_ch.pending_notes.push(PluginNoteEvent {
-                            note,
-                            velocity,
-                            is_note_on: true,
-                        });
-                    }
+                    state.engine.send_plugin_note(channel, note, velocity, true);
                 }
                 AudioCommand::PluginNoteOff { channel, note } => {
-                    // Add note off event to plugin channel's pending notes
-                    if let Some(Some(plugin_ch)) = state.plugin_channels.get_mut(channel) {
-                        plugin_ch.pending_notes.push(PluginNoteEvent {
-                            note,
-                            velocity: 0.0,
-                            is_note_on: false,
-                        });
-                    }
+                    state.engine.send_plugin_note(channel, note, 0.0, false);
                 }
                 AudioCommand::PluginSetParam {
                     channel,
                     param_id,
                     value,
                 } => {
-                    // Add param event to plugin channel's pending params
-                    if let Some(Some(plugin_ch)) = state.plugin_channels.get_mut(channel) {
-                        plugin_ch
-                            .pending_params
-                            .push(PluginParamEvent { param_id, value });
-                    }
+                    state.engine.send_plugin_param(channel, param_id, value);
                 }
                 AudioCommand::PluginSetVolume { channel, volume } => {
-                    // Set plugin channel volume
-                    if let Some(Some(plugin_ch)) = state.plugin_channels.get_mut(channel) {
-                        plugin_ch.volume = volume.clamp(0.0, 1.0);
-                    }
+                    state.engine.set_plugin_volume(channel, volume);
                 }
                 AudioCommand::UpdateMixerState(mixer_state) => {
-                    state.mixer_state = mixer_state;
+                    state.engine.set_mixer_state(mixer_state);
                 }
                 AudioCommand::SetGeneratorTrack { generator, track } => {
-                    if generator < MAX_GENERATORS && track < NUM_TRACKS {
-                        state.generator_tracks[generator] = track;
-                    }
+                    state.engine.set_generator_track(generator, track);
                 }
                 AudioCommand::SetEffect {
                     track,
                     slot,
                     effect_type,
                 } => {
-                    if track < NUM_TRACKS && slot < EFFECT_SLOTS {
-                        let sample_rate = state.output_sample_rate as f32;
-                        let bpm = state.tempo_bpm;
-                        state.track_effects[track][slot] = effect_type.map(|et| {
-                            // Create a temporary slot with default params
-                            let slot_data = EffectSlot::new(et);
-                            create_effect(&slot_data, sample_rate, bpm)
-                        });
-                        state.effect_bypassed[track][slot] = false;
-                    }
+                    let sample_rate = state.engine.sample_rate as f32;
+                    let bpm = state.engine.tempo_bpm;
+                    let effect = effect_type.map(|et| {
+                        let slot_data = EffectSlot::new(et);
+                        create_effect(&slot_data, sample_rate, bpm)
+                    });
+                    state.engine.set_effect(track, slot, effect);
+                    state.engine.set_effect_enabled(track, slot, true);
                 }
                 AudioCommand::SetEffectParam {
                     track,
@@ -1581,29 +1259,17 @@ impl AudioEngine {
                     param_id,
                     value,
                 } => {
-                    if track < NUM_TRACKS && slot < EFFECT_SLOTS {
-                        if let Some(effect) = &mut state.track_effects[track][slot] {
-                            effect.set_param(param_id, value);
-                        }
-                    }
+                    state.engine.set_effect_param(track, slot, param_id, value);
                 }
                 AudioCommand::SetEffectEnabled {
                     track,
                     slot,
                     enabled,
                 } => {
-                    if track < NUM_TRACKS && slot < EFFECT_SLOTS {
-                        state.effect_bypassed[track][slot] = !enabled;
-                    }
+                    state.engine.set_effect_enabled(track, slot, enabled);
                 }
                 AudioCommand::UpdateTempo(bpm) => {
-                    state.tempo_bpm = bpm;
-                    // Update all tempo-synced effects
-                    for track in &mut state.track_effects {
-                        for effect in track.iter_mut().flatten() {
-                            effect.set_tempo(bpm);
-                        }
-                    }
+                    state.engine.set_tempo(bpm);
                 }
             }
         }
@@ -1622,24 +1288,17 @@ impl AudioEngine {
             Self::load_sample(state, path);
         }
 
-        // Get cached sample and create voice
+        // Get cached sample and add voice to engine
         if let Some(sample) = state.sample_cache.get(path).cloned() {
-            // Limit voice count
-            if state.voices.len() >= MAX_VOICES {
-                // Remove oldest non-preview voice
-                if let Some(idx) = state.voices.iter().position(|v| !v.is_preview) {
-                    state.voices.remove(idx);
-                }
+            if is_preview {
+                state
+                    .engine
+                    .add_preview_voice(sample, generator_idx, route_to_master);
+            } else {
+                state
+                    .engine
+                    .add_voice(sample, volume, generator_idx, route_to_master);
             }
-
-            state.voices.push(Voice {
-                sample,
-                position: 0,
-                volume,
-                is_preview,
-                generator_idx,
-                route_to_master,
-            });
         }
     }
 
