@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::ProjectError;
+use super::{load_project, save_project, ProjectError};
 
 /// Create a new project with optional name
 ///
@@ -15,8 +15,30 @@ pub fn new_project(name: Option<&str>) -> Result<PathBuf, ProjectError> {
 }
 
 /// Create a new project in a specific directory (for testing)
-pub fn new_project_in(_name: Option<&str>, _projects_dir: &Path) -> Result<PathBuf, ProjectError> {
-    todo!()
+pub fn new_project_in(name: Option<&str>, projects_dir: &Path) -> Result<PathBuf, ProjectError> {
+    let project_name = name
+        .map(|s| s.to_string())
+        .unwrap_or_else(super::generate_project_name);
+
+    let project_path = projects_dir.join(&project_name);
+
+    if project_path.exists() {
+        return Err(ProjectError::AlreadyExists(project_name));
+    }
+
+    // Copy template if available, otherwise create empty project
+    super::copy_template(&project_path)?;
+
+    // Update project name in project.json if it exists
+    if let Ok(mut project) = load_project(&project_path) {
+        project.name = project_name.clone();
+        save_project(&project_path, &project)?;
+    } else {
+        // No template, create new project file
+        super::create_project(&project_path, &project_name)?;
+    }
+
+    Ok(project_path)
 }
 
 /// Copy a project to a new name (save as)
@@ -29,11 +51,30 @@ pub fn save_project_as(from: &Path, new_name: &str) -> Result<PathBuf, ProjectEr
 
 /// Copy a project to a new name in a specific directory (for testing)
 pub fn save_project_as_in(
-    _from: &Path,
-    _new_name: &str,
-    _projects_dir: &Path,
+    from: &Path,
+    new_name: &str,
+    projects_dir: &Path,
 ) -> Result<PathBuf, ProjectError> {
-    todo!()
+    if !from.exists() {
+        return Err(ProjectError::NotFound(from.display().to_string()));
+    }
+
+    let new_path = projects_dir.join(new_name);
+
+    if new_path.exists() {
+        return Err(ProjectError::AlreadyExists(new_name.to_string()));
+    }
+
+    // Copy the entire directory
+    copy_dir_recursive(from, &new_path)?;
+
+    // Update the name in project.json
+    if let Ok(mut project) = load_project(&new_path) {
+        project.name = new_name.to_string();
+        save_project(&new_path, &project)?;
+    }
+
+    Ok(new_path)
 }
 
 /// Rename a project
@@ -46,24 +87,66 @@ pub fn rename_project(path: &Path, new_name: &str) -> Result<PathBuf, ProjectErr
 
 /// Rename a project in a specific directory (for testing)
 pub fn rename_project_in(
-    _path: &Path,
-    _new_name: &str,
-    _projects_dir: &Path,
+    path: &Path,
+    new_name: &str,
+    projects_dir: &Path,
 ) -> Result<PathBuf, ProjectError> {
-    todo!()
+    if !path.exists() {
+        return Err(ProjectError::NotFound(path.display().to_string()));
+    }
+
+    let new_path = projects_dir.join(new_name);
+
+    if new_path.exists() {
+        return Err(ProjectError::AlreadyExists(new_name.to_string()));
+    }
+
+    // Rename the directory
+    std::fs::rename(path, &new_path)?;
+
+    // Update the name in project.json
+    if let Ok(mut project) = load_project(&new_path) {
+        project.name = new_name.to_string();
+        save_project(&new_path, &project)?;
+    }
+
+    Ok(new_path)
 }
 
 /// Delete a project permanently
 ///
 /// Removes the entire project directory.
-pub fn delete_project(_path: &Path) -> Result<(), ProjectError> {
-    todo!()
+pub fn delete_project(path: &Path) -> Result<(), ProjectError> {
+    if !path.exists() {
+        return Err(ProjectError::NotFound(path.display().to_string()));
+    }
+
+    std::fs::remove_dir_all(path)?;
+    Ok(())
+}
+
+/// Recursively copy a directory
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), ProjectError> {
+    std::fs::create_dir_all(dst)?;
+
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::{load_project, save_project};
     use tempfile::TempDir;
 
     /// Helper to create a test project in a temp directory
@@ -72,7 +155,7 @@ mod tests {
         std::fs::create_dir_all(&project_path).unwrap();
         std::fs::create_dir_all(project_path.join("samples")).unwrap();
 
-        let project = crate::project::ProjectFile::new(name);
+        let project = super::super::ProjectFile::new(name);
         save_project(&project_path, &project).unwrap();
 
         project_path
