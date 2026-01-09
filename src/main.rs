@@ -58,6 +58,23 @@ enum ProjectsAction {
         /// Project name
         name: String,
     },
+    /// Create a new project
+    New {
+        /// Project name (auto-generated if not provided)
+        name: Option<String>,
+    },
+    /// Rename a project
+    Rename {
+        /// Current project name
+        old: String,
+        /// New project name
+        new: String,
+    },
+    /// Delete a project
+    Delete {
+        /// Project name to delete
+        name: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -68,6 +85,9 @@ fn main() -> Result<()> {
         Some(Commands::Projects { action }) => match action {
             ProjectsAction::List => list_projects(),
             ProjectsAction::Open { name } => run_daw(name.clone()),
+            ProjectsAction::New { name } => new_project(name.as_deref()),
+            ProjectsAction::Rename { old, new } => rename_project(old, new),
+            ProjectsAction::Delete { name } => delete_project(name),
         },
         Some(Commands::Completions { shell }) => {
             print_completions(*shell);
@@ -108,6 +128,87 @@ fn list_projects() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Create a new project
+fn new_project(name: Option<&str>) -> Result<()> {
+    match termdaw::project::ops::new_project(name) {
+        Ok(path) => {
+            let project_name = path.file_name().unwrap().to_string_lossy();
+            println!("Created project: {}", project_name);
+            println!("Run: termdaw projects open {}", project_name);
+            Ok(())
+        }
+        Err(termdaw::project::ProjectError::AlreadyExists(name)) => {
+            eprintln!("Error: Project '{}' already exists", name);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Error creating project: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Rename a project
+fn rename_project(old: &str, new: &str) -> Result<()> {
+    let projects_dir = termdaw::templates::projects_dir();
+    let old_path = projects_dir.join(old);
+
+    if !old_path.exists() {
+        eprintln!("Error: Project '{}' not found", old);
+        std::process::exit(1);
+    }
+
+    match termdaw::project::ops::rename_project(&old_path, new) {
+        Ok(_) => {
+            println!("Renamed '{}' to '{}'", old, new);
+            Ok(())
+        }
+        Err(termdaw::project::ProjectError::AlreadyExists(name)) => {
+            eprintln!("Error: Project '{}' already exists", name);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Error renaming project: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Delete a project
+fn delete_project(name: &str) -> Result<()> {
+    let projects_dir = termdaw::templates::projects_dir();
+    let project_path = projects_dir.join(name);
+
+    if !project_path.exists() {
+        eprintln!("Error: Project '{}' not found", name);
+        std::process::exit(1);
+    }
+
+    // Confirmation prompt
+    print!("Delete project '{}'? This cannot be undone. [y/N] ", name);
+    use std::io::Write;
+    std::io::stdout().flush()?;
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+
+    if input.trim().to_lowercase() != "y" {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    match termdaw::project::ops::delete_project(&project_path) {
+        Ok(()) => {
+            println!("Deleted project '{}'", name);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Error deleting project: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Print shell completions
