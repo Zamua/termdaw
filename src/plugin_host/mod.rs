@@ -11,6 +11,8 @@ mod host;
 pub mod loader;
 pub mod params;
 
+#[cfg(test)]
+pub use loader::mock::MockPluginLoader;
 pub use loader::{ClapPluginLoader, LoadedPlugin, PluginLoadError, PluginLoader};
 pub use params::PluginParamId;
 

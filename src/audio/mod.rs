@@ -8,6 +8,7 @@
 //! - Per-track mixing with routing (FL Studio-style mixer)
 
 pub mod mock;
+pub mod offline;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -22,8 +23,20 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use rodio::{Decoder, Source};
 
 use crate::effects::{create_effect, Effect, EffectParamId, EffectSlot, EffectType, EFFECT_SLOTS};
-use crate::mixer::{StereoLevels, NUM_TRACKS};
-use crate::plugin_host::{ActivePluginProcessor, ParamChange};
+use crate::mixer::{Mixer, StereoLevels, TrackId, NUM_TRACKS};
+use crate::plugin_host::{
+    params::build_init_params, ActivePluginProcessor, ParamChange, PluginLoader,
+};
+use crate::sequencer::{Channel, ChannelSource};
+
+/// Project setup data for configuring the audio engine at creation time
+pub struct ProjectSetup<'a> {
+    pub channels: &'a [Channel],
+    pub mixer: &'a Mixer,
+    pub plugins_path: &'a Path,
+    pub plugin_loader: &'a dyn PluginLoader,
+    pub bpm: f64,
+}
 
 /// Maximum number of simultaneous sample playbacks
 const MAX_VOICES: usize = 32;
@@ -747,6 +760,88 @@ impl MixingEngine {
     }
 }
 
+// ============================================================================
+// Shared Setup Function
+// ============================================================================
+
+/// Build audio mixer state from mixer configuration
+pub(crate) fn build_mixer_state(mixer: &Mixer) -> AudioMixerState {
+    let mut track_volumes = [0.0f32; NUM_TRACKS];
+    let mut track_pans = [0.0f32; NUM_TRACKS];
+    let mut track_mutes = [false; NUM_TRACKS];
+
+    let has_solo = mixer.has_solo();
+
+    for i in 0..NUM_TRACKS {
+        let track_id = TrackId(i);
+        let track = mixer.track(track_id);
+        track_volumes[i] = track.volume;
+        track_pans[i] = track.pan;
+        // Effective mute considers solo state
+        track_mutes[i] = track.muted || (has_solo && !track.solo);
+    }
+
+    AudioMixerState {
+        track_volumes,
+        track_pans,
+        track_mutes,
+    }
+}
+
+/// Configure a MixingEngine with all project state.
+///
+/// This is the shared setup function used by both real-time playback and offline export.
+/// It loads plugins, sets up effects, and configures mixer routing.
+pub(crate) fn setup_engine(
+    engine: &mut MixingEngine,
+    channels: &[Channel],
+    mixer: &Mixer,
+    plugins_path: &Path,
+    plugin_loader: &dyn PluginLoader,
+    sample_rate: u32,
+    bpm: f64,
+) {
+    // Set mixer state (volumes, pans, mutes)
+    engine.set_mixer_state(build_mixer_state(mixer));
+    engine.set_master_volume(1.0);
+    engine.set_tempo(bpm);
+
+    // Set generator→track routing
+    for (idx, channel) in channels.iter().enumerate() {
+        engine.set_generator_track(idx, channel.mixer_track);
+    }
+
+    // Load and install plugins
+    for (idx, channel) in channels.iter().enumerate() {
+        if let ChannelSource::Plugin { path, params } = &channel.source {
+            let plugin_path = plugins_path.join(path);
+            if let Ok(loaded) = plugin_loader.load_plugin(&plugin_path, sample_rate as f64, 512) {
+                let volume = mixer.track(TrackId(channel.mixer_track)).volume;
+                engine.install_plugin(idx, loaded.processor, volume);
+
+                // Apply saved parameters (convert from PluginParamId -> clap_id)
+                for (clap_id, value) in build_init_params(params) {
+                    engine.send_plugin_param(idx, clap_id, value);
+                }
+            }
+        }
+    }
+
+    // Create and install effects
+    for track_idx in 0..NUM_TRACKS {
+        let track_id = TrackId(track_idx);
+        let track = mixer.track(track_id);
+
+        for (slot_idx, slot) in track.effects.iter().enumerate() {
+            if let Some(slot) = slot {
+                let effect = create_effect(slot, sample_rate as f32, bpm);
+                engine.set_effect(track_idx, slot_idx, Some(effect));
+                engine.set_effect_enabled(track_idx, slot_idx, !slot.bypassed);
+            }
+        }
+    }
+}
+
 /// Shared state between audio thread and main thread
 struct AudioState {
     /// Core mixing engine (owns voices, plugins, effects, mixer state)
@@ -988,7 +1083,10 @@ pub struct AudioEngine {
 
 impl AudioEngine {
     /// Create a new audio engine and return a handle for sending commands
-    pub fn new() -> Result<(Self, AudioHandle), AudioError> {
+    ///
+    /// If `project_setup` is provided, the engine will be configured with plugins,
+    /// effects, and mixer state before the audio stream starts.
+    pub fn new(project_setup: Option<ProjectSetup>) -> Result<(Self, AudioHandle), AudioError> {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -1011,8 +1109,21 @@ impl AudioEngine {
         let peak_levels: PeakLevelsBuffer =
             Arc::new(Mutex::new([StereoLevels::default(); NUM_TRACKS]));
 
-        // Create the mixing engine
-        let engine = MixingEngine::new(sample_rate);
+        // Create and configure the mixing engine
+        let mut engine = MixingEngine::new(sample_rate);
+
+        // If project setup is provided, configure engine with plugins/effects/mixer
+        if let Some(setup) = project_setup {
+            setup_engine(
+                &mut engine,
+                setup.channels,
+                setup.mixer,
+                setup.plugins_path,
+                setup.plugin_loader,
+                sample_rate,
+                setup.bpm,
+            );
+        }
 
         let state = Arc::new(Mutex::new(AudioState {
             engine,

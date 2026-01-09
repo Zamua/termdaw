@@ -463,8 +463,8 @@ impl App {
             event_log: crate::event_log::EventLog::new(),
         };
 
-        // Load plugins for plugin channels
-        app.load_plugins();
+        // Note: Plugins are loaded by AudioEngine::new() via setup_engine(),
+        // so we don't need to call load_plugins() here anymore.
 
         // Mark initial mixer and routing state as dirty, then flush immediately
         app.state.audio_sync.mark_mixer_dirty();
@@ -502,39 +502,6 @@ impl App {
             mixer.auto_assign_generator(idx);
         }
         mixer
-    }
-
-    /// Load all plugins for plugin channels
-    fn load_plugins(&self) {
-        // Get the actual sample rate from the audio system
-        let sample_rate = self.audio.sample_rate() as f64;
-        let buffer_size = 512;
-
-        // Get the plugins directory path
-        let plugins_path = self.project.plugins_path();
-
-        for (channel_idx, channel) in self.channels.iter().enumerate() {
-            if let ChannelSource::Plugin { path, .. } = &channel.source {
-                let plugin_path = plugins_path.join(path);
-
-                // Try to load and activate the plugin using the loader trait
-                match self
-                    .plugin_loader
-                    .load_plugin(&plugin_path, sample_rate, buffer_size)
-                {
-                    Ok(loaded) => {
-                        // Build initial state with volume from mixer and params from channel
-                        let init_state = self.build_plugin_init_state(channel_idx, channel);
-                        // Send the activated processor with initial state
-                        self.audio
-                            .send_plugin(channel_idx, loaded.processor, init_state);
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to load plugin for channel {}: {}", channel_idx, e);
-                    }
-                }
-            }
-        }
     }
 
     /// Build initial plugin state from channel settings and mixer
@@ -1536,10 +1503,45 @@ impl App {
     }
 
     /// Perform the actual export to WAV
-    /// TODO: Implement using shared audio mixing logic
     pub fn do_export(&mut self, filename: &str) {
-        let _ = filename; // suppress unused warning
-        self.log_event("export not yet implemented", false);
+        use crate::audio::offline::{render_offline, write_wav, RenderConfig};
+
+        let config = RenderConfig {
+            sample_rate: 44100,
+            bpm: self.transport.bpm,
+            steps_per_bar: 16,
+        };
+
+        let samples_path = self.project.samples_path();
+        let plugins_path = self.project.plugins_path();
+
+        self.log_event("exporting...", false);
+
+        let samples = render_offline(
+            &self.state.channels,
+            &self.state.patterns,
+            &self.arrangement,
+            &self.mixer,
+            &samples_path,
+            &plugins_path,
+            &*self.plugin_loader,
+            &config,
+        );
+
+        if samples.is_empty() {
+            self.log_event("nothing to export (arrangement is empty)", false);
+            return;
+        }
+
+        let output_path = self.project.path.join(filename);
+        match write_wav(&output_path, &samples, config.sample_rate) {
+            Ok(()) => {
+                self.log_event("export complete", false);
+            }
+            Err(_e) => {
+                self.log_event("export failed", false);
+            }
+        }
     }
 
     /// Hide the projects modal

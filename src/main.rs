@@ -22,8 +22,11 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use termdaw::app::App;
-use termdaw::audio::AudioEngine;
+use termdaw::audio::{AudioEngine, ProjectSetup};
 use termdaw::input;
+use termdaw::mixer::Mixer;
+use termdaw::plugin_host::ClapPluginLoader;
+use termdaw::project;
 use termdaw::ui;
 
 /// TermDAW - Terminal Digital Audio Workstation
@@ -231,9 +234,43 @@ fn run_daw(project_name: String) -> Result<()> {
         let _ = std::io::stdin().read_line(&mut String::new());
     }
 
-    // Initialize audio engine
-    let (mut audio_engine, audio_handle) =
-        AudioEngine::new().map_err(|e| anyhow::anyhow!("Failed to initialize audio: {}", e))?;
+    // Load project data first so we can configure the audio engine
+    let project_path = termdaw::templates::projects_dir().join(&project_name);
+
+    // If project doesn't exist, create from template
+    if !project::is_valid_project(&project_path) {
+        if let Err(e) = project::copy_template(&project_path) {
+            eprintln!("Warning: Failed to copy template: {}", e);
+        }
+    }
+
+    // Load project data for audio engine setup
+    let (channels, mixer, bpm) = if project::is_valid_project(&project_path) {
+        match project::load_project(&project_path) {
+            Ok(proj) => {
+                let mixer = proj.mixer.unwrap_or_else(Mixer::new);
+                (proj.channels, mixer, proj.bpm)
+            }
+            Err(_) => (vec![], Mixer::new(), 140.0),
+        }
+    } else {
+        (vec![], Mixer::new(), 140.0)
+    };
+
+    // Create plugin loader for audio engine setup
+    let plugin_loader = ClapPluginLoader;
+    let plugins_path = project_path.join("plugins");
+
+    // Initialize audio engine with project setup
+    let project_setup = ProjectSetup {
+        channels: &channels,
+        mixer: &mixer,
+        plugins_path: &plugins_path,
+        plugin_loader: &plugin_loader,
+        bpm,
+    };
+    let (mut audio_engine, audio_handle) = AudioEngine::new(Some(project_setup))
+        .map_err(|e| anyhow::anyhow!("Failed to initialize audio: {}", e))?;
 
     // Setup terminal
     enable_raw_mode()?;
