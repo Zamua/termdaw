@@ -10,6 +10,7 @@ use tui_input::Input;
 pub enum Command {
     // Projects
     OpenProjects,
+    Export,
 
     // Panels
     ToggleBrowser,
@@ -29,6 +30,7 @@ impl Command {
     pub fn key(&self) -> char {
         match self {
             Command::OpenProjects => 'p',
+            Command::Export => 'e',
             Command::ToggleBrowser => 'b',
             Command::ToggleMixer => 'm',
             Command::ToggleEventLog => 'l',
@@ -42,6 +44,7 @@ impl Command {
     pub fn label(&self) -> &'static str {
         match self {
             Command::OpenProjects => "Open Projects",
+            Command::Export => "Export WAV",
             Command::ToggleBrowser => "Toggle Browser",
             Command::ToggleMixer => "Toggle Mixer",
             Command::ToggleEventLog => "Toggle Event Log",
@@ -110,6 +113,7 @@ pub enum InputTarget {
     #[default]
     None,
     Tempo,
+    ExportWav,
 }
 
 /// Command picker state
@@ -129,7 +133,7 @@ impl CommandPicker {
         let groups = vec![
             CommandGroup {
                 name: "Projects",
-                commands: vec![Command::OpenProjects],
+                commands: vec![Command::OpenProjects, Command::Export],
             },
             CommandGroup {
                 name: "Panels",
@@ -167,6 +171,17 @@ impl CommandPicker {
         };
     }
 
+    /// Start export input mode
+    pub fn start_export_input(&mut self, default_filename: &str) {
+        self.visible = false;
+        self.input = InputMode {
+            active: true,
+            prompt: "Export to:",
+            input: Input::new(default_filename.to_string()),
+            target: InputTarget::ExportWav,
+        };
+    }
+
     /// Cancel input mode
     pub fn cancel_input(&mut self) {
         self.input = InputMode::default();
@@ -176,6 +191,15 @@ impl CommandPicker {
     pub fn get_tempo_value(&self) -> Option<f64> {
         if self.input.target == InputTarget::Tempo {
             self.input.input.value().parse::<f64>().ok()
+        } else {
+            None
+        }
+    }
+
+    /// Get the export filename value, if in export mode
+    pub fn get_export_filename(&self) -> Option<&str> {
+        if self.input.target == InputTarget::ExportWav {
+            Some(self.input.input.value())
         } else {
             None
         }

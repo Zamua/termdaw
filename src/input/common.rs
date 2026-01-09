@@ -99,5 +99,9 @@ pub fn execute_command(cmd: Command, app: &mut App) -> bool {
             app.ui.should_quit = true;
             true
         }
+        Command::Export => {
+            app.start_export();
+            false
+        }
     }
 }

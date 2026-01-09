@@ -141,9 +141,9 @@ mod tests {
 }
 
 /// Per-track stereo buffer for mixing
-struct TrackBuffer {
-    left: Vec<f32>,
-    right: Vec<f32>,
+pub(crate) struct TrackBuffer {
+    pub left: Vec<f32>,
+    pub right: Vec<f32>,
 }
 
 /// Commands sent to the audio engine
@@ -216,13 +216,13 @@ pub enum AudioCommand {
 
 /// A loaded sample as raw audio data
 #[derive(Clone)]
-struct SampleData {
+pub(crate) struct SampleData {
     /// Interleaved stereo samples (f32)
-    data: Arc<Vec<f32>>,
+    pub data: Arc<Vec<f32>>,
     /// Sample rate of the original file
-    sample_rate: u32,
+    pub sample_rate: u32,
     /// Number of channels (1 or 2)
-    channels: u16,
+    pub channels: u16,
 }
 
 /// A playing voice (sample instance)
@@ -273,6 +273,478 @@ struct PluginChannel {
     output_right: Vec<f32>,
     /// Channel volume (0.0-1.0)
     volume: f32,
+}
+
+// ============================================================================
+// MixingEngine - Core mixing logic shared between real-time and offline
+// ============================================================================
+
+/// Core mixing engine that processes voices, plugins, effects, and mixer.
+/// Used by both real-time audio callback and offline export.
+#[allow(dead_code)]
+pub(crate) struct MixingEngine {
+    /// Per-track stereo buffers for mixing
+    track_buffers: Vec<TrackBuffer>,
+    /// Active sample voices
+    voices: Vec<Voice>,
+    /// Plugin processors per channel
+    plugin_channels: Vec<Option<PluginChannel>>,
+    /// Effect processors per track (16 tracks x 8 slots)
+    track_effects: Vec<[Option<Box<dyn Effect>>; EFFECT_SLOTS]>,
+    /// Effect bypass state per track/slot (true = bypassed)
+    effect_bypassed: [[bool; EFFECT_SLOTS]; NUM_TRACKS],
+    /// Mixer state (volumes, pans, mutes)
+    mixer_state: AudioMixerState,
+    /// Generator-to-track routing (generator_idx -> track_idx)
+    generator_tracks: [usize; MAX_GENERATORS],
+    /// Master volume (0.0-1.0)
+    master_volume: f32,
+    /// Output sample rate
+    sample_rate: u32,
+    /// Current tempo in BPM (for tempo-synced effects)
+    tempo_bpm: f64,
+}
+
+#[allow(dead_code)]
+impl MixingEngine {
+    /// Create a new mixing engine
+    pub fn new(sample_rate: u32) -> Self {
+        let track_buffers: Vec<TrackBuffer> = (0..NUM_TRACKS)
+            .map(|_| TrackBuffer {
+                left: vec![0.0; MAX_TRACK_BUFFER_SIZE],
+                right: vec![0.0; MAX_TRACK_BUFFER_SIZE],
+            })
+            .collect();
+
+        let track_effects: Vec<[Option<Box<dyn Effect>>; EFFECT_SLOTS]> = (0..NUM_TRACKS)
+            .map(|_| std::array::from_fn(|_| None))
+            .collect();
+
+        Self {
+            track_buffers,
+            voices: Vec::with_capacity(MAX_VOICES),
+            plugin_channels: Vec::new(),
+            track_effects,
+            effect_bypassed: [[false; EFFECT_SLOTS]; NUM_TRACKS],
+            mixer_state: AudioMixerState::default(),
+            generator_tracks: [1; MAX_GENERATORS],
+            master_volume: 1.0,
+            sample_rate,
+            tempo_bpm: 120.0,
+        }
+    }
+
+    /// Process one block of audio, returns reference to master buffer (track 0)
+    pub fn process_block(&mut self, num_frames: usize) -> &TrackBuffer {
+        self.clear_track_buffers(num_frames);
+        self.render_voices_to_tracks(num_frames);
+        self.process_plugins_to_tracks(num_frames);
+        self.process_track_effects(num_frames);
+        self.sum_tracks_to_master(num_frames);
+        &self.track_buffers[0]
+    }
+
+    /// Get the master buffer directly (for reading output)
+    pub fn master_buffer(&self) -> &TrackBuffer {
+        &self.track_buffers[0]
+    }
+
+    /// Get a track buffer by index
+    pub fn track_buffer(&self, track: usize) -> &TrackBuffer {
+        &self.track_buffers[track]
+    }
+
+    // ========================================================================
+    // Voice Management
+    // ========================================================================
+
+    /// Add a voice to play a sample
+    pub fn add_voice(
+        &mut self,
+        sample: SampleData,
+        volume: f32,
+        generator_idx: usize,
+        route_to_master: bool,
+    ) {
+        if self.voices.len() >= MAX_VOICES {
+            self.voices.remove(0);
+        }
+        self.voices.push(Voice {
+            sample,
+            position: 0,
+            volume,
+            is_preview: false,
+            generator_idx,
+            route_to_master,
+        });
+    }
+
+    /// Add a preview voice (stops other previews first)
+    pub fn add_preview_voice(
+        &mut self,
+        sample: SampleData,
+        generator_idx: usize,
+        route_to_master: bool,
+    ) {
+        self.stop_preview_voices();
+        self.voices.push(Voice {
+            sample,
+            position: 0,
+            volume: 1.0,
+            is_preview: true,
+            generator_idx,
+            route_to_master,
+        });
+    }
+
+    /// Stop all preview voices
+    pub fn stop_preview_voices(&mut self) {
+        self.voices.retain(|v| !v.is_preview);
+    }
+
+    /// Stop all voices
+    pub fn stop_all_voices(&mut self) {
+        self.voices.clear();
+    }
+
+    /// Get number of active voices
+    pub fn voice_count(&self) -> usize {
+        self.voices.len()
+    }
+
+    // ========================================================================
+    // Plugin Management
+    // ========================================================================
+
+    /// Install a plugin processor on a channel
+    pub fn install_plugin(
+        &mut self,
+        channel: usize,
+        processor: ActivePluginProcessor,
+        volume: f32,
+    ) {
+        while self.plugin_channels.len() <= channel {
+            self.plugin_channels.push(None);
+        }
+        self.plugin_channels[channel] = Some(PluginChannel {
+            processor,
+            pending_notes: Vec::new(),
+            pending_params: Vec::new(),
+            output_left: Vec::new(),
+            output_right: Vec::new(),
+            volume,
+        });
+    }
+
+    /// Send a note to a plugin channel
+    pub fn send_plugin_note(&mut self, channel: usize, note: u8, velocity: f32, is_note_on: bool) {
+        if let Some(Some(plugin_ch)) = self.plugin_channels.get_mut(channel) {
+            plugin_ch.pending_notes.push(PluginNoteEvent {
+                note,
+                velocity,
+                is_note_on,
+            });
+        }
+    }
+
+    /// Send a parameter change to a plugin channel
+    pub fn send_plugin_param(&mut self, channel: usize, param_id: u32, value: f64) {
+        if let Some(Some(plugin_ch)) = self.plugin_channels.get_mut(channel) {
+            plugin_ch
+                .pending_params
+                .push(PluginParamEvent { param_id, value });
+        }
+    }
+
+    /// Set plugin channel volume
+    pub fn set_plugin_volume(&mut self, channel: usize, volume: f32) {
+        if let Some(Some(plugin_ch)) = self.plugin_channels.get_mut(channel) {
+            plugin_ch.volume = volume;
+        }
+    }
+
+    // ========================================================================
+    // Mixer State
+    // ========================================================================
+
+    /// Set the mixer state (volumes, pans, mutes)
+    pub fn set_mixer_state(&mut self, state: AudioMixerState) {
+        self.mixer_state = state;
+    }
+
+    /// Set master volume
+    pub fn set_master_volume(&mut self, volume: f32) {
+        self.master_volume = volume.clamp(0.0, 1.0);
+    }
+
+    /// Get master volume
+    pub fn master_volume(&self) -> f32 {
+        self.master_volume
+    }
+
+    /// Set generator-to-track routing
+    pub fn set_generator_track(&mut self, generator: usize, track: usize) {
+        if generator < MAX_GENERATORS {
+            self.generator_tracks[generator] = track;
+        }
+    }
+
+    // ========================================================================
+    // Effects
+    // ========================================================================
+
+    /// Set an effect on a track slot
+    pub fn set_effect(&mut self, track: usize, slot: usize, effect: Option<Box<dyn Effect>>) {
+        if track < NUM_TRACKS && slot < EFFECT_SLOTS {
+            self.track_effects[track][slot] = effect;
+        }
+    }
+
+    /// Set an effect parameter
+    pub fn set_effect_param(
+        &mut self,
+        track: usize,
+        slot: usize,
+        param_id: EffectParamId,
+        value: f32,
+    ) {
+        if track < NUM_TRACKS && slot < EFFECT_SLOTS {
+            if let Some(effect) = &mut self.track_effects[track][slot] {
+                effect.set_param(param_id, value);
+            }
+        }
+    }
+
+    /// Enable or bypass an effect
+    pub fn set_effect_enabled(&mut self, track: usize, slot: usize, enabled: bool) {
+        if track < NUM_TRACKS && slot < EFFECT_SLOTS {
+            self.effect_bypassed[track][slot] = !enabled;
+        }
+    }
+
+    /// Set tempo (for tempo-synced effects)
+    pub fn set_tempo(&mut self, bpm: f64) {
+        self.tempo_bpm = bpm;
+        for track_effects in &mut self.track_effects {
+            for effect in track_effects.iter_mut().flatten() {
+                effect.set_tempo(bpm);
+            }
+        }
+    }
+
+    // ========================================================================
+    // Private Mixing Methods
+    // ========================================================================
+
+    fn clear_track_buffers(&mut self, num_frames: usize) {
+        for track_buf in &mut self.track_buffers {
+            if track_buf.left.len() < num_frames {
+                track_buf.left.resize(num_frames, 0.0);
+                track_buf.right.resize(num_frames, 0.0);
+            }
+            for i in 0..num_frames {
+                track_buf.left[i] = 0.0;
+                track_buf.right[i] = 0.0;
+            }
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn render_voices_to_tracks(&mut self, num_frames: usize) {
+        // Collect voice outputs first to avoid borrow issues
+        // (target_track, samples, finished)
+        let mut voice_outputs: Vec<(usize, Vec<(f32, f32)>, bool)> = Vec::new();
+
+        for voice in self.voices.iter() {
+            let sample_data = &voice.sample.data;
+            let voice_channels = voice.sample.channels as usize;
+            let voice_volume = voice.volume;
+            let generator_idx = voice.generator_idx;
+            let sample_rate = voice.sample.sample_rate;
+
+            let target_track = if voice.route_to_master {
+                0
+            } else {
+                *self.generator_tracks.get(generator_idx).unwrap_or(&1)
+            };
+
+            let resample_ratio = sample_rate as f32 / self.sample_rate as f32;
+            let mut samples = Vec::with_capacity(num_frames);
+            let mut finished = false;
+            let mut pos = voice.position;
+
+            for _ in 0..num_frames {
+                let src_frame = (pos as f32 * resample_ratio) as usize;
+
+                if src_frame * voice_channels >= sample_data.len() {
+                    finished = true;
+                    break;
+                }
+
+                let (left, right) = if voice_channels == 1 {
+                    let s = sample_data[src_frame] * voice_volume;
+                    (s, s)
+                } else {
+                    let idx = src_frame * 2;
+                    if idx + 1 < sample_data.len() {
+                        (
+                            sample_data[idx] * voice_volume,
+                            sample_data[idx + 1] * voice_volume,
+                        )
+                    } else {
+                        (0.0, 0.0)
+                    }
+                };
+
+                samples.push((left, right));
+                pos += 1;
+            }
+
+            voice_outputs.push((target_track, samples, finished));
+        }
+
+        // Apply to track buffers and update voice state
+        let mut voices_to_remove = Vec::new();
+
+        for (voice_idx, (target_track, samples, finished)) in voice_outputs.into_iter().enumerate()
+        {
+            if target_track < NUM_TRACKS {
+                for (frame, (left, right)) in samples.iter().enumerate() {
+                    self.track_buffers[target_track].left[frame] += left;
+                    self.track_buffers[target_track].right[frame] += right;
+                }
+            }
+
+            self.voices[voice_idx].position += samples.len();
+
+            if finished {
+                voices_to_remove.push(voice_idx);
+            }
+        }
+
+        for idx in voices_to_remove.into_iter().rev() {
+            self.voices.remove(idx);
+        }
+    }
+
+    fn process_plugins_to_tracks(&mut self, num_frames: usize) {
+        use crate::plugin_host::MidiNote;
+
+        if num_frames == 0 {
+            return;
+        }
+
+        for (channel_idx, plugin_opt) in self.plugin_channels.iter_mut().enumerate() {
+            let Some(plugin_ch) = plugin_opt else {
+                continue;
+            };
+
+            // Ensure output buffers are large enough
+            if plugin_ch.output_left.len() < num_frames {
+                plugin_ch.output_left.resize(num_frames, 0.0);
+                plugin_ch.output_right.resize(num_frames, 0.0);
+            }
+
+            // Clear plugin output buffers
+            for i in 0..num_frames {
+                plugin_ch.output_left[i] = 0.0;
+                plugin_ch.output_right[i] = 0.0;
+            }
+
+            // Convert pending notes to MidiNote format
+            let notes: Vec<MidiNote> = plugin_ch
+                .pending_notes
+                .drain(..)
+                .map(|e| MidiNote {
+                    note: e.note,
+                    velocity: e.velocity,
+                    is_note_on: e.is_note_on,
+                })
+                .collect();
+
+            // Convert pending params to ParamChange format
+            let params: Vec<ParamChange> = plugin_ch
+                .pending_params
+                .drain(..)
+                .map(|e| ParamChange {
+                    param_id: e.param_id,
+                    value: e.value,
+                })
+                .collect();
+
+            // Process audio through the plugin
+            plugin_ch.processor.process(
+                &notes,
+                &params,
+                &mut plugin_ch.output_left[..num_frames],
+                &mut plugin_ch.output_right[..num_frames],
+            );
+
+            // Get target track for this plugin's generator
+            let target_track = self.generator_tracks.get(channel_idx).copied().unwrap_or(1);
+
+            // Route plugin output to target track buffer with per-channel volume
+            let channel_volume = plugin_ch.volume;
+            if target_track < NUM_TRACKS {
+                for frame in 0..num_frames {
+                    let left = plugin_ch.output_left[frame] * channel_volume;
+                    let right = plugin_ch.output_right[frame] * channel_volume;
+                    self.track_buffers[target_track].left[frame] += left;
+                    self.track_buffers[target_track].right[frame] += right;
+                }
+            }
+        }
+    }
+
+    fn process_track_effects(&mut self, num_frames: usize) {
+        if num_frames == 0 {
+            return;
+        }
+
+        for track_idx in 0..NUM_TRACKS {
+            for slot_idx in 0..EFFECT_SLOTS {
+                if self.effect_bypassed[track_idx][slot_idx] {
+                    continue;
+                }
+
+                if let Some(mut effect) = self.track_effects[track_idx][slot_idx].take() {
+                    let buf = &mut self.track_buffers[track_idx];
+                    effect.process(&mut buf.left[..num_frames], &mut buf.right[..num_frames]);
+                    self.track_effects[track_idx][slot_idx] = Some(effect);
+                }
+            }
+        }
+    }
+
+    fn sum_tracks_to_master(&mut self, num_frames: usize) {
+        // Sum tracks 1-15 to master (track 0)
+        for track_idx in 1..NUM_TRACKS {
+            let volume = self.mixer_state.track_volumes[track_idx];
+            let muted = self.mixer_state.track_mutes[track_idx];
+            let (pan_left, pan_right) = self.mixer_state.pan_gains(track_idx);
+
+            if muted {
+                continue;
+            }
+
+            for frame in 0..num_frames {
+                let left = self.track_buffers[track_idx].left[frame] * volume * pan_left;
+                let right = self.track_buffers[track_idx].right[frame] * volume * pan_right;
+
+                self.track_buffers[0].left[frame] += left;
+                self.track_buffers[0].right[frame] += right;
+            }
+        }
+
+        // Apply master volume and pan
+        let master_vol = self.mixer_state.track_volumes[0];
+        let (master_pan_left, master_pan_right) = self.mixer_state.pan_gains(0);
+        for frame in 0..num_frames {
+            self.track_buffers[0].left[frame] *= master_vol * master_pan_left * self.master_volume;
+            self.track_buffers[0].right[frame] *=
+                master_vol * master_pan_right * self.master_volume;
+        }
+    }
 }
 
 /// Shared state between audio thread and main thread
@@ -1226,4 +1698,259 @@ pub enum AudioError {
     StreamError(String),
     #[error("Failed to load sample: {0}")]
     LoadError(String),
+}
+
+// ============================================================================
+// MixingEngine Tests
+// ============================================================================
+
+#[cfg(test)]
+mod mixing_engine_tests {
+    use super::*;
+
+    fn make_test_sample(len: usize, value: f32) -> SampleData {
+        // Create stereo interleaved sample (L, R, L, R, ...)
+        let data: Vec<f32> = (0..len * 2)
+            .map(|i| if i % 2 == 0 { value } else { value })
+            .collect();
+        SampleData {
+            data: Arc::new(data),
+            sample_rate: 44100,
+            channels: 2,
+        }
+    }
+
+    #[test]
+    fn test_mixing_engine_creation() {
+        let engine = MixingEngine::new(44100);
+        assert_eq!(engine.sample_rate, 44100);
+        assert_eq!(engine.master_volume, 1.0);
+        assert_eq!(engine.tempo_bpm, 120.0);
+        assert_eq!(engine.track_buffers.len(), NUM_TRACKS);
+    }
+
+    #[test]
+    fn test_process_block_clears_buffers() {
+        let mut engine = MixingEngine::new(44100);
+
+        // Dirty the buffers
+        engine.track_buffers[1].left[0] = 999.0;
+        engine.track_buffers[1].right[0] = 999.0;
+
+        // Process should clear them
+        engine.process_block(64);
+
+        // Master buffer (track 0) should be silent (no voices)
+        assert_eq!(engine.track_buffers[0].left[0], 0.0);
+        assert_eq!(engine.track_buffers[0].right[0], 0.0);
+    }
+
+    #[test]
+    fn test_voice_renders_to_correct_track() {
+        let mut engine = MixingEngine::new(44100);
+
+        // Route generator 0 to track 2
+        engine.set_generator_track(0, 2);
+
+        // Add a voice with generator_idx 0
+        let sample = make_test_sample(64, 0.5);
+        engine.add_voice(sample, 1.0, 0, false);
+
+        // Process
+        engine.process_block(64);
+
+        // Track 2 should have audio (before master summing clears it to sum to track 0)
+        // Actually after sum_tracks_to_master, track audio goes to master
+        // Let's check master has non-zero audio
+        let master = engine.master_buffer();
+
+        // With default mixer (volume=0.8, pan=center), we should get audio
+        // The voice at 0.5 * 0.8 * pan_gains should produce non-zero output
+        let has_audio = master.left.iter().take(64).any(|&s| s != 0.0);
+        assert!(
+            has_audio,
+            "Master should have audio from voice routed through track 2"
+        );
+    }
+
+    #[test]
+    fn test_mixer_volume_applied() {
+        let mut engine = MixingEngine::new(44100);
+
+        // Route generator 0 to track 1
+        engine.set_generator_track(0, 1);
+
+        // Set track 1 volume to 0.5
+        let mut state = AudioMixerState::default();
+        state.track_volumes[1] = 0.5;
+        engine.set_mixer_state(state);
+
+        // Add a voice with known amplitude
+        let sample = make_test_sample(64, 1.0);
+        engine.add_voice(sample, 1.0, 0, false);
+
+        // Process
+        engine.process_block(64);
+
+        let master = engine.master_buffer();
+
+        // Audio should be present but attenuated by track volume
+        let max_sample = master
+            .left
+            .iter()
+            .take(64)
+            .fold(0.0f32, |a, &b| a.max(b.abs()));
+
+        // With volume 0.5 and center pan (~0.707), max should be around 0.5 * 0.707 = 0.35
+        assert!(max_sample > 0.0, "Should have audio");
+        assert!(
+            max_sample < 0.6,
+            "Audio should be attenuated by track volume"
+        );
+    }
+
+    #[test]
+    fn test_mixer_mute_silences_track() {
+        let mut engine = MixingEngine::new(44100);
+
+        // Route generator 0 to track 1
+        engine.set_generator_track(0, 1);
+
+        // Mute track 1
+        let mut state = AudioMixerState::default();
+        state.track_mutes[1] = true;
+        engine.set_mixer_state(state);
+
+        // Add a voice
+        let sample = make_test_sample(64, 1.0);
+        engine.add_voice(sample, 1.0, 0, false);
+
+        // Process
+        engine.process_block(64);
+
+        let master = engine.master_buffer();
+
+        // Master should be silent because track 1 is muted
+        let max_sample = master
+            .left
+            .iter()
+            .take(64)
+            .fold(0.0f32, |a, &b| a.max(b.abs()));
+        assert_eq!(
+            max_sample, 0.0,
+            "Muted track should not contribute to master"
+        );
+    }
+
+    #[test]
+    fn test_route_to_master_bypasses_track() {
+        let mut engine = MixingEngine::new(44100);
+
+        // Route generator 0 to track 1, and mute track 1
+        engine.set_generator_track(0, 1);
+        let mut state = AudioMixerState::default();
+        state.track_mutes[1] = true;
+        engine.set_mixer_state(state);
+
+        // Add a voice with route_to_master=true (should bypass track routing)
+        let sample = make_test_sample(64, 1.0);
+        engine.add_voice(sample, 1.0, 0, true); // route_to_master = true
+
+        // Process
+        engine.process_block(64);
+
+        let master = engine.master_buffer();
+
+        // Should still have audio despite mute, because route_to_master bypasses track
+        let max_sample = master
+            .left
+            .iter()
+            .take(64)
+            .fold(0.0f32, |a, &b| a.max(b.abs()));
+        assert!(
+            max_sample > 0.0,
+            "route_to_master should bypass muted track"
+        );
+    }
+
+    #[test]
+    fn test_master_volume_applied() {
+        let mut engine = MixingEngine::new(44100);
+
+        // Set master volume to 0.25
+        engine.set_master_volume(0.25);
+
+        // Route generator 0 to track 1
+        engine.set_generator_track(0, 1);
+
+        // Add a voice
+        let sample = make_test_sample(64, 1.0);
+        engine.add_voice(sample, 1.0, 0, false);
+
+        // Process
+        engine.process_block(64);
+
+        let master = engine.master_buffer();
+        let max_sample = master
+            .left
+            .iter()
+            .take(64)
+            .fold(0.0f32, |a, &b| a.max(b.abs()));
+
+        // With master_volume=0.25, track_volume=0.8, and center pan (~0.707)
+        // Expected max ~= 1.0 * 0.8 * 0.707 * 0.25 = 0.14
+        assert!(max_sample > 0.0, "Should have audio");
+        assert!(
+            max_sample < 0.3,
+            "Audio should be attenuated by master volume"
+        );
+    }
+
+    #[test]
+    fn test_voice_stops_when_finished() {
+        let mut engine = MixingEngine::new(44100);
+
+        // Create a short sample (10 frames)
+        let sample = make_test_sample(10, 0.5);
+        engine.add_voice(sample, 1.0, 0, true);
+
+        assert_eq!(engine.voice_count(), 1);
+
+        // Process more frames than the sample length
+        engine.process_block(64);
+
+        // Voice should be removed after sample finishes
+        assert_eq!(engine.voice_count(), 0);
+    }
+
+    #[test]
+    fn test_stop_all_voices() {
+        let mut engine = MixingEngine::new(44100);
+
+        let sample = make_test_sample(1000, 0.5);
+        engine.add_voice(sample.clone(), 1.0, 0, false);
+        engine.add_voice(sample.clone(), 1.0, 1, false);
+        engine.add_voice(sample, 1.0, 2, false);
+
+        assert_eq!(engine.voice_count(), 3);
+
+        engine.stop_all_voices();
+
+        assert_eq!(engine.voice_count(), 0);
+    }
+
+    #[test]
+    fn test_preview_stops_previous_preview() {
+        let mut engine = MixingEngine::new(44100);
+
+        let sample = make_test_sample(1000, 0.5);
+
+        // Add preview
+        engine.add_preview_voice(sample.clone(), 0, true);
+        assert_eq!(engine.voice_count(), 1);
+
+        // Add another preview - should replace the first
+        engine.add_preview_voice(sample, 0, true);
+        assert_eq!(engine.voice_count(), 1);
+    }
 }

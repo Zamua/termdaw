@@ -174,8 +174,12 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
     false
 }
 
-/// Handle keyboard input for text input mode (tempo, etc.)
+/// Handle keyboard input for text input mode (tempo, export, etc.)
 fn handle_input_mode_key(key: KeyEvent, app: &mut App) -> bool {
+    use crate::command_picker::InputTarget;
+
+    let target = app.ui.command_picker.input.target;
+
     match key.code {
         // Escape cancels input
         KeyCode::Esc => {
@@ -184,21 +188,37 @@ fn handle_input_mode_key(key: KeyEvent, app: &mut App) -> bool {
         }
         // Enter confirms input
         KeyCode::Enter => {
-            if let Some(bpm) = app.ui.command_picker.get_tempo_value() {
-                app.transport.bpm = bpm.clamp(20.0, 999.0);
-                app.mark_dirty();
+            match target {
+                InputTarget::Tempo => {
+                    if let Some(bpm) = app.ui.command_picker.get_tempo_value() {
+                        app.transport.bpm = bpm.clamp(20.0, 999.0);
+                        app.mark_dirty();
+                    }
+                }
+                InputTarget::ExportWav => {
+                    if let Some(filename) = app.ui.command_picker.get_export_filename() {
+                        let filename = filename.to_string();
+                        app.do_export(&filename);
+                    }
+                }
+                InputTarget::None => {}
             }
             app.ui.command_picker.cancel_input();
             false
         }
         // For tempo input, only allow digits and decimal point
-        KeyCode::Char(c) if !(c.is_ascii_digit() || c == '.') => {
+        KeyCode::Char(c) if target == InputTarget::Tempo && !(c.is_ascii_digit() || c == '.') => {
             false // Ignore non-numeric characters for tempo
         }
         // Let tui-input handle the rest (digits, backspace, delete, arrows, etc.)
         _ => {
-            // Limit input length for tempo
-            if app.ui.command_picker.input.input.value().len() < 6
+            // Limit input length based on target
+            let max_len = match target {
+                InputTarget::Tempo => 6,
+                InputTarget::ExportWav => 100,
+                InputTarget::None => 100,
+            };
+            if app.ui.command_picker.input.input.value().len() < max_len
                 || key.code == KeyCode::Backspace
                 || key.code == KeyCode::Delete
             {

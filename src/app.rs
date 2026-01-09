@@ -1529,6 +1529,19 @@ impl App {
         self.ui.projects_modal.show(Some(&current));
     }
 
+    /// Start the export flow (show filename prompt)
+    pub fn start_export(&mut self) {
+        let default_filename = format!("{}.wav", self.state.project.name);
+        self.ui.command_picker.start_export_input(&default_filename);
+    }
+
+    /// Perform the actual export to WAV
+    /// TODO: Implement using shared audio mixing logic
+    pub fn do_export(&mut self, filename: &str) {
+        let _ = filename; // suppress unused warning
+        self.log_event("export not yet implemented", false);
+    }
+
     /// Hide the projects modal
     pub fn hide_projects_modal(&mut self) {
         self.ui.projects_modal.hide();
