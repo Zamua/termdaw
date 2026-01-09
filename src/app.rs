@@ -1541,8 +1541,11 @@ impl App {
             self.transport.playback.stop();
         }
 
-        // Update project info
-        let project_name = project_file.name.clone();
+        // Update project info - use directory name as canonical project name
+        let project_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| project_file.name.clone());
         self.state.project = ProjectState::new(&project_name, path, project_file.created_at);
 
         // Load channels

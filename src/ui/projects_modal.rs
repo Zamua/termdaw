@@ -43,7 +43,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 }
 
-/// Render browse mode - project list
+/// Render browse mode - project list with hints
 fn render_browse_mode(frame: &mut Frame, popup_area: Rect, app: &App) {
     let title = format!(
         " Projects ({}) ",
@@ -58,7 +58,54 @@ fn render_browse_mode(frame: &mut Frame, popup_area: Rect, app: &App) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    render_project_list(frame, inner, app);
+    // Split inner area: list | hints
+    let list_height = inner.height.saturating_sub(2);
+    let list_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: list_height,
+    };
+    let hints_area = Rect {
+        x: inner.x,
+        y: inner.y + list_height,
+        width: inner.width,
+        height: 2,
+    };
+
+    render_project_list(frame, list_area, app);
+    render_hints(frame, hints_area);
+}
+
+/// Render keybind hints at the bottom
+fn render_hints(frame: &mut Frame, area: Rect) {
+    let hints = vec![
+        Line::from(vec![
+            Span::styled("j/k", Style::default().fg(Color::Yellow)),
+            Span::raw(" nav  "),
+            Span::styled("Enter", Style::default().fg(Color::Yellow)),
+            Span::raw(" open  "),
+            Span::styled("n", Style::default().fg(Color::Yellow)),
+            Span::raw(" new  "),
+            Span::styled("s", Style::default().fg(Color::Yellow)),
+            Span::raw(" save"),
+        ]),
+        Line::from(vec![
+            Span::styled("a", Style::default().fg(Color::Yellow)),
+            Span::raw(" save-as  "),
+            Span::styled("r", Style::default().fg(Color::Yellow)),
+            Span::raw(" rename  "),
+            Span::styled("d", Style::default().fg(Color::Yellow)),
+            Span::raw(" delete  "),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::raw(" close"),
+        ]),
+    ];
+
+    let paragraph = Paragraph::new(hints)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+    frame.render_widget(paragraph, area);
 }
 
 /// Render text input mode
