@@ -242,6 +242,68 @@ fn handle_command_picker_key(key: KeyEvent, app: &mut App) -> bool {
 
 /// Handle projects modal keys
 fn handle_projects_modal_key(key: KeyEvent, app: &mut App) -> bool {
+    use crate::projects_modal::ModalMode;
+    use tui_input::backend::crossterm::EventHandler;
+
+    match &app.ui.projects_modal.mode {
+        ModalMode::Browse => handle_projects_modal_browse(key, app),
+        ModalMode::TextInput { .. } => {
+            match key.code {
+                // Escape cancels input
+                KeyCode::Esc => {
+                    app.ui.projects_modal.cancel();
+                    false
+                }
+                // Enter confirms input
+                KeyCode::Enter => {
+                    let value = app
+                        .ui
+                        .projects_modal
+                        .input_value()
+                        .unwrap_or("")
+                        .to_string();
+                    let action = app.ui.projects_modal.input_action().cloned();
+
+                    if !value.is_empty() {
+                        if let Some(action) = action {
+                            execute_input_action(app, &action, &value);
+                        }
+                    }
+                    app.ui.projects_modal.cancel();
+                    false
+                }
+                // Pass other keys to input handler
+                _ => {
+                    if let Some(input) = app.ui.projects_modal.input_mut() {
+                        input.handle_event(&crossterm::event::Event::Key(key));
+                    }
+                    false
+                }
+            }
+        }
+        ModalMode::Confirm { action, .. } => {
+            let action = action.clone();
+            match key.code {
+                // y or Enter confirms
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    execute_confirm_action(app, &action);
+                    app.ui.projects_modal.cancel();
+                    app.ui.projects_modal.refresh_projects();
+                    false
+                }
+                // n or Escape cancels
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    app.ui.projects_modal.cancel();
+                    false
+                }
+                _ => false,
+            }
+        }
+    }
+}
+
+/// Handle projects modal browse mode keys
+fn handle_projects_modal_browse(key: KeyEvent, app: &mut App) -> bool {
     match key.code {
         // Escape closes modal
         KeyCode::Esc => {
@@ -261,7 +323,6 @@ fn handle_projects_modal_key(key: KeyEvent, app: &mut App) -> bool {
         // Enter - open selected project
         KeyCode::Enter => {
             if let Some(path) = app.ui.projects_modal.selected_project_path() {
-                // Load the project
                 if let Ok(project) = crate::project::load_project(&path) {
                     app.load_project(project, path);
                 }
@@ -269,7 +330,93 @@ fn handle_projects_modal_key(key: KeyEvent, app: &mut App) -> bool {
             app.hide_projects_modal();
             false
         }
+        // n - new project
+        KeyCode::Char('n') => {
+            app.ui.projects_modal.start_new_project();
+            false
+        }
+        // s - save current project
+        KeyCode::Char('s') => {
+            app.save_project();
+            false
+        }
+        // a - save as
+        KeyCode::Char('a') => {
+            app.ui.projects_modal.start_save_as();
+            false
+        }
+        // r - rename selected
+        KeyCode::Char('r') => {
+            app.ui.projects_modal.start_rename();
+            false
+        }
+        // d - delete selected
+        KeyCode::Char('d') => {
+            // Can't delete currently open project
+            if let Some(selected) = app.ui.projects_modal.selected_project() {
+                if selected != app.state.project.name {
+                    app.ui.projects_modal.start_delete();
+                }
+            }
+            false
+        }
         _ => false,
+    }
+}
+
+/// Execute a text input action
+fn execute_input_action(app: &mut App, action: &crate::projects_modal::InputAction, value: &str) {
+    use crate::projects_modal::InputAction;
+
+    match action {
+        InputAction::NewProject => {
+            // Create new project and open it
+            if let Ok(path) = crate::project::ops::new_project(Some(value)) {
+                if let Ok(project) = crate::project::load_project(&path) {
+                    app.load_project(project, path);
+                }
+            }
+            app.ui.projects_modal.refresh_projects();
+        }
+        InputAction::SaveAs => {
+            // Save current project as new name
+            let current_path = app.state.project.path.clone();
+            if let Ok(new_path) = crate::project::ops::save_project_as(&current_path, value) {
+                if let Ok(project) = crate::project::load_project(&new_path) {
+                    app.load_project(project, new_path);
+                }
+            }
+            app.ui.projects_modal.refresh_projects();
+        }
+        InputAction::RenameProject => {
+            // Rename selected project
+            if let Some(old_path) = app.ui.projects_modal.selected_project_path() {
+                let is_current = app.ui.projects_modal.selected_project()
+                    == Some(app.state.project.name.as_str());
+
+                if let Ok(new_path) = crate::project::ops::rename_project(&old_path, value) {
+                    // If we renamed the current project, update app state
+                    if is_current {
+                        if let Ok(project) = crate::project::load_project(&new_path) {
+                            app.load_project(project, new_path);
+                        }
+                    }
+                }
+            }
+            app.ui.projects_modal.refresh_projects();
+        }
+    }
+}
+
+/// Execute a confirmation action
+fn execute_confirm_action(app: &mut App, action: &crate::projects_modal::ConfirmAction) {
+    use crate::projects_modal::ConfirmAction;
+
+    match action {
+        ConfirmAction::DeleteProject { name } => {
+            let path = app.ui.projects_modal.projects_dir.join(name);
+            let _ = crate::project::ops::delete_project(&path);
+        }
     }
 }
 
