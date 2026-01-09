@@ -2569,7 +2569,7 @@ mod tests {
             "Vec index 1 is empty (this is the bug - UI looks here)"
         );
         assert!(
-            app.channels.get(0).is_some(),
+            !app.channels.is_empty(),
             "Vec index 0 contains the slot 1 channel"
         );
     }

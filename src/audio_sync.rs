@@ -223,8 +223,10 @@ mod tests {
 
     #[test]
     fn test_dirty_flags_any() {
-        let mut flags = DirtyFlags::default();
-        flags.mixer = true;
+        let flags = DirtyFlags {
+            mixer: true,
+            ..Default::default()
+        };
         assert!(flags.any());
     }
 

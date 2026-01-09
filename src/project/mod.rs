@@ -4,6 +4,8 @@
 //! - `project.json` at project root
 //! - `samples/` directory for audio files
 
+pub mod ops;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -105,6 +107,8 @@ pub enum ProjectError {
     Json(#[from] serde_json::Error),
     #[error("Project not found: {0}")]
     NotFound(String),
+    #[error("Project already exists: {0}")]
+    AlreadyExists(String),
     #[error("Invalid project version: {0}")]
     #[allow(dead_code)]
     InvalidVersion(u32),

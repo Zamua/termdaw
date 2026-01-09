@@ -270,6 +270,7 @@ impl StepGridContext for MockStepGrid {
 
 /// Mock implementation of PianoRollContext for testing
 #[cfg(test)]
+#[derive(Default)]
 pub struct MockPianoRoll {
     pub notes: Vec<Note>,
 }
@@ -277,7 +278,7 @@ pub struct MockPianoRoll {
 #[cfg(test)]
 impl MockPianoRoll {
     pub fn new() -> Self {
-        Self { notes: Vec::new() }
+        Self::default()
     }
 }
 

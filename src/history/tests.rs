@@ -379,7 +379,7 @@ fn test_regression_mixer_browser_must_record_jump() {
 
     // What we really test is that the position was recorded at all
     assert!(
-        jumplist.len() >= 1,
+        !jumplist.is_empty(),
         "Opening mixer should record position in jumplist"
     );
 }
