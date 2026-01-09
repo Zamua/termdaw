@@ -20,7 +20,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     // Calculate centered popup size
-    let popup_width = 40;
+    let popup_width = 50;
     let popup_height = 16;
     let popup_area = centered_rect(popup_width, popup_height, area);
 
@@ -214,63 +214,91 @@ fn render_project_list(frame: &mut Frame, area: Rect, app: &App) {
     let mut lines: Vec<Line> = Vec::new();
 
     if modal.projects.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "No projects found",
-            Style::default().fg(Color::DarkGray),
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Press 'n' to create a new project",
-            Style::default().fg(Color::DarkGray),
-        )));
+        // Center empty state message
+        let empty_lines = vec![
+            Line::from(Span::styled(
+                "No projects found",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Press 'n' to create a new project",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+        let paragraph = Paragraph::new(empty_lines).alignment(Alignment::Center);
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    // Calculate visible range based on selection and area height
+    let visible_height = (area.height as usize).saturating_sub(2);
+    let start = if modal.selected >= visible_height {
+        modal.selected - visible_height + 1
     } else {
-        // Calculate visible range based on selection and area height
-        let visible_height = (area.height as usize).saturating_sub(2);
-        let start = if modal.selected >= visible_height {
-            modal.selected - visible_height + 1
+        0
+    };
+    let end = (start + visible_height).min(modal.projects.len());
+
+    // Find max width to center the block
+    let max_width = modal
+        .projects
+        .iter()
+        .map(|p| p.len() + 6) // prefix (2) + name + suffix (4 max " *")
+        .max()
+        .unwrap_or(20) as u16;
+
+    // Center the list block
+    let list_width = max_width.min(area.width);
+    let list_x = area.x + (area.width.saturating_sub(list_width)) / 2;
+    let centered_area = Rect {
+        x: list_x,
+        y: area.y,
+        width: list_width,
+        height: area.height,
+    };
+
+    for (i, project) in modal
+        .projects
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(end - start)
+    {
+        let is_selected = i == modal.selected;
+        let is_current = project == &app.state.project.name;
+
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else if is_current {
+            Style::default().fg(Color::Cyan)
         } else {
-            0
+            Style::default().fg(Color::White)
         };
-        let end = (start + visible_height).min(modal.projects.len());
 
-        for (i, project) in modal
-            .projects
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(end - start)
-        {
-            let is_selected = i == modal.selected;
-            let is_current = project == &app.state.project.name;
-
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_current {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::White)
-            };
-
-            let prefix = if is_selected { "> " } else { "  " };
-            let suffix = if is_current { " *" } else { "" };
-            lines.push(Line::from(Span::styled(
-                format!("{}{}{}", prefix, project, suffix),
-                style,
-            )));
-        }
+        let prefix = if is_selected { "> " } else { "  " };
+        let suffix = if is_current { " *" } else { "" };
+        lines.push(Line::from(Span::styled(
+            format!("{}{}{}", prefix, project, suffix),
+            style,
+        )));
     }
 
     let paragraph = Paragraph::new(lines);
-    frame.render_widget(paragraph, area);
+    frame.render_widget(paragraph, centered_area);
 }
 
 /// Render the project list dimmed (for text input overlay)
 fn render_project_list_dimmed(frame: &mut Frame, area: Rect, app: &App) {
     let modal = &app.ui.projects_modal;
     let mut lines: Vec<Line> = Vec::new();
+
+    if modal.projects.is_empty() {
+        return;
+    }
 
     let visible_height = (area.height as usize).saturating_sub(5); // Leave room for input
     let start = if modal.selected >= visible_height {
@@ -279,6 +307,23 @@ fn render_project_list_dimmed(frame: &mut Frame, area: Rect, app: &App) {
         0
     };
     let end = (start + visible_height).min(modal.projects.len());
+
+    // Find max width to center the block
+    let max_width = modal
+        .projects
+        .iter()
+        .map(|p| p.len() + 4) // prefix (2) + name
+        .max()
+        .unwrap_or(20) as u16;
+
+    let list_width = max_width.min(area.width);
+    let list_x = area.x + (area.width.saturating_sub(list_width)) / 2;
+    let centered_area = Rect {
+        x: list_x,
+        y: area.y,
+        width: list_width,
+        height: area.height,
+    };
 
     for (i, project) in modal
         .projects
@@ -296,7 +341,7 @@ fn render_project_list_dimmed(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let paragraph = Paragraph::new(lines);
-    frame.render_widget(paragraph, area);
+    frame.render_widget(paragraph, centered_area);
 }
 
 /// Create a centered rect of given size within the parent area
