@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "tldr": {
+      "type": "stdio",
+      "command": "tldr-mcp",
+      "args": ["--project", "/Users/zamua/Dropbox/workspace/daw"]
+    }
+  }
+}

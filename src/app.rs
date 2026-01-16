@@ -870,7 +870,46 @@ impl App {
                 }
             }
             AppCommand::DuplicatePattern => {
-                // Stub: will be implemented after tests are written
+                let source_id = self.current_pattern;
+                let pattern_length = self.patterns.get(source_id).map(|p| p.length).unwrap_or(16);
+
+                // Find first free pattern (no data in any channel)
+                let target_id = self
+                    .patterns
+                    .iter()
+                    .find(|p| {
+                        p.id != source_id
+                            && !self.channels.iter().any(|ch| {
+                                ch.get_pattern(p.id)
+                                    .map(|slice| {
+                                        slice.steps.iter().any(|&s| s) || !slice.notes.is_empty()
+                                    })
+                                    .unwrap_or(false)
+                            })
+                    })
+                    .map(|p| p.id);
+
+                // Use free pattern or create new one
+                let target_id = match target_id {
+                    Some(id) => id,
+                    None => {
+                        let new_id = self.patterns.len();
+                        self.patterns
+                            .push(crate::sequencer::Pattern::new(new_id, pattern_length));
+                        new_id
+                    }
+                };
+
+                // Copy pattern data from source to target for all channels
+                for channel in &mut self.channels {
+                    if let Some(source_slice) = channel.get_pattern(source_id) {
+                        let cloned = source_slice.clone();
+                        channel.pattern_data.insert(target_id, cloned);
+                    }
+                }
+
+                // Switch to the duplicated pattern
+                self.current_pattern = target_id;
             }
 
             // ================================================================
