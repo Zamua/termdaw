@@ -41,6 +41,9 @@ pub enum AppCommand {
     /// Delete a pattern by ID
     DeletePattern(usize),
 
+    /// Duplicate current pattern to first free pattern
+    DuplicatePattern,
+
     // ========================================================================
     // Channel operations
     // ========================================================================
@@ -223,6 +226,7 @@ impl AppCommand {
             AppCommand::NextPattern => "next pattern",
             AppCommand::CreatePattern => "create pattern",
             AppCommand::DeletePattern(_) => "delete pattern",
+            AppCommand::DuplicatePattern => "duplicate pattern",
             AppCommand::CycleChannelMuteState(_) => "cycle mute state",
             AppCommand::ToggleSolo(_) => "toggle solo",
             AppCommand::DeleteChannel(_) => "delete channel",

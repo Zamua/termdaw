@@ -71,6 +71,7 @@ pub enum AreaId {
     // ========================================================================
     ChannelRackPatternPrev,
     ChannelRackPatternNext,
+    ChannelRackPatternDup,
     ChannelRackMuteColumn,
     ChannelRackSampleColumn,
     ChannelRackStepsGrid,
@@ -249,6 +250,7 @@ impl ScreenAreas {
             // Channel rack sub-areas
             AreaId::ChannelRackPatternPrev,
             AreaId::ChannelRackPatternNext,
+            AreaId::ChannelRackPatternDup,
             AreaId::ChannelRackMuteColumn,
             AreaId::ChannelRackSampleColumn,
             AreaId::ChannelRackStepsGrid,

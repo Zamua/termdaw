@@ -869,6 +869,9 @@ impl App {
                     }
                 }
             }
+            AppCommand::DuplicatePattern => {
+                // Stub: will be implemented after tests are written
+            }
 
             // ================================================================
             // Channel operations
@@ -3326,5 +3329,231 @@ mod tests {
             "Spanning note should receive note_off at bar boundary. Commands: {:?}",
             commands
         );
+    }
+
+    // ========================================================================
+    // Pattern duplication tests
+    // ========================================================================
+
+    #[test]
+    fn test_duplicate_pattern_copies_steps() {
+        use crate::command::AppCommand;
+        use crate::sequencer::{Pattern, PatternSlice};
+        use std::collections::HashMap;
+
+        let (mut app, _temp) = create_test_app();
+
+        // Create two patterns: P0 with data, P1 empty (free)
+        app.patterns = vec![Pattern::new(0, 16), Pattern::new(1, 16)];
+        app.current_pattern = 0;
+
+        // Create a channel with steps in pattern 0
+        let mut pattern_data = HashMap::new();
+        let mut slice = PatternSlice::new(16);
+        slice.set_step(0, true);
+        slice.set_step(4, true);
+        slice.set_step(8, true);
+        pattern_data.insert(0, slice);
+
+        let mut channel = Channel::new("Kick");
+        channel.pattern_data = pattern_data;
+        app.state.channels = vec![channel];
+
+        // Duplicate pattern
+        app.dispatch(AppCommand::DuplicatePattern);
+
+        // Should now be on pattern 1
+        assert_eq!(
+            app.current_pattern, 1,
+            "Should switch to duplicated pattern"
+        );
+
+        // Check steps were copied
+        let channel = &app.channels[0];
+        let slice = channel.get_pattern(1).expect("Pattern 1 should have data");
+        assert!(slice.get_step(0), "Step 0 should be copied");
+        assert!(slice.get_step(4), "Step 4 should be copied");
+        assert!(slice.get_step(8), "Step 8 should be copied");
+        assert!(!slice.get_step(1), "Step 1 should remain off");
+    }
+
+    #[test]
+    fn test_duplicate_pattern_copies_notes() {
+        use crate::command::AppCommand;
+        use crate::sequencer::{Note, Pattern, PatternSlice};
+        use std::collections::HashMap;
+
+        let (mut app, _temp) = create_test_app();
+
+        // Create two patterns: P0 with data, P1 empty (free)
+        app.patterns = vec![Pattern::new(0, 16), Pattern::new(1, 16)];
+        app.current_pattern = 0;
+
+        // Create a channel with notes in pattern 0
+        let mut pattern_data = HashMap::new();
+        let mut slice = PatternSlice::new(16);
+        slice.add_note(Note::new(60, 0, 4)); // C4 at step 0, duration 4
+        slice.add_note(Note::new(64, 4, 4)); // E4 at step 4, duration 4
+        pattern_data.insert(0, slice);
+
+        let mut channel = Channel::new("Synth");
+        channel.pattern_data = pattern_data;
+        app.state.channels = vec![channel];
+
+        // Duplicate pattern
+        app.dispatch(AppCommand::DuplicatePattern);
+
+        // Check notes were copied
+        let channel = &app.channels[0];
+        let slice = channel.get_pattern(1).expect("Pattern 1 should have data");
+        assert_eq!(slice.notes.len(), 2, "Should have 2 notes copied");
+        assert!(
+            slice.get_note_at(60, 0).is_some(),
+            "C4 note should be copied"
+        );
+        assert!(
+            slice.get_note_at(64, 4).is_some(),
+            "E4 note should be copied"
+        );
+    }
+
+    #[test]
+    fn test_duplicate_pattern_finds_first_free_pattern() {
+        use crate::command::AppCommand;
+        use crate::sequencer::{Pattern, PatternSlice};
+        use std::collections::HashMap;
+
+        let (mut app, _temp) = create_test_app();
+
+        // Create three patterns: P0 with data, P1 with data, P2 empty (free)
+        app.patterns = vec![
+            Pattern::new(0, 16),
+            Pattern::new(1, 16),
+            Pattern::new(2, 16),
+        ];
+        app.current_pattern = 0;
+
+        // Create a channel with data in patterns 0 and 1
+        let mut pattern_data = HashMap::new();
+
+        let mut slice0 = PatternSlice::new(16);
+        slice0.set_step(0, true);
+        pattern_data.insert(0, slice0);
+
+        let mut slice1 = PatternSlice::new(16);
+        slice1.set_step(4, true);
+        pattern_data.insert(1, slice1);
+
+        let mut channel = Channel::new("Kick");
+        channel.pattern_data = pattern_data;
+        app.state.channels = vec![channel];
+
+        // Duplicate pattern 0
+        app.dispatch(AppCommand::DuplicatePattern);
+
+        // Should be on pattern 2 (first free)
+        assert_eq!(
+            app.current_pattern, 2,
+            "Should switch to first free pattern (P2)"
+        );
+
+        // Pattern 2 should have copied data from pattern 0
+        let slice = app.channels[0]
+            .get_pattern(2)
+            .expect("Pattern 2 should have data");
+        assert!(slice.get_step(0), "Step 0 should be copied from P0");
+    }
+
+    #[test]
+    fn test_duplicate_pattern_creates_new_when_no_free() {
+        use crate::command::AppCommand;
+        use crate::sequencer::{Pattern, PatternSlice};
+        use std::collections::HashMap;
+
+        let (mut app, _temp) = create_test_app();
+
+        // Create two patterns, both with data (no free patterns)
+        app.patterns = vec![Pattern::new(0, 16), Pattern::new(1, 16)];
+        app.current_pattern = 0;
+
+        // Create a channel with data in both patterns
+        let mut pattern_data = HashMap::new();
+
+        let mut slice0 = PatternSlice::new(16);
+        slice0.set_step(0, true);
+        pattern_data.insert(0, slice0);
+
+        let mut slice1 = PatternSlice::new(16);
+        slice1.set_step(4, true);
+        pattern_data.insert(1, slice1);
+
+        let mut channel = Channel::new("Kick");
+        channel.pattern_data = pattern_data;
+        app.state.channels = vec![channel];
+
+        // Duplicate pattern 0
+        app.dispatch(AppCommand::DuplicatePattern);
+
+        // Should have created pattern 2 and switched to it
+        assert_eq!(app.patterns.len(), 3, "Should have created a new pattern");
+        assert_eq!(app.current_pattern, 2, "Should switch to new pattern");
+
+        // New pattern should have copied data
+        let slice = app.channels[0]
+            .get_pattern(2)
+            .expect("Pattern 2 should have data");
+        assert!(slice.get_step(0), "Step 0 should be copied");
+    }
+
+    #[test]
+    fn test_duplicate_pattern_copies_multiple_channels() {
+        use crate::command::AppCommand;
+        use crate::sequencer::{Pattern, PatternSlice};
+        use std::collections::HashMap;
+
+        let (mut app, _temp) = create_test_app();
+
+        // Create two patterns
+        app.patterns = vec![Pattern::new(0, 16), Pattern::new(1, 16)];
+        app.current_pattern = 0;
+
+        // Create two channels with different data in pattern 0
+        let mut pattern_data1 = HashMap::new();
+        let mut slice1 = PatternSlice::new(16);
+        slice1.set_step(0, true);
+        slice1.set_step(8, true);
+        pattern_data1.insert(0, slice1);
+
+        let mut channel1 = Channel::new("Kick");
+        channel1.slot = 0;
+        channel1.pattern_data = pattern_data1;
+
+        let mut pattern_data2 = HashMap::new();
+        let mut slice2 = PatternSlice::new(16);
+        slice2.set_step(2, true);
+        slice2.set_step(6, true);
+        pattern_data2.insert(0, slice2);
+
+        let mut channel2 = Channel::new("Snare");
+        channel2.slot = 1;
+        channel2.pattern_data = pattern_data2;
+
+        app.state.channels = vec![channel1, channel2];
+
+        // Duplicate pattern
+        app.dispatch(AppCommand::DuplicatePattern);
+
+        // Both channels should have data copied to pattern 1
+        let slice1 = app.channels[0]
+            .get_pattern(1)
+            .expect("Channel 0 should have P1 data");
+        assert!(slice1.get_step(0), "Channel 0 step 0 should be copied");
+        assert!(slice1.get_step(8), "Channel 0 step 8 should be copied");
+
+        let slice2 = app.channels[1]
+            .get_pattern(1)
+            .expect("Channel 1 should have P1 data");
+        assert!(slice2.get_step(2), "Channel 1 step 2 should be copied");
+        assert!(slice2.get_step(6), "Channel 1 step 6 should be copied");
     }
 }
