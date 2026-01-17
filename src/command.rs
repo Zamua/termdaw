@@ -44,6 +44,9 @@ pub enum AppCommand {
     /// Duplicate current pattern to first free pattern
     DuplicatePattern,
 
+    /// Clear all data from a pattern (steps and notes across all channels)
+    ClearPattern(usize),
+
     // ========================================================================
     // Channel operations
     // ========================================================================
@@ -227,6 +230,7 @@ impl AppCommand {
             AppCommand::CreatePattern => "create pattern",
             AppCommand::DeletePattern(_) => "delete pattern",
             AppCommand::DuplicatePattern => "duplicate pattern",
+            AppCommand::ClearPattern(_) => "clear pattern",
             AppCommand::CycleChannelMuteState(_) => "cycle mute state",
             AppCommand::ToggleSolo(_) => "toggle solo",
             AppCommand::DeleteChannel(_) => "delete channel",

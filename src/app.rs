@@ -93,6 +93,7 @@ impl TransportState {
 use crate::audio::AudioHandle;
 use crate::browser::BrowserState;
 use crate::command_picker::CommandPicker;
+use crate::confirm_dialog::ConfirmDialog;
 use crate::coords::AppCol;
 use crate::cursor::CursorStates;
 use crate::effects::{EffectSlot, EffectType, EFFECT_SLOTS};
@@ -222,6 +223,9 @@ pub struct UiState {
 
     /// Context menu state
     pub context_menu: ContextMenu,
+
+    /// Confirmation dialog state
+    pub confirm_dialog: ConfirmDialog,
 
     /// Effect picker selection index
     pub effect_picker_selection: usize,
@@ -449,6 +453,7 @@ impl App {
             screen_areas: ScreenAreas::new(),
             mouse: MouseState::new(),
             context_menu: ContextMenu::new(),
+            confirm_dialog: ConfirmDialog::new(),
             effect_picker_selection: 0,
             effect_register: None,
             channel_register: None,
@@ -910,6 +915,9 @@ impl App {
 
                 // Switch to the duplicated pattern
                 self.current_pattern = target_id;
+            }
+            AppCommand::ClearPattern(_pattern_id) => {
+                // Stub: will be implemented after tests are written
             }
 
             // ================================================================
@@ -3594,5 +3602,170 @@ mod tests {
             .expect("Channel 1 should have P1 data");
         assert!(slice2.get_step(2), "Channel 1 step 2 should be copied");
         assert!(slice2.get_step(6), "Channel 1 step 6 should be copied");
+    }
+
+    // ========================================================================
+    // Pattern clear tests
+    // ========================================================================
+
+    #[test]
+    fn test_clear_pattern_clears_steps() {
+        use crate::command::AppCommand;
+        use crate::sequencer::{Pattern, PatternSlice};
+        use std::collections::HashMap;
+
+        let (mut app, _temp) = create_test_app();
+
+        // Create a pattern with steps
+        app.patterns = vec![Pattern::new(0, 16)];
+
+        // Create a channel with steps in pattern 0
+        let mut pattern_data = HashMap::new();
+        let mut slice = PatternSlice::new(16);
+        slice.set_step(0, true);
+        slice.set_step(4, true);
+        slice.set_step(8, true);
+        slice.set_step(12, true);
+        pattern_data.insert(0, slice);
+
+        let mut channel = Channel::new("Kick");
+        channel.pattern_data = pattern_data;
+        app.state.channels = vec![channel];
+
+        // Verify steps are set before clear
+        assert!(app.channels[0].get_pattern(0).unwrap().get_step(0));
+        assert!(app.channels[0].get_pattern(0).unwrap().get_step(4));
+
+        // Clear the pattern
+        app.dispatch(AppCommand::ClearPattern(0));
+
+        // All steps should be cleared
+        let slice = app.channels[0]
+            .get_pattern(0)
+            .expect("Pattern 0 should still exist");
+        assert!(!slice.get_step(0), "Step 0 should be cleared");
+        assert!(!slice.get_step(4), "Step 4 should be cleared");
+        assert!(!slice.get_step(8), "Step 8 should be cleared");
+        assert!(!slice.get_step(12), "Step 12 should be cleared");
+    }
+
+    #[test]
+    fn test_clear_pattern_clears_notes() {
+        use crate::command::AppCommand;
+        use crate::sequencer::{Note, Pattern, PatternSlice};
+        use std::collections::HashMap;
+
+        let (mut app, _temp) = create_test_app();
+
+        // Create a pattern with notes
+        app.patterns = vec![Pattern::new(0, 16)];
+
+        // Create a channel with notes in pattern 0
+        let mut pattern_data = HashMap::new();
+        let mut slice = PatternSlice::new(16);
+        slice.add_note(Note::new(60, 0, 4)); // C4
+        slice.add_note(Note::new(64, 4, 4)); // E4
+        slice.add_note(Note::new(67, 8, 4)); // G4
+        pattern_data.insert(0, slice);
+
+        let mut channel = Channel::new("Synth");
+        channel.pattern_data = pattern_data;
+        app.state.channels = vec![channel];
+
+        // Verify notes exist before clear
+        assert_eq!(app.channels[0].get_pattern(0).unwrap().notes.len(), 3);
+
+        // Clear the pattern
+        app.dispatch(AppCommand::ClearPattern(0));
+
+        // All notes should be cleared
+        let slice = app.channels[0]
+            .get_pattern(0)
+            .expect("Pattern 0 should still exist");
+        assert!(slice.notes.is_empty(), "All notes should be cleared");
+    }
+
+    #[test]
+    fn test_clear_pattern_clears_all_channels() {
+        use crate::command::AppCommand;
+        use crate::sequencer::{Note, Pattern, PatternSlice};
+        use std::collections::HashMap;
+
+        let (mut app, _temp) = create_test_app();
+
+        app.patterns = vec![Pattern::new(0, 16)];
+
+        // Create two channels with data in pattern 0
+        let mut pattern_data1 = HashMap::new();
+        let mut slice1 = PatternSlice::new(16);
+        slice1.set_step(0, true);
+        slice1.set_step(8, true);
+        pattern_data1.insert(0, slice1);
+
+        let mut channel1 = Channel::new("Kick");
+        channel1.slot = 0;
+        channel1.pattern_data = pattern_data1;
+
+        let mut pattern_data2 = HashMap::new();
+        let mut slice2 = PatternSlice::new(16);
+        slice2.add_note(Note::new(60, 0, 4));
+        pattern_data2.insert(0, slice2);
+
+        let mut channel2 = Channel::new("Synth");
+        channel2.slot = 1;
+        channel2.pattern_data = pattern_data2;
+
+        app.state.channels = vec![channel1, channel2];
+
+        // Clear the pattern
+        app.dispatch(AppCommand::ClearPattern(0));
+
+        // Both channels should have their pattern data cleared
+        let slice1 = app.channels[0].get_pattern(0).expect("P0 should exist");
+        assert!(
+            !slice1.steps.iter().any(|&s| s),
+            "Channel 0 steps should be cleared"
+        );
+
+        let slice2 = app.channels[1].get_pattern(0).expect("P0 should exist");
+        assert!(slice2.notes.is_empty(), "Channel 1 notes should be cleared");
+    }
+
+    #[test]
+    fn test_clear_pattern_preserves_other_patterns() {
+        use crate::command::AppCommand;
+        use crate::sequencer::{Pattern, PatternSlice};
+        use std::collections::HashMap;
+
+        let (mut app, _temp) = create_test_app();
+
+        // Create two patterns
+        app.patterns = vec![Pattern::new(0, 16), Pattern::new(1, 16)];
+
+        // Create a channel with data in both patterns
+        let mut pattern_data = HashMap::new();
+
+        let mut slice0 = PatternSlice::new(16);
+        slice0.set_step(0, true);
+        pattern_data.insert(0, slice0);
+
+        let mut slice1 = PatternSlice::new(16);
+        slice1.set_step(4, true);
+        pattern_data.insert(1, slice1);
+
+        let mut channel = Channel::new("Kick");
+        channel.pattern_data = pattern_data;
+        app.state.channels = vec![channel];
+
+        // Clear only pattern 0
+        app.dispatch(AppCommand::ClearPattern(0));
+
+        // Pattern 0 should be cleared
+        let slice0 = app.channels[0].get_pattern(0).expect("P0 should exist");
+        assert!(!slice0.get_step(0), "Pattern 0 step should be cleared");
+
+        // Pattern 1 should be preserved
+        let slice1 = app.channels[0].get_pattern(1).expect("P1 should exist");
+        assert!(slice1.get_step(4), "Pattern 1 step should be preserved");
     }
 }

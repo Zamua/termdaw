@@ -12,6 +12,7 @@ pub mod audio_sync;
 pub mod browser;
 pub mod command;
 pub mod command_picker;
+pub mod confirm_dialog;
 pub mod coords;
 pub mod cursor;
 pub mod effects;
