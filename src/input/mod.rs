@@ -782,6 +782,11 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
             Some(AreaId::TransportPatternLabel) => {
                 // Could open a pattern picker in the future
             }
+            Some(AreaId::ChannelRackPatternDup) => {
+                if matches!(action, MouseAction::Click { .. }) {
+                    app.dispatch(crate::command::AppCommand::DuplicatePattern);
+                }
+            }
 
             // Browser toggle
             Some(AreaId::TransportBrowserToggle) => {

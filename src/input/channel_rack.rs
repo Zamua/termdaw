@@ -81,6 +81,11 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             app.dispatch(AppCommand::NextPattern);
             return;
         }
+        // 'D' (shift+d) to duplicate current pattern
+        KeyCode::Char('D') => {
+            app.dispatch(AppCommand::DuplicatePattern);
+            return;
+        }
         // 'd' in sample zone to delete channel (and yank to register)
         KeyCode::Char('d') if app.cursor_zone() == "sample" => {
             let slot = app.ui.cursors.channel_rack.channel;
