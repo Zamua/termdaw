@@ -120,12 +120,13 @@ pub fn render_header(frame: &mut Frame, inner: Rect, app: &mut App, piano_roll_m
             Span::styled(" to exit piano roll", Style::default().fg(Color::DarkGray)),
         ])
     } else {
-        // Show pattern selector: < P01 > DUP
-        // Register click areas for prev/next/dup
-        // Text: "< " (0-1) + "P01" (2-4) + " >" (5-6) + " DUP" (7-10)
+        // Show pattern selector: < P01 > DUP CLR
+        // Register click areas for prev/next/dup/clear
+        // Text: "< " (0-1) + "P01" (2-4) + " > " (5-7) + "DUP" (8-10) + " " (11) + "CLR" (12-14)
         let prev_rect = Rect::new(inner.x, inner.y, 3, 1); // Covers "< " and "P"
         let next_rect = Rect::new(inner.x + 4, inner.y, 3, 1); // Covers "1 >"
         let dup_rect = Rect::new(inner.x + 8, inner.y, 3, 1); // Covers "DUP"
+        let clear_rect = Rect::new(inner.x + 12, inner.y, 3, 1); // Covers "CLR"
         app.ui
             .screen_areas
             .register(AreaId::ChannelRackPatternPrev, prev_rect);
@@ -135,6 +136,9 @@ pub fn render_header(frame: &mut Frame, inner: Rect, app: &mut App, piano_roll_m
         app.ui
             .screen_areas
             .register(AreaId::ChannelRackPatternDup, dup_rect);
+        app.ui
+            .screen_areas
+            .register(AreaId::ChannelRackPatternClear, clear_rect);
 
         let pattern_num = format!("P{:02}", app.current_pattern + 1);
         Line::from(vec![
@@ -142,6 +146,8 @@ pub fn render_header(frame: &mut Frame, inner: Rect, app: &mut App, piano_roll_m
             Span::styled(pattern_num, Style::default().fg(Color::Cyan)),
             Span::styled(" > ", Style::default().fg(Color::DarkGray)),
             Span::styled("DUP", Style::default().fg(Color::Yellow)),
+            Span::styled(" ", Style::default()),
+            Span::styled("CLR", Style::default().fg(Color::Red)),
         ])
     };
     let hint_widget = Paragraph::new(hint);

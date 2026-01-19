@@ -5,6 +5,7 @@ mod browser;
 mod channel_rack;
 pub mod colors;
 mod command_picker;
+mod confirm_dialog;
 pub mod context_menu;
 mod effect_editor;
 mod envelope;
@@ -110,6 +111,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Effect picker/editor modal
     effect_editor::render(frame, app);
+
+    // Confirm dialog (rendered on top for clear pattern confirmation, etc.)
+    confirm_dialog::render(frame, frame.area(), app);
 }
 
 /// Render the main content area (browser + main view + event log)

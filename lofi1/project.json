@@ -2,9 +2,9 @@
   "version": 2,
   "name": "lofi1",
   "created_at": "2025-01-01T00:00:00Z",
-  "modified_at": "2026-01-16T04:56:37.741593Z",
+  "modified_at": "2026-01-19T17:11:18.530396Z",
   "bpm": 120.0,
-  "current_pattern": 1,
+  "current_pattern": 3,
   "channels": [
     {
       "name": "kick",
@@ -36,6 +36,27 @@
           ],
           "notes": []
         },
+        "2": {
+          "steps": [
+            true,
+            false,
+            false,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
+            false
+          ],
+          "notes": []
+        },
         "0": {
           "steps": [
             false,
@@ -57,15 +78,8 @@
           ],
           "notes": []
         },
-        "2": {
+        "3": {
           "steps": [
-            true,
-            false,
-            false,
-            true,
-            false,
-            false,
-            true,
             false,
             false,
             false,
@@ -73,7 +87,14 @@
             false,
             false,
             false,
-            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
             false
           ],
           "notes": []
@@ -89,6 +110,27 @@
       },
       "mixer_track": 2,
       "pattern_data": {
+        "1": {
+          "steps": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ],
+          "notes": []
+        },
         "0": {
           "steps": [
             false,
@@ -121,27 +163,6 @@
             false,
             false,
             false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false
-          ],
-          "notes": []
-        },
-        "1": {
-          "steps": [
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            true,
             false,
             false,
             false,
@@ -163,6 +184,27 @@
       },
       "mixer_track": 3,
       "pattern_data": {
+        "0": {
+          "steps": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ],
+          "notes": []
+        },
         "2": {
           "steps": [
             false,
@@ -199,27 +241,6 @@
             true,
             true,
             true,
-            false,
-            false,
-            false
-          ],
-          "notes": []
-        },
-        "0": {
-          "steps": [
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
             false,
             false,
             false
@@ -238,6 +259,70 @@
       },
       "mixer_track": 4,
       "pattern_data": {
+        "0": {
+          "steps": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ],
+          "notes": [
+            {
+              "id": "72d0530b-c08d-4711-9124-a21705dae826",
+              "pitch": 36,
+              "start_step": 0,
+              "duration": 4,
+              "velocity": 0.8
+            },
+            {
+              "id": "b582befc-d587-4d6d-a1e1-66569a6ebb3b",
+              "pitch": 36,
+              "start_step": 6,
+              "duration": 2,
+              "velocity": 0.8
+            },
+            {
+              "id": "6ce673f5-ef35-4fbc-8ac6-edb626344b33",
+              "pitch": 37,
+              "start_step": 8,
+              "duration": 3,
+              "velocity": 0.8
+            },
+            {
+              "id": "2ce99ce3-4829-4f18-a91b-d09969f8e978",
+              "pitch": 41,
+              "start_step": 11,
+              "duration": 2,
+              "velocity": 0.8
+            },
+            {
+              "id": "14d3f49c-936d-4d5e-b324-790af2aed714",
+              "pitch": 41,
+              "start_step": 11,
+              "duration": 2,
+              "velocity": 0.8
+            },
+            {
+              "id": "5962bc56-b4de-4d8b-b450-35596004eda5",
+              "pitch": 40,
+              "start_step": 13,
+              "duration": 3,
+              "velocity": 0.8
+            }
+          ]
+        },
         "1": {
           "steps": [
             false,
@@ -303,70 +388,6 @@
           ]
         },
         "2": {
-          "steps": [
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false
-          ],
-          "notes": [
-            {
-              "id": "72d0530b-c08d-4711-9124-a21705dae826",
-              "pitch": 36,
-              "start_step": 0,
-              "duration": 4,
-              "velocity": 0.8
-            },
-            {
-              "id": "b582befc-d587-4d6d-a1e1-66569a6ebb3b",
-              "pitch": 36,
-              "start_step": 6,
-              "duration": 2,
-              "velocity": 0.8
-            },
-            {
-              "id": "6ce673f5-ef35-4fbc-8ac6-edb626344b33",
-              "pitch": 37,
-              "start_step": 8,
-              "duration": 3,
-              "velocity": 0.8
-            },
-            {
-              "id": "2ce99ce3-4829-4f18-a91b-d09969f8e978",
-              "pitch": 41,
-              "start_step": 11,
-              "duration": 2,
-              "velocity": 0.8
-            },
-            {
-              "id": "14d3f49c-936d-4d5e-b324-790af2aed714",
-              "pitch": 41,
-              "start_step": 11,
-              "duration": 2,
-              "velocity": 0.8
-            },
-            {
-              "id": "5962bc56-b4de-4d8b-b450-35596004eda5",
-              "pitch": 40,
-              "start_step": 13,
-              "duration": 3,
-              "velocity": 0.8
-            }
-          ]
-        },
-        "0": {
           "steps": [
             false,
             false,
@@ -452,6 +473,16 @@
     {
       "id": 3,
       "name": "Outro",
+      "length": 16
+    },
+    {
+      "id": 4,
+      "name": "Pattern 5",
+      "length": 16
+    },
+    {
+      "id": 5,
+      "name": "Pattern 6",
       "length": 16
     }
   ],

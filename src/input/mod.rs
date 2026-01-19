@@ -102,6 +102,11 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> bool {
         return handle_effect_editor_key(key, app);
     }
 
+    // Handle confirm dialog
+    if app.ui.confirm_dialog.visible {
+        return handle_confirm_dialog_key(key, app);
+    }
+
     // Global keybindings (always active)
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
@@ -257,6 +262,25 @@ fn handle_command_picker_key(key: KeyEvent, app: &mut App) -> bool {
             app.ui.command_picker.hide();
             false
         }
+    }
+}
+
+/// Handle confirm dialog keys
+fn handle_confirm_dialog_key(key: KeyEvent, app: &mut App) -> bool {
+    match key.code {
+        // y or Enter confirms
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            if let Some(cmd) = app.ui.confirm_dialog.confirm() {
+                app.dispatch(cmd);
+            }
+            false
+        }
+        // n or Escape cancels
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            app.ui.confirm_dialog.cancel();
+            false
+        }
+        _ => false,
     }
 }
 
@@ -785,6 +809,16 @@ pub fn handle_mouse(event: MouseEvent, app: &mut App) {
             Some(AreaId::ChannelRackPatternDup) => {
                 if matches!(action, MouseAction::Click { .. }) {
                     app.dispatch(crate::command::AppCommand::DuplicatePattern);
+                }
+            }
+            Some(AreaId::ChannelRackPatternClear) => {
+                if matches!(action, MouseAction::Click { .. }) {
+                    // Show confirmation dialog
+                    let pattern_num = app.current_pattern + 1;
+                    app.ui.confirm_dialog.show(
+                        format!("Clear Pattern {}?", pattern_num),
+                        crate::confirm_dialog::ConfirmAction::ClearPattern(app.current_pattern),
+                    );
                 }
             }
 

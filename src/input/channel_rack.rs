@@ -86,6 +86,15 @@ pub fn handle_key(key: KeyEvent, app: &mut App) {
             app.dispatch(AppCommand::DuplicatePattern);
             return;
         }
+        // 'C' (shift+c) to clear current pattern (with confirmation)
+        KeyCode::Char('C') => {
+            let pattern_num = app.current_pattern + 1;
+            app.ui.confirm_dialog.show(
+                format!("Clear Pattern {}?", pattern_num),
+                crate::confirm_dialog::ConfirmAction::ClearPattern(app.current_pattern),
+            );
+            return;
+        }
         // 'd' in sample zone to delete channel (and yank to register)
         KeyCode::Char('d') if app.cursor_zone() == "sample" => {
             let slot = app.ui.cursors.channel_rack.channel;
