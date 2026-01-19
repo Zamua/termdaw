@@ -916,8 +916,22 @@ impl App {
                 // Switch to the duplicated pattern
                 self.current_pattern = target_id;
             }
-            AppCommand::ClearPattern(_pattern_id) => {
-                // Stub: will be implemented after tests are written
+            AppCommand::ClearPattern(pattern_id) => {
+                // Clear all steps and notes from the pattern across all channels
+                let pattern_length = self
+                    .patterns
+                    .get(pattern_id)
+                    .map(|p| p.length)
+                    .unwrap_or(16);
+
+                for channel in &mut self.channels {
+                    if let Some(slice) = channel.get_pattern_mut(pattern_id) {
+                        // Clear all steps
+                        slice.steps = vec![false; pattern_length];
+                        // Clear all notes
+                        slice.notes.clear();
+                    }
+                }
             }
 
             // ================================================================
